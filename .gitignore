@@ -1,0 +1,6 @@
+node_modules
+dist
+atlas.db
+.env
+*.log
+.DS_Store
