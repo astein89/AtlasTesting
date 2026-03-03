@@ -13,7 +13,7 @@ import { usersRouter } from './routes/users.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
-const PORT = process.env.PORT || 3001
+const PORT = Number(process.env.PORT) || 3001
 const isProd = process.env.NODE_ENV === 'production'
 
 app.use(cors({ origin: true, credentials: true }))
