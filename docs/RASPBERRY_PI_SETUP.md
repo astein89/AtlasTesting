@@ -219,6 +219,13 @@ cp ~/atlas-testing/atlas.db ~/atlas-testing/atlas.db.backup
 
 ## Troubleshooting
 
+### Source map error (installHook.js.map 404)
+
+This comes from the **React DevTools** browser extension, not the app. It’s harmless and doesn’t affect behavior. To hide it:
+
+- Disable the React DevTools extension for this site, or
+- Ignore it — the app works normally.
+
 ### Port already in use
 
 ```bash
@@ -243,11 +250,51 @@ Build on your development machine, then copy the `dist` folder and `package.json
 
 ### Cannot connect from other devices
 
-Ensure the Pi firewall allows the port:
+**1. Allow the port in the firewall**
+
+If ufw is not installed:
+
+```bash
+sudo apt install ufw
+```
+
+Then allow the port:
 
 ```bash
 sudo ufw allow 3000
-sudo ufw enable
+sudo ufw status
+```
+
+**2. Ensure the server binds to all interfaces**
+
+The app listens on `0.0.0.0` by default (all network interfaces). If you changed this, revert to `0.0.0.0`.
+
+**3. Find the Pi's IP address**
+
+```bash
+hostname -I
+```
+
+Use that IP from another device: `http://192.168.1.xxx:3000`
+
+**4. Same network**
+
+Both devices must be on the same LAN (same Wi‑Fi or wired network).
+
+**5. No firewall (Raspberry Pi OS default)**
+
+Raspberry Pi OS often has no firewall by default. If `ufw` is not installed and you still can't connect, the issue may be:
+
+- Wrong IP address — run `hostname -I` and use that IP
+- Different network — ensure both devices are on the same Wi‑Fi/LAN
+- Router isolation — some routers block device-to-device traffic (guest networks, AP isolation)
+
+**6. Disable firewall temporarily to test** (if ufw is installed)
+
+```bash
+sudo ufw disable
+# Try connecting from other PC
+# If it works, re-enable and add the rule: sudo ufw allow 3000 && sudo ufw enable
 ```
 
 ---
