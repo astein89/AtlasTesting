@@ -103,19 +103,17 @@ function migratePlanFieldIds(db: SqlDb) {
     const hasFieldIds = rows.some((r) => r[1] === 'field_ids')
     if (hasFieldIds) return
     db.run('ALTER TABLE test_plans ADD COLUMN field_ids TEXT')
-    const tests = db.prepare('SELECT test_plan_id, field_ids FROM tests').all() as Array<{
-      test_plan_id: string
-      field_ids: string
-    }>
+    const stmt = db.prepare('SELECT test_plan_id, field_ids FROM tests')
     const planFields = new Map<string, string>()
-    for (const t of tests) {
-      if (!planFields.has(t.test_plan_id)) {
-        planFields.set(t.test_plan_id, t.field_ids)
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as { test_plan_id: string; field_ids: string }
+      if (!planFields.has(row.test_plan_id)) {
+        planFields.set(row.test_plan_id, row.field_ids)
       }
     }
-    const stmt = db.prepare('UPDATE test_plans SET field_ids = ? WHERE id = ?')
+    stmt.free()
     for (const [planId, fieldIds] of planFields) {
-      stmt.run(fieldIds, planId)
+      db.run('UPDATE test_plans SET field_ids = ? WHERE id = ?', [fieldIds, planId])
     }
   } catch {
     // Ignore

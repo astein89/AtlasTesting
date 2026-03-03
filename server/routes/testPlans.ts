@@ -117,6 +117,7 @@ router.put('/:id', requireAdmin, (req, res) => {
       name: string
       description: string | null
       field_ids: string | null
+      field_layout: string | null
       created_at: string
     }
     return res.json({

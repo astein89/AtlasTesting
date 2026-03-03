@@ -75,26 +75,41 @@ Or use SCP, USB drive, or another transfer method.
 
 ---
 
-## Step 5: Install Dependencies
+## Step 5: Install Dependencies & Build
+
+### Option A: Build on the Pi
+
+You need full dependencies (including Vite) to build:
+
+```bash
+cd ~/atlas-testing
+npm install
+npm run build
+```
+
+### Option B: Build on Your Dev Machine, Copy to Pi (recommended for low-memory Pi)
+
+On your development machine:
+
+```bash
+npm install
+npm run build
+```
+
+Then copy the project to the Pi (including the `dist` folder). On the Pi:
 
 ```bash
 cd ~/atlas-testing
 npm install --omit=dev
 ```
 
-> **Note:** `--omit=dev` skips dev dependencies (TypeScript, Vite, etc.) since you'll use the pre-built `dist` folder.
+This skips dev dependencies since `dist` is already built.
 
 ---
 
-## Step 6: Build the Project
+## Step 6: Verify Build
 
-Build on the Pi (or build on your dev machine and copy the `dist` folder):
-
-```bash
-npm run build
-```
-
-This produces:
+Ensure these exist:
 
 - `dist/client/` — static frontend (HTML, JS, CSS)
 - `dist/server/` — backend server
@@ -192,7 +207,7 @@ cp ~/atlas-testing/atlas.db ~/atlas-testing/atlas.db.backup
 - [ ] Raspberry Pi OS updated
 - [ ] Node.js 18+ installed
 - [ ] Project copied to Pi
-- [ ] `npm install --omit=dev` run
+- [ ] `npm install` run (full install if building on Pi)
 - [ ] `npm run build` completed
 - [ ] PM2 installed globally
 - [ ] `pm2 start ecosystem.config.cjs` run
