@@ -30,7 +30,7 @@ app.use('/api/users', usersRouter)
 runSeed()
 
 if (isProd) {
-  const distPath = path.join(__dirname, '..', 'dist')
+  const distPath = path.join(__dirname, '..')
   app.use(express.static(distPath))
   app.get('*', (_, res) => {
     res.sendFile(path.join(distPath, 'index.html'))
