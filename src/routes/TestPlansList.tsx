@@ -1,49 +1,63 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { useSortableHeader } from '../hooks/useSortableHeader'
 import { api } from '../api/client'
-import { runsToCsv } from '../utils/csvExport'
 import { useAuthStore } from '../store/authStore'
+import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import type { TestPlan } from '../types'
 
-interface Run {
-  id: string
-  testName: string
-  runAt: string
-  enteredBy?: string
-  enteredByName?: string
-  status: string
-  data: Record<string, string | number | boolean>
-}
+type SortKey = 'name' | 'description'
+type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
 
 export function TestPlansList() {
   const [plans, setPlans] = useState<TestPlan[]>([])
   const [loading, setLoading] = useState(true)
-  const [exportingId, setExportingId] = useState<string | null>(null)
+  const [exportPlanId, setExportPlanId] = useState<string | null>(null)
+  const [sortOrder, setSortOrder] = useState<SortLevel[]>([{ key: 'name', dir: 'asc' }])
   const isAdmin = useAuthStore((s) => s.isAdmin())
+  const navigate = useNavigate()
 
-  const exportPlan = async (plan: TestPlan) => {
-    setExportingId(plan.id)
-    try {
-      const { data: runs } = await api.get<Run[]>('/runs', {
-        params: { testPlanId: plan.id, limit: '5000' },
-      })
-      if (runs.length === 0) {
-        alert('No data to export')
-        return
+  const getVal = (plan: TestPlan, key: SortKey) =>
+    key === 'name' ? (plan.name ?? '') : (plan.description ?? '')
+
+  const sortedPlans = useMemo(() => {
+    const copy = [...plans]
+    copy.sort((a, b) => {
+      for (const { key, dir } of sortOrder) {
+        const cmp = getVal(a, key).localeCompare(getVal(b, key), undefined, { sensitivity: 'base' })
+        const result = dir === 'asc' ? cmp : -cmp
+        if (result !== 0) return result
       }
-      const csv = runsToCsv(runs)
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${plan.name.replace(/[^a-z0-9]/gi, '-')}-export-${new Date().toISOString().slice(0, 10)}.csv`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      alert('Failed to export')
-    } finally {
-      setExportingId(null)
-    }
+      return 0
+    })
+    return copy
+  }, [plans, sortOrder])
+
+  const handleSort = (key: SortKey, addSecondary: boolean) => {
+    setSortOrder((prev) => {
+      const idx = prev.findIndex((s) => s.key === key)
+      if (addSecondary) {
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = { ...next[idx], dir: next[idx].dir === 'asc' ? 'desc' : 'asc' }
+          return next
+        }
+        return [...prev, { key, dir: 'asc' }]
+      }
+      if (idx >= 0 && prev.length === 1) {
+        return [{ key, dir: prev[0].dir === 'asc' ? 'desc' : 'asc' }]
+      }
+      return [{ key, dir: 'asc' }]
+    })
+  }
+
+  const getSortHandlers = useSortableHeader(handleSort)
+  const getSortIndex = (key: SortKey) => sortOrder.findIndex((s) => s.key === key)
+  const getSortDir = (key: SortKey) => sortOrder.find((s) => s.key === key)?.dir
+
+  const handleRowClick = (plan: TestPlan, e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, a')) return
+    navigate(`/test-plans/${plan.id}/data`)
   }
 
   useEffect(() => {
@@ -56,12 +70,12 @@ export function TestPlansList() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold text-foreground">Test Plans</h1>
         {isAdmin && (
           <Link
             to="/test-plans/new"
-            className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90"
+            className="min-h-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
           >
             New Test Plan
           </Link>
@@ -70,49 +84,102 @@ export function TestPlansList() {
       {loading ? (
         <p className="text-foreground/60">Loading...</p>
       ) : (
-        <div className="space-y-4">
-          {plans.map((plan) => (
-            <div
-              key={plan.id}
-              className="rounded-lg border border-border bg-card p-4"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <Link
-                    to={`/test-plans/${plan.id}/data`}
-                    className="font-medium text-foreground hover:underline"
-                  >
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full">
+            <thead className="bg-card">
+              <tr>
+                <th
+                  className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                  {...getSortHandlers('name')}
+                  title="Tap to sort. Long-press or Shift+click to add secondary sort."
+                >
+                  <span className="flex items-center gap-1">
+                    Name
+                    {getSortIndex('name') >= 0 && (
+                      <span className="text-foreground/60">
+                        {getSortIndex('name') + 1}{getSortDir('name') === 'asc' ? '↑' : '↓'}
+                      </span>
+                    )}
+                  </span>
+                </th>
+                <th
+                  className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                  {...getSortHandlers('description')}
+                  title="Tap to sort. Long-press or Shift+click to add secondary sort."
+                >
+                  <span className="flex items-center gap-1">
+                    Test plan
+                    {getSortIndex('description') >= 0 && (
+                      <span className="text-foreground/60">
+                        {getSortIndex('description') + 1}{getSortDir('description') === 'asc' ? '↑' : '↓'}
+                      </span>
+                    )}
+                  </span>
+                </th>
+                <th className="px-4 py-3 text-right text-sm font-medium text-foreground">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {sortedPlans.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="p-6 text-center text-foreground/60">
+                    No test plans yet.
+                  </td>
+                </tr>
+              ) : (
+                sortedPlans.map((plan) => (
+                <tr
+                  key={plan.id}
+                  onClick={(e) => handleRowClick(plan, e)}
+                  className="cursor-pointer bg-background transition-colors hover:bg-card"
+                >
+                  <td className="px-4 py-3 font-medium text-foreground">
                     {plan.name}
-                  </Link>
-                  {plan.description && (
-                    <p className="mt-1 text-sm text-foreground/70">
-                      {plan.description}
-                    </p>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => exportPlan(plan)}
-                    disabled={exportingId === plan.id}
-                    className="rounded border border-border px-3 py-1 text-sm text-foreground hover:bg-background disabled:opacity-50"
-                  >
-                    {exportingId === plan.id ? 'Exporting...' : 'Export'}
-                  </button>
-                  {isAdmin && (
-                    <Link
-                      to={`/test-plans/${plan.id}/edit`}
-                      className="rounded border border-border px-3 py-1 text-sm text-foreground hover:bg-background"
-                    >
-                      Edit plan
-                    </Link>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-foreground/70">
+                    {plan.description || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setExportPlanId(plan.id)
+                        }}
+                        className="min-h-[44px] min-w-[44px] rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background sm:min-h-0 sm:min-w-0 sm:py-1"
+                      >
+                        Export
+                      </button>
+                      {isAdmin && (
+                        <Link
+                          to={`/test-plans/${plan.id}/edit`}
+                          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background sm:min-h-0 sm:min-w-0 sm:py-1"
+                        >
+                          Edit
+                        </Link>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       )}
+      {exportPlanId && (() => {
+        const plan = plans.find((p) => p.id === exportPlanId)
+        return plan ? (
+          <ExportPlanModal
+            planId={plan.id}
+            planName={plan.name}
+            onClose={() => setExportPlanId(null)}
+          />
+        ) : null
+      })()}
     </div>
   )
 }

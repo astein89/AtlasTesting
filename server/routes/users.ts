@@ -35,7 +35,7 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'username and password required' })
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username)
+  const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(username)
   if (existing) return res.status(409).json({ error: 'Username already exists' })
 
   const id = uuidv4()
@@ -63,7 +63,7 @@ router.put('/:id', (req, res) => {
   const updates: string[] = []
   const values: unknown[] = []
   if (username !== undefined) {
-    const dup = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, id)
+    const dup = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ?').get(username, id)
     if (dup) return res.status(409).json({ error: 'Username already exists' })
     updates.push('username = ?')
     values.push(username)

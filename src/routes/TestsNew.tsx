@@ -17,7 +17,15 @@ export function TestsNew() {
 
   useEffect(() => {
     if (planId) {
-      api.get<TestPlan>(`/test-plans/${planId}`).then((r) => setPlan(r.data)).catch(() => navigate('/test-plans'))
+      api
+        .get<TestPlan>(`/test-plans/${planId}`)
+        .then((r) => {
+          setPlan(r.data)
+          if (r.data.fieldIds?.length && fieldIds.length === 0) {
+            setFieldIds(r.data.fieldIds)
+          }
+        })
+        .catch(() => navigate('/test-plans'))
     }
   }, [planId, navigate])
 

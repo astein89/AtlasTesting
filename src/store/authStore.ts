@@ -37,6 +37,11 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'atlas-auth',
       partialize: (s) => ({ refreshToken: s.refreshToken }),
+      onRehydrateStorage: () => (state) => {
+        if (state?.refreshToken && !state.user) {
+          useAuthStore.getState().setInitializing(true)
+        }
+      },
     }
   )
 )

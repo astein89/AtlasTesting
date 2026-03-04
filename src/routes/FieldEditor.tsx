@@ -4,18 +4,19 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { api } from '../api/client'
+import { FRACTION_SCALES, type FractionScale } from '../utils/fraction'
 import type { DataField, FieldType } from '../types'
 
 const schema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select']),
+  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'fraction', 'atlas_location', 'image']),
   config: z.record(z.unknown()).optional(),
 })
 
 type FormData = z.infer<typeof schema>
 
-const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select']
+const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'fraction', 'atlas_location', 'image']
 const TYPE_LABELS: Record<FieldType, string> = {
   number: 'Number',
   text: 'Text',
@@ -23,6 +24,9 @@ const TYPE_LABELS: Record<FieldType, string> = {
   boolean: 'Boolean',
   datetime: 'Date/time',
   select: 'Select',
+  fraction: 'Fraction (inches)',
+  atlas_location: 'Atlas Location',
+  image: 'Image',
 }
 
 export function FieldEditor() {
@@ -30,6 +34,8 @@ export function FieldEditor() {
   const navigate = useNavigate()
   const isNew = id === 'new'
   const [options, setOptions] = useState<string[]>([])
+  const [fractionScale, setFractionScale] = useState<FractionScale>(16)
+  const [imageMultiple, setImageMultiple] = useState(false)
   const [fieldType, setFieldType] = useState<FieldType>('text')
 
   const {
@@ -59,6 +65,10 @@ export function FieldEditor() {
           setValue('type', r.data.type)
           setValue('config', r.data.config || {})
           if (r.data.config?.options) setOptions(r.data.config.options)
+          if (r.data.config?.fractionScale && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
+            setFractionScale(r.data.config.fractionScale as FractionScale)
+          }
+          if (r.data.config?.imageMultiple != null) setImageMultiple(r.data.config.imageMultiple)
         })
         .catch(() => navigate('/fields'))
     }
@@ -67,6 +77,8 @@ export function FieldEditor() {
   const onSubmit = async (data: FormData) => {
     const config = { ...data.config }
     if (fieldType === 'select') config.options = options.filter(Boolean)
+    if (fieldType === 'fraction') config.fractionScale = fractionScale
+    if (fieldType === 'image') config.imageMultiple = imageMultiple
 
     try {
       if (isNew) {
@@ -141,6 +153,39 @@ export function FieldEditor() {
             ))}
           </select>
         </div>
+        {fieldType === 'fraction' && (
+          <div>
+            <label className="block text-sm font-medium text-foreground">
+              Fraction scale
+            </label>
+            <p className="mt-1 mb-2 text-xs text-foreground/60">
+              Denominator for inch fractions (128ths finest, halves coarsest).
+            </p>
+            <select
+              value={fractionScale}
+              onChange={(e) => setFractionScale(Number(e.target.value) as FractionScale)}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+            >
+              {FRACTION_SCALES.map((s) => (
+                <option key={s} value={s}>
+                  {s === 2 ? 'Halves (½)' : `${s}ths (1/${s})`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {fieldType === 'image' && (
+          <div>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={imageMultiple}
+                onChange={(e) => setImageMultiple(e.target.checked)}
+              />
+              <span className="text-sm text-foreground">Allow multiple photos</span>
+            </label>
+          </div>
+        )}
         {fieldType === 'select' && (
           <div>
             <label className="block text-sm font-medium text-foreground">

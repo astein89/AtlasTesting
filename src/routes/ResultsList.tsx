@@ -3,17 +3,17 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { format } from 'date-fns'
 
-interface Run {
+interface Record {
   id: string
   testId: string
   testName: string
-  runAt: string
+  recordedAt: string
   enteredBy: string
   status: string
 }
 
 export function ResultsList() {
-  const [runs, setRuns] = useState<Run[]>([])
+  const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
   const [testId, setTestId] = useState('')
   const [tests, setTests] = useState<{ id: string; name: string }[]>([])
@@ -26,9 +26,9 @@ export function ResultsList() {
     const params: Record<string, string> = { limit: '100' }
     if (testId) params.testId = testId
     api
-      .get<Run[]>('/runs', { params })
-      .then((r) => setRuns(r.data))
-      .catch(() => setRuns([]))
+      .get<Record[]>('/records', { params })
+      .then((r) => setRecords(r.data))
+      .catch(() => setRecords([]))
       .finally(() => setLoading(false))
   }, [testId])
 
@@ -72,11 +72,11 @@ export function ResultsList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {runs.map((r) => (
+              {records.map((r) => (
                 <tr key={r.id} className="bg-background">
                   <td className="px-4 py-2 text-foreground">{r.testName}</td>
                   <td className="px-4 py-2 text-foreground">
-                    {format(new Date(r.runAt), 'PPp')}
+                    {format(new Date(r.recordedAt), 'PPp')}
                   </td>
                   <td className="px-4 py-2">
                     <span

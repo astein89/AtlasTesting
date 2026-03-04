@@ -3,12 +3,13 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { api } from '../../api/client'
+import { FRACTION_SCALES, type FractionScale } from '../../utils/fraction'
 import type { FieldType } from '../../types'
 
 const schema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select']),
+  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'fraction', 'atlas_location', 'image']),
 })
 
 type FormData = z.infer<typeof schema>
@@ -18,7 +19,7 @@ interface CreateFieldFormProps {
   onCancel: () => void
 }
 
-const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select']
+const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'fraction', 'atlas_location', 'image']
 const TYPE_LABELS: Record<FieldType, string> = {
   number: 'Number',
   text: 'Text',
@@ -26,10 +27,15 @@ const TYPE_LABELS: Record<FieldType, string> = {
   boolean: 'Boolean',
   datetime: 'Date/time',
   select: 'Select',
+  fraction: 'Fraction (inches)',
+  atlas_location: 'Atlas Location',
+  image: 'Image',
 }
 
 export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   const [options, setOptions] = useState<string[]>([''])
+  const [fractionScale, setFractionScale] = useState<FractionScale>(16)
+  const [imageMultiple, setImageMultiple] = useState(false)
   const [fieldType, setFieldType] = useState<FieldType>('text')
 
   const {
@@ -59,6 +65,12 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
     const config: Record<string, unknown> = {}
     if (fieldType === 'select') {
       config.options = options.filter(Boolean)
+    }
+    if (fieldType === 'fraction') {
+      config.fractionScale = fractionScale
+    }
+    if (fieldType === 'image') {
+      config.imageMultiple = imageMultiple
     }
     try {
       const { data: created } = await api.post<{ id: string }>('/fields', {
@@ -111,6 +123,39 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
           ))}
         </select>
       </div>
+      {fieldType === 'image' && (
+        <div>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={imageMultiple}
+              onChange={(e) => setImageMultiple(e.target.checked)}
+            />
+            <span className="text-sm text-foreground">Allow multiple photos</span>
+          </label>
+        </div>
+      )}
+      {fieldType === 'fraction' && (
+        <div>
+          <label className="block text-sm font-medium text-foreground">
+            Fraction scale
+          </label>
+          <p className="mt-1 mb-2 text-xs text-foreground/60">
+            Denominator for inch fractions (128ths finest, halves coarsest).
+          </p>
+          <select
+            value={fractionScale}
+            onChange={(e) => setFractionScale(Number(e.target.value) as FractionScale)}
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+          >
+            {FRACTION_SCALES.map((s) => (
+              <option key={s} value={s}>
+                {s === 2 ? 'Halves (½)' : `${s}ths (1/${s})`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {fieldType === 'select' && (
         <div>
           <label className="block text-sm font-medium text-foreground">Options</label>

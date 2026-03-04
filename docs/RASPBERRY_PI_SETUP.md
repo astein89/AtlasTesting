@@ -2,6 +2,8 @@
 
 This guide walks you through installing and running Atlas Testing on a Raspberry Pi (Raspberry Pi OS).
 
+**Already installed?** See **[Upgrade Instructions](UPGRADE.md)** to update to a newer version.
+
 ## Prerequisites
 
 - Raspberry Pi 3, 4, or 5 (recommended: Pi 4 with 2GB+ RAM)

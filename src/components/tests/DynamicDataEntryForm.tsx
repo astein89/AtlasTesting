@@ -1,6 +1,11 @@
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { AtlasLocationInput } from '../fields/AtlasLocationInput'
+import { FractionInput } from '../fields/FractionInput'
+import { ImageInput } from '../fields/ImageInput'
+import { SelectInput } from '../fields/SelectInput'
+import { parseFractionScale } from '../../utils/fraction'
 import type { DataField } from '../../types'
 
 interface DynamicDataEntryFormProps {
@@ -19,20 +24,23 @@ export function DynamicDataEntryForm({
       (acc, f) => {
         const cfg = f.config || {}
         if (cfg.required) {
-          if (f.type === 'number') {
+          if (f.type === 'number' || f.type === 'fraction') {
             acc[f.key] = z.number({ required_error: 'Required' })
           } else if (f.type === 'boolean') {
             acc[f.key] = z.boolean()
+          } else if (f.type === 'image') {
+            acc[f.key] = z.union([z.string().min(1), z.array(z.string()).min(1)])
           } else {
             acc[f.key] = z.string().min(1, 'Required')
           }
         } else {
-          if (f.type === 'number')
+          if (f.type === 'number' || f.type === 'fraction')
             acc[f.key] = z.preprocess(
               (v) => (typeof v === 'number' && isNaN(v) ? undefined : v),
               z.number().optional()
             )
           else if (f.type === 'boolean') acc[f.key] = z.boolean().optional()
+          else if (f.type === 'image') acc[f.key] = z.union([z.string(), z.array(z.string())]).optional()
           else if (f.type === 'longtext') acc[f.key] = z.string().optional()
           else acc[f.key] = z.string().optional()
         }
@@ -47,6 +55,8 @@ export function DynamicDataEntryForm({
   const {
     register,
     handleSubmit,
+    setValue,
+    watch,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -62,7 +72,7 @@ export function DynamicDataEntryForm({
     for (const f of fields) {
       const val = config[f.key]
       const cfg = f.config || {}
-      if (f.type === 'number' && typeof val === 'number') {
+      if ((f.type === 'number' || f.type === 'fraction') && typeof val === 'number') {
         if (cfg.min != null && val < cfg.min) status = 'fail'
         if (cfg.max != null && val > cfg.max) status = 'fail'
       }
@@ -133,19 +143,37 @@ export function DynamicDataEntryForm({
                 className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
               />
             )}
+            {f.type === 'atlas_location' && (
+              <AtlasLocationInput
+                value={String(watch(f.key) ?? '')}
+                onChange={(v) => setValue(f.key, v)}
+                className="w-full"
+              />
+            )}
+            {f.type === 'fraction' && (
+              <FractionInput
+                value={Number(watch(f.key)) || 0}
+                onChange={(v) => setValue(f.key, v)}
+                defaultScale={parseFractionScale(f.config?.fractionScale)}
+                className="w-full"
+              />
+            )}
+            {f.type === 'image' && (
+              <ImageInput
+                value={(watch(f.key) as string | string[]) ?? (f.config?.imageMultiple ? [] : '')}
+                onChange={(v) => setValue(f.key, v)}
+                multiple={f.config?.imageMultiple ?? false}
+                className="w-full"
+              />
+            )}
             {f.type === 'select' && (
-              <select
-                id={f.key}
-                {...register(f.key)}
-                className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              >
-                <option value="">-- Select --</option>
-                {(f.config?.options || []).map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
+              <SelectInput
+                value={String(watch(f.key) ?? '')}
+                onChange={(v) => setValue(f.key, v)}
+                options={f.config?.options || []}
+                placeholder="Click to select"
+                className="w-full"
+              />
             )}
             {errors[f.key] && (
               <p className="text-sm text-red-500">

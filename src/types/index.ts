@@ -1,4 +1,4 @@
-export type FieldType = 'number' | 'text' | 'longtext' | 'boolean' | 'datetime' | 'select'
+export type FieldType = 'number' | 'text' | 'longtext' | 'boolean' | 'datetime' | 'select' | 'fraction' | 'atlas_location' | 'image'
 
 export interface FieldConfig {
   unit?: string
@@ -6,6 +6,10 @@ export interface FieldConfig {
   max?: number
   options?: string[]
   required?: boolean
+  /** Fraction scale (2, 4, 8, 16, 32, 64, 128) for fraction fields */
+  fractionScale?: number
+  /** For image fields: true = multiple photos, false = single photo */
+  imageMultiple?: boolean
 }
 
 export interface DataField {
@@ -20,9 +24,12 @@ export interface TestPlan {
   id: string
   name: string
   description?: string
+  constraints?: string
   fieldIds?: string[]
-  /** Map of field id -> width (e.g. "80px", "120px", "auto") */
+  /** Map of field id -> width (e.g. "80px", "120px", "auto") for data table */
   fieldLayout?: Record<string, string>
+  /** Ordered list of field ids and separator ids (newline-xxx) for form layout */
+  formLayoutOrder?: string[]
   createdAt?: string
 }
 
@@ -34,13 +41,13 @@ export interface Test {
   fieldIds: string[]
 }
 
-export interface TestRun {
+export interface DataRecord {
   id: string
   testId: string
-  runAt: string
+  recordedAt: string
   enteredBy: string
   status: 'pass' | 'fail' | 'partial'
-  data: Record<string, string | number | boolean>
+  data: Record<string, string | number | boolean | string[]>
 }
 
 export interface User {

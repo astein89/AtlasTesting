@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { PlanFieldSelector } from '../components/fields/PlanFieldSelector'
-import { FieldLayoutEditor } from '../components/fields/FieldLayoutEditor'
+import { FormLayoutEditor } from '../components/fields/FormLayoutEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
+import { createSeparatorId } from '../utils/formLayout'
 import type { TestPlan } from '../types'
 
 export function TestPlanEditor() {
@@ -14,8 +15,9 @@ export function TestPlanEditor() {
   const isNew = !planId
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [constraints, setConstraints] = useState('')
   const [fieldIds, setFieldIds] = useState<string[]>([])
-  const [fieldLayout, setFieldLayout] = useState<Record<string, string>>({})
+  const [formLayoutOrder, setFormLayoutOrder] = useState<string[]>([])
   const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
@@ -27,8 +29,13 @@ export function TestPlanEditor() {
         .then((r) => {
           setName(r.data.name)
           setDescription(r.data.description || '')
+          setConstraints(r.data.constraints || '')
           setFieldIds(r.data.fieldIds || [])
-          setFieldLayout(r.data.fieldLayout || {})
+          setFormLayoutOrder(
+            Array.isArray(r.data.formLayoutOrder) && r.data.formLayoutOrder.length > 0
+              ? r.data.formLayoutOrder
+              : r.data.fieldIds || []
+          )
         })
         .catch(() => navigate('/test-plans'))
         .finally(() => setLoading(false))
@@ -37,7 +44,28 @@ export function TestPlanEditor() {
 
   const handleCreateField = (newFieldId: string) => {
     setFieldIds((ids) => [...ids, newFieldId])
+    setFormLayoutOrder((order) => [...order, newFieldId])
     setShowCreateField(false)
+  }
+
+  const handleAddSeparator = () => {
+    setFormLayoutOrder((prev) => {
+      const base = prev.length > 0 ? prev : fieldIds
+      return [...base, createSeparatorId()]
+    })
+  }
+
+  const handleFieldIdsChange = (ids: string[]) => {
+    setFieldIds(ids)
+    setFormLayoutOrder((order) => {
+      const fieldIdsSet = new Set(ids)
+      const filtered = order.filter((id) =>
+        id.startsWith('newline-') ? true : fieldIdsSet.has(id)
+      )
+      const inOrder = new Set(filtered.filter((id) => !id.startsWith('newline-')))
+      const appended = ids.filter((id) => !inOrder.has(id))
+      return [...filtered, ...appended]
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,16 +77,18 @@ export function TestPlanEditor() {
         const { data } = await api.post<{ id: string }>('/test-plans', {
           name: name.trim(),
           description: description.trim() || undefined,
+          constraints: constraints.trim() || undefined,
           fieldIds,
-          fieldLayout: Object.keys(fieldLayout).length > 0 ? fieldLayout : undefined,
+          formLayoutOrder: formLayoutOrder.length > 0 ? formLayoutOrder : undefined,
         })
         navigate(`/test-plans/${data.id}/edit`)
       } else {
         await api.put(`/test-plans/${planId}`, {
           name: name.trim(),
           description: description.trim() || undefined,
+          constraints: constraints.trim() || undefined,
           fieldIds,
-          fieldLayout,
+          formLayoutOrder,
         })
         navigate('/test-plans')
       }
@@ -101,7 +131,7 @@ export function TestPlanEditor() {
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
-            Description
+            Test plan
           </label>
           <textarea
             value={description}
@@ -112,37 +142,37 @@ export function TestPlanEditor() {
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
+            Constraints
+          </label>
+          <textarea
+            value={constraints}
+            onChange={(e) => setConstraints(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+            rows={3}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
             Data collection fields
           </label>
           <p className="mt-1 mb-2 text-sm text-foreground/60">
-            Select and order fields. Drag to reorder. New tests in this plan will use these fields.
+            Select which fields to collect. Order and new lines are set in Form layout below.
           </p>
           <div className="mt-2">
             <PlanFieldSelector
               selectedIds={fieldIds}
-              onChange={setFieldIds}
+              onChange={handleFieldIdsChange}
               onCreateNew={() => setShowCreateField(true)}
             />
           </div>
         </div>
         {fieldIds.length > 0 && (
-          <div>
-            <FieldLayoutEditor
-              fieldIds={fieldIds}
-              value={fieldLayout}
-              onChange={setFieldLayout}
-            />
-          </div>
-        )}
-        {isAdmin && !isNew && planId && (
-          <div className="mb-6">
-            <Link
-              to={`/test-plans/${planId}/tests/new`}
-              className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
-            >
-              + Add test
-            </Link>
-          </div>
+          <FormLayoutEditor
+            fieldIds={fieldIds}
+            value={formLayoutOrder}
+            onChange={setFormLayoutOrder}
+            onAddSeparator={handleAddSeparator}
+          />
         )}
         <div className="flex flex-wrap gap-2">
           <button

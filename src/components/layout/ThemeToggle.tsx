@@ -21,7 +21,7 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      className="rounded-lg p-2 text-foreground hover:bg-card"
+      className="min-h-[44px] min-w-[44px] rounded-lg p-2 text-foreground hover:bg-card"
       aria-label="Toggle dark mode"
     >
       {isDark ? (

@@ -16,7 +16,7 @@ router.post('/login', (req, res) => {
     return res.status(400).json({ error: 'Username and password required' })
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as {
+  const user = db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(username) as {
     id: string
     username: string
     password_hash: string

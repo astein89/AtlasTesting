@@ -24,6 +24,8 @@ npm run dev
 
 See **[Raspberry Pi Install & Setup Guide](docs/RASPBERRY_PI_SETUP.md)** for detailed instructions.
 
+**Upgrading?** See **[Upgrade Instructions](docs/UPGRADE.md)**.
+
 Quick steps:
 
 1. Install Node.js 18+ and PM2

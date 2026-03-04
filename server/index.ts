@@ -8,8 +8,9 @@ import { adminRouter } from './routes/admin.js'
 import { fieldsRouter } from './routes/fields.js'
 import { testPlansRouter } from './routes/testPlans.js'
 import { testsRouter } from './routes/tests.js'
-import { runsRouter } from './routes/runs.js'
+import { recordsRouter } from './routes/records.js'
 import { usersRouter } from './routes/users.js'
+import { uploadsRouter } from './routes/uploads.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -24,8 +25,10 @@ app.use('/api/admin', adminRouter)
 app.use('/api/fields', fieldsRouter)
 app.use('/api/test-plans', testPlansRouter)
 app.use('/api/tests', testsRouter)
-app.use('/api/runs', runsRouter)
+app.use('/api/records', recordsRouter)
 app.use('/api/users', usersRouter)
+app.use('/api/upload', uploadsRouter)
+app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')))
 
 runSeed()
 

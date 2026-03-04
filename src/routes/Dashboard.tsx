@@ -3,22 +3,22 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { format } from 'date-fns'
 
-interface Run {
+interface Record {
   id: string
   testName: string
-  runAt: string
+  recordedAt: string
   status: string
 }
 
 export function Dashboard() {
-  const [runs, setRuns] = useState<Run[]>([])
+  const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     api
-      .get<Run[]>('/runs', { params: { limit: 10 } })
-      .then((r) => setRuns(r.data))
-      .catch(() => setRuns([]))
+      .get<Record[]>('/records', { params: { limit: 10 } })
+      .then((r) => setRecords(r.data))
+      .catch(() => setRecords([]))
       .finally(() => setLoading(false))
   }, [])
 
@@ -40,20 +40,20 @@ export function Dashboard() {
         </Link>
       </div>
       <div className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-4 text-lg font-medium text-foreground">Recent Runs</h2>
+        <h2 className="mb-4 text-lg font-medium text-foreground">Recent records</h2>
         {loading ? (
           <p className="text-foreground/60">Loading...</p>
-        ) : runs.length === 0 ? (
-          <p className="text-foreground/60">No runs yet.</p>
+        ) : records.length === 0 ? (
+          <p className="text-foreground/60">No records yet.</p>
         ) : (
           <ul className="space-y-2">
-            {runs.map((r) => (
+            {records.map((r) => (
               <li key={r.id} className="flex items-center justify-between">
                 <Link
                   to={`/results/${r.id}`}
                   className="text-foreground hover:underline"
                 >
-                  {r.testName} - {format(new Date(r.runAt), 'PPp')}
+                  {r.testName} - {format(new Date(r.recordedAt), 'PPp')}
                 </Link>
                 <span
                   className={`rounded px-2 py-0.5 text-xs ${

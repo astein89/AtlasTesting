@@ -54,7 +54,7 @@ router.get('/', (req: AuthRequest, res) => {
       id: r.id,
       testId: r.test_id,
       testName: r.test_name,
-      runAt: r.run_at,
+      recordedAt: r.run_at,
       enteredBy: r.entered_by,
       enteredByName: r.entered_by_name || r.entered_by,
       status: r.status,
@@ -81,13 +81,13 @@ router.get('/:id', (req: AuthRequest, res) => {
       }
     | undefined
 
-  if (!row) return res.status(404).json({ error: 'Run not found' })
+  if (!row) return res.status(404).json({ error: 'Record not found' })
 
   res.json({
     id: row.id,
     testId: row.test_id,
     testName: row.test_name,
-    runAt: row.run_at,
+    recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
@@ -104,7 +104,7 @@ router.post('/', (req: AuthRequest, res) => {
   if (!test) return res.status(404).json({ error: 'Test not found' })
 
   const id = uuidv4()
-  const runAt = new Date().toISOString()
+  const recordedAt = new Date().toISOString()
   const statusVal = status || 'pass'
 
   db.prepare(
@@ -112,7 +112,7 @@ router.post('/', (req: AuthRequest, res) => {
   ).run(
     id,
     testId,
-    runAt,
+    recordedAt,
     req.user.id,
     statusVal,
     data ? JSON.stringify(data) : null
@@ -137,7 +137,7 @@ router.post('/', (req: AuthRequest, res) => {
     id: row.id,
     testId: row.test_id,
     testName: row.test_name,
-    runAt: row.run_at,
+    recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
@@ -156,7 +156,7 @@ router.put('/:id', (req: AuthRequest, res) => {
     status: string
     data: string | null
   } | undefined
-  if (!existing) return res.status(404).json({ error: 'Run not found' })
+  if (!existing) return res.status(404).json({ error: 'Record not found' })
 
   const updates: string[] = []
   const values: unknown[] = []
@@ -172,7 +172,7 @@ router.put('/:id', (req: AuthRequest, res) => {
     return res.json({
       id: existing.id,
       testId: existing.test_id,
-      runAt: existing.run_at,
+      recordedAt: existing.run_at,
       enteredBy: existing.entered_by,
       status: existing.status,
       data: existing.data ? JSON.parse(existing.data) : {},
@@ -199,7 +199,7 @@ router.put('/:id', (req: AuthRequest, res) => {
     id: row.id,
     testId: row.test_id,
     testName: row.test_name,
-    runAt: row.run_at,
+    recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
@@ -208,8 +208,8 @@ router.put('/:id', (req: AuthRequest, res) => {
 
 router.delete('/:id', (req: AuthRequest, res) => {
   const result = db.prepare('DELETE FROM test_runs WHERE id = ?').run(req.params.id)
-  if (result.changes === 0) return res.status(404).json({ error: 'Run not found' })
+  if (result.changes === 0) return res.status(404).json({ error: 'Record not found' })
   res.status(204).send()
 })
 
-export { router as runsRouter }
+export { router as recordsRouter }

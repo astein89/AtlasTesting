@@ -53,10 +53,10 @@ export function TestsList() {
                   </Link>
                 )}
                 <Link
-                  to={`/tests/${t.id}/run`}
+                  to={`/tests/${t.id}/data`}
                   className="rounded bg-primary px-3 py-1 text-sm text-primary-foreground hover:opacity-90"
                 >
-                  Run
+                  Data
                 </Link>
               </div>
             </div>

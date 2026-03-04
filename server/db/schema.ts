@@ -79,7 +79,22 @@ export function initSchema(db: SqlDb) {
   migrateTestsToPlans(db)
   migratePlanFieldIds(db)
   migratePlanFieldLayout(db)
+  migratePlanFormLayout(db)
+  migratePlanConstraints(db)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tests_test_plan_id ON tests(test_plan_id)`)
+}
+
+function migratePlanConstraints(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasConstraints = rows.some((r) => r[1] === 'constraints')
+    if (hasConstraints) return
+    db.run('ALTER TABLE test_plans ADD COLUMN constraints TEXT')
+  } catch {
+    // Ignore
+  }
 }
 
 function migratePlanFieldLayout(db: SqlDb) {
@@ -90,6 +105,19 @@ function migratePlanFieldLayout(db: SqlDb) {
     const hasFieldLayout = rows.some((r) => r[1] === 'field_layout')
     if (hasFieldLayout) return
     db.run('ALTER TABLE test_plans ADD COLUMN field_layout TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanFormLayout(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasFormLayout = rows.some((r) => r[1] === 'form_layout')
+    if (hasFormLayout) return
+    db.run('ALTER TABLE test_plans ADD COLUMN form_layout TEXT')
   } catch {
     // Ignore
   }

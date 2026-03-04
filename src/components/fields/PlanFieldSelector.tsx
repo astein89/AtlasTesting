@@ -15,7 +15,6 @@ export function PlanFieldSelector({
 }: PlanFieldSelectorProps) {
   const [fields, setFields] = useState<DataField[]>([])
   const [search, setSearch] = useState('')
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
 
   useEffect(() => {
     api
@@ -41,32 +40,6 @@ export function PlanFieldSelector({
   const selected = selectedIds
     .map((id) => fields.find((f) => f.id === id))
     .filter(Boolean) as DataField[]
-
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedIndex(index)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(index))
-  }
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    if (draggedIndex === null || draggedIndex === index) return
-    const next = [...selectedIds]
-    const [removed] = next.splice(draggedIndex, 1)
-    next.splice(index, 0, removed)
-    onChange(next)
-    setDraggedIndex(index)
-  }
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setDraggedIndex(null)
-  }
-
-  const handleDragEnd = () => {
-    setDraggedIndex(null)
-  }
 
   return (
     <div className="space-y-4">
@@ -109,24 +82,14 @@ export function PlanFieldSelector({
         </div>
         <div className="rounded-lg border border-border p-4">
           <h3 className="mb-2 text-sm font-medium text-foreground">
-            Data fields (drag to reorder)
+            Selected
           </h3>
+          <p className="mb-2 text-xs text-foreground/60">
+            Order and add new lines in Form layout below.
+          </p>
           <ul className="max-h-64 space-y-1 overflow-y-auto">
-            {selected.map((f, i) => (
-              <li
-                key={f.id}
-                draggable
-                onDragStart={(e) => handleDragStart(e, i)}
-                onDragOver={(e) => handleDragOver(e, i)}
-                onDrop={handleDrop}
-                onDragEnd={handleDragEnd}
-                className={`flex cursor-grab items-center gap-2 rounded border border-transparent px-2 py-1.5 active:cursor-grabbing ${
-                  draggedIndex === i ? 'opacity-50' : 'hover:bg-card'
-                }`}
-              >
-                <span className="cursor-grab text-foreground/40" title="Drag to reorder">
-                  ⋮⋮
-                </span>
+            {selected.map((f) => (
+              <li key={f.id} className="flex items-center gap-2 rounded px-2 py-1.5">
                 <span className="flex-1 text-foreground">{f.label}</span>
                 <button
                   type="button"
