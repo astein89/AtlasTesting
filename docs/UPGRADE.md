@@ -125,6 +125,12 @@ pm2 restart atlas-testing
 
 ---
 
+## Database Location
+
+The database file `atlas.db` is stored in the **project root** (e.g. `~/atlas-testing/atlas.db`), not inside `dist/`. This ensures it survives `npm run build`, which recreates the `dist/` folder.
+
+If you previously lost data on upgrade, the database may have been stored in `dist/` by an older version. Restore from your backup (see Rollback above).
+
 ## Database Schema Migrations
 
 If a release includes schema changes, migrations run automatically when the app starts. No manual steps are needed.

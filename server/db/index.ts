@@ -6,7 +6,8 @@ import fs from 'fs'
 import { initSchema } from './schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const dbPath = process.env.DB_PATH || path.join(__dirname, '..', '..', 'atlas.db')
+// __dirname is dist/server/db when compiled; go up 3 levels to project root
+const dbPath = process.env.DB_PATH || path.join(__dirname, '..', '..', '..', 'atlas.db')
 
 let sqlDb: import('sql.js').Database
 
