@@ -215,7 +215,6 @@ cp ~/atlas-testing/atlas.db ~/atlas-testing/atlas.db.backup
 - [ ] `pm2 start ecosystem.config.cjs` run
 - [ ] `pm2 startup` and `pm2 save` executed
 - [ ] App accessible at http://\<pi-ip\>:3000
-- [ ] Default password changed (via app: Change password)
 
 ---
 

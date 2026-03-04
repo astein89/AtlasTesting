@@ -1,8 +1,6 @@
-import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { ThemeToggle } from './ThemeToggle'
-import { ChangePasswordModal } from '../auth/ChangePasswordModal'
 
 interface NavbarProps {
   onMenuClick?: () => void
@@ -11,7 +9,6 @@ interface NavbarProps {
 export function Navbar({ onMenuClick }: NavbarProps) {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
-  const [showChangePassword, setShowChangePassword] = useState(false)
 
   const handleLogout = () => {
     logout()
@@ -38,13 +35,6 @@ export function Navbar({ onMenuClick }: NavbarProps) {
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <span className="hidden text-sm text-foreground/80 sm:inline">{user?.username}</span>
-          <button
-            type="button"
-            onClick={() => setShowChangePassword(true)}
-            className="min-h-[44px] rounded-lg px-2 py-2 text-sm text-foreground hover:bg-background sm:px-3 sm:py-1.5"
-          >
-            Change password
-          </button>
           <ThemeToggle />
           <button
             type="button"
@@ -55,9 +45,6 @@ export function Navbar({ onMenuClick }: NavbarProps) {
           </button>
         </div>
       </nav>
-      {showChangePassword && (
-        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
-      )}
     </>
   )
 }

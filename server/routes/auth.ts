@@ -82,24 +82,6 @@ router.post('/refresh', (req, res) => {
   }
 })
 
-router.post('/change-password', authMiddleware, (req: AuthRequest, res) => {
-  const { currentPassword, newPassword } = req.body
-  if (!currentPassword || !newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'Current password and new password (min 6 chars) required' })
-  }
-
-  const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(
-    req.user!.id
-  ) as { password_hash: string } | undefined
-  if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
-    return res.status(401).json({ error: 'Current password incorrect' })
-  }
-
-  const hash = bcrypt.hashSync(newPassword, 10)
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user!.id)
-  res.json({ ok: true })
-})
-
 router.get('/me', authMiddleware, (req: AuthRequest, res) => {
   const user = db.prepare('SELECT id, username, name, role FROM users WHERE id = ?').get(
     req.user!.id
