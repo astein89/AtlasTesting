@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { AdminChangePasswordModal } from '../components/auth/AdminChangePasswordModal'
 import type { User } from '../types'
 
 export function Users() {
@@ -8,6 +9,7 @@ export function Users() {
   const [editing, setEditing] = useState<string | null>(null)
   const [form, setForm] = useState({ username: '', name: '', password: '', role: 'user' })
   const [showNew, setShowNew] = useState(false)
+  const [changePasswordFor, setChangePasswordFor] = useState<User | null>(null)
 
   useEffect(() => {
     load()
@@ -209,6 +211,13 @@ export function Users() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => setChangePasswordFor(u)}
+                        className="mr-2 text-primary hover:underline"
+                      >
+                        Change password
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleDelete(u.id)}
                         className="text-red-500 hover:underline"
                       >
@@ -222,6 +231,14 @@ export function Users() {
           </tbody>
         </table>
       </div>
+      {changePasswordFor && (
+        <AdminChangePasswordModal
+          userId={changePasswordFor.id}
+          username={changePasswordFor.username}
+          onClose={() => setChangePasswordFor(null)}
+          onSuccess={() => setChangePasswordFor(null)}
+        />
+      )}
     </div>
   )
 }

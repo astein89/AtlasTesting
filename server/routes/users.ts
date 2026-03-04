@@ -94,6 +94,21 @@ router.put('/:id', (req, res) => {
   res.json(row)
 })
 
+router.put('/:id/password', (req, res) => {
+  const { id } = req.params
+  const { newPassword } = req.body
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'New password (min 6 chars) required' })
+  }
+
+  const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id)
+  if (!existing) return res.status(404).json({ error: 'User not found' })
+
+  const hash = bcrypt.hashSync(newPassword, SALT_ROUNDS)
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id)
+  res.json({ ok: true })
+})
+
 router.delete('/:id', (req, res) => {
   const result = db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id)
   if (result.changes === 0) return res.status(404).json({ error: 'User not found' })
