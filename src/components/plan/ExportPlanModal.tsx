@@ -20,7 +20,7 @@ async function fetchPhotoBlob(path: string): Promise<Blob | null> {
 
 interface Record {
   id: string
-  testName: string
+  planName: string
   recordedAt: string
   enteredBy?: string
   enteredByName?: string
@@ -31,13 +31,10 @@ interface Record {
 interface ExportPlanModalProps {
   planId: string
   planName: string
-  /** When set, only export this test (hides test selection) */
-  testId?: string
-  testName?: string
   onClose: () => void
 }
 
-export function ExportPlanModal({ planId, planName, testId: singleTestId, testName: singleTestName, onClose }: ExportPlanModalProps) {
+export function ExportPlanModal({ planId, planName, onClose }: ExportPlanModalProps) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [includeCsv, setIncludeCsv] = useState(true)
@@ -52,24 +49,14 @@ export function ExportPlanModal({ planId, planName, testId: singleTestId, testNa
     if (to) baseParams.to = to
 
     setLoading(true)
-    if (singleTestId) {
-      api
-        .get<Record[]>('/records', {
-          params: { ...baseParams, testId: singleTestId },
-        })
-        .then((r) => setRecords(r.data))
-        .catch(() => setRecords([]))
-        .finally(() => setLoading(false))
-    } else {
-      api
-        .get<Record[]>('/records', {
-          params: { ...baseParams, testPlanId: planId },
-        })
-        .then((r) => setRecords(r.data))
-        .catch(() => setRecords([]))
-        .finally(() => setLoading(false))
-    }
-  }, [planId, singleTestId, from, to])
+    api
+      .get<Record[]>('/records', {
+        params: { ...baseParams, testPlanId: planId },
+      })
+      .then((r) => setRecords(r.data))
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false))
+  }, [planId, from, to])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -84,7 +71,7 @@ export function ExportPlanModal({ planId, planName, testId: singleTestId, testNa
     }
   }, [onClose])
 
-  const exportBaseName = (singleTestName || planName).replace(/[^a-z0-9]/gi, '-')
+  const exportBaseName = planName.replace(/[^a-z0-9]/gi, '-')
   const dateStr = new Date().toISOString().slice(0, 10)
 
   const hasPhotos = records.some((r) =>
@@ -185,7 +172,7 @@ export function ExportPlanModal({ planId, planName, testId: singleTestId, testNa
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-4 text-lg font-semibold text-foreground">
-          Export: {singleTestName ? singleTestName : planName}
+          Export: {planName}
         </h2>
 
         <div className="space-y-4">

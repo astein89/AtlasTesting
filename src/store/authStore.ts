@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { clearPreferencesCache } from '../lib/preferencesCache'
 
 interface User {
   id: string
@@ -26,20 +27,26 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       refreshToken: null,
-      initializing: false,
+      initializing: true,
       setAuth: (user, accessToken, refreshToken) =>
         set({ user, accessToken, refreshToken, initializing: false }),
       setAccessToken: (accessToken) => set({ accessToken }),
       setInitializing: (initializing) => set({ initializing }),
-      logout: () => set({ user: null, accessToken: null, refreshToken: null }),
+      logout: () => {
+        clearPreferencesCache()
+        set({ user: null, accessToken: null, refreshToken: null })
+      },
       isAdmin: () => get().user?.role === 'admin',
     }),
     {
       name: 'atlas-auth',
       partialize: (s) => ({ refreshToken: s.refreshToken }),
       onRehydrateStorage: () => (state) => {
-        if (state?.refreshToken && !state.user) {
-          useAuthStore.getState().setInitializing(true)
+        const s = useAuthStore.getState()
+        if (s.refreshToken && !s.user) {
+          s.setInitializing(true)
+        } else {
+          s.setInitializing(false)
         }
       },
     }

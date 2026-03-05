@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import type { DataField } from '../types'
 
-type SortKey = 'key' | 'label' | 'type'
+type SortKey = 'key' | 'label' | 'type' | 'updatedAt'
 type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
 
 export function FieldsList() {
@@ -14,7 +14,13 @@ export function FieldsList() {
   const navigate = useNavigate()
 
   const getVal = (f: DataField, key: SortKey) =>
-    key === 'key' ? f.key : key === 'label' ? (f.label ?? '') : f.type
+    key === 'key'
+      ? f.key
+      : key === 'label'
+        ? f.label ?? ''
+        : key === 'updatedAt'
+          ? f.updatedAt ?? f.createdAt ?? ''
+          : f.type
 
   const sortedFields = useMemo(() => {
     const copy = [...fields]
@@ -87,7 +93,7 @@ export function FieldsList() {
   }, [loadFields])
 
   const handleDelete = async (id: string, key: string) => {
-    if (!confirm(`Delete field "${key}"? This may affect tests using it.`)) return
+    if (!confirm(`Delete field "${key}"? This may affect test plans using it.`)) return
     try {
       await api.delete(`/fields/${id}`)
       loadFields()
@@ -152,6 +158,18 @@ export function FieldsList() {
                     </span>
                   )}
                 </th>
+                <th
+                  className="cursor-pointer select-none px-4 py-2 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                  {...getSortHandlers('updatedAt')}
+                  title="Tap to sort. Long-press to add secondary sort."
+                >
+                  Last edited
+                  {getSortIndex('updatedAt') >= 0 && (
+                    <span className="ml-1 text-foreground/60">
+                      {getSortIndex('updatedAt') + 1}{getSortDir('updatedAt') === 'asc' ? '↑' : '↓'}
+                    </span>
+                  )}
+                </th>
                 <th className="px-4 py-2 text-right text-sm font-medium text-foreground">
                   Actions
                 </th>
@@ -160,7 +178,7 @@ export function FieldsList() {
             <tbody className="divide-y divide-border">
               {sortedFields.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="p-6 text-center text-foreground/60">
+                  <td colSpan={5} className="p-6 text-center text-foreground/60">
                     No data fields yet.
                   </td>
                 </tr>
@@ -174,6 +192,13 @@ export function FieldsList() {
                   <td className="px-4 py-2 text-foreground">{f.key}</td>
                   <td className="px-4 py-2 text-foreground">{f.label}</td>
                   <td className="px-4 py-2 text-foreground">{formatType(f)}</td>
+                  <td className="px-4 py-2 text-foreground/70">
+                    {f.updatedAt
+                      ? `${new Date(f.updatedAt).toLocaleDateString()}${f.updatedByName ? ` by ${f.updatedByName}` : ''}`
+                      : f.createdAt
+                        ? `${new Date(f.createdAt).toLocaleDateString()}${f.createdByName ? ` by ${f.createdByName}` : ''}`
+                        : '—'}
+                  </td>
                   <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-3">
                       <Link

@@ -3,22 +3,40 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { format } from 'date-fns'
 
+interface PlanStats {
+  id: string
+  name: string
+  total: number
+  pass: number
+  fail: number
+  partial: number
+}
+
 interface Record {
   id: string
-  testName: string
+  planName: string
   recordedAt: string
   status: string
 }
 
 export function Dashboard() {
-  const [records, setRecords] = useState<Record[]>([])
+  const [planStats, setPlanStats] = useState<PlanStats[]>([])
+  const [recentRecords, setRecentRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api
-      .get<Record[]>('/records', { params: { limit: 10 } })
-      .then((r) => setRecords(r.data))
-      .catch(() => setRecords([]))
+    Promise.all([
+      api.get<PlanStats[]>('/test-plans/stats'),
+      api.get<Record[]>('/records', { params: { limit: 10 } }),
+    ])
+      .then(([statsRes, recordsRes]) => {
+        setPlanStats(statsRes.data)
+        setRecentRecords(recordsRes.data)
+      })
+      .catch(() => {
+        setPlanStats([])
+        setRecentRecords([])
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -39,38 +57,59 @@ export function Dashboard() {
           View Results
         </Link>
       </div>
-      <div className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-4 text-lg font-medium text-foreground">Recent records</h2>
-        {loading ? (
-          <p className="text-foreground/60">Loading...</p>
-        ) : records.length === 0 ? (
-          <p className="text-foreground/60">No records yet.</p>
-        ) : (
-          <ul className="space-y-2">
-            {records.map((r) => (
-              <li key={r.id} className="flex items-center justify-between">
-                <Link
-                  to={`/results/${r.id}`}
-                  className="text-foreground hover:underline"
-                >
-                  {r.testName} - {format(new Date(r.recordedAt), 'PPp')}
-                </Link>
-                <span
-                  className={`rounded px-2 py-0.5 text-xs ${
-                    r.status === 'pass'
-                      ? 'bg-green-500/20 text-green-600 dark:text-green-400'
-                      : r.status === 'fail'
-                        ? 'bg-red-500/20 text-red-600 dark:text-red-400'
-                        : 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400'
-                  }`}
-                >
-                  {r.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+
+      {loading ? (
+        <p className="text-foreground/60">Loading...</p>
+      ) : (
+        <div className="space-y-6">
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-4 text-lg font-medium text-foreground">Test plans</h2>
+            {planStats.length === 0 ? (
+              <p className="text-foreground/60">No test plans yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {planStats.map((plan) => (
+                  <Link
+                    key={plan.id}
+                    to={`/test-plans/${plan.id}/data`}
+                    className="flex items-center justify-between rounded-lg border border-border bg-background p-4 transition-colors hover:bg-card"
+                  >
+                    <span className="font-medium text-foreground">{plan.name}</span>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="text-foreground/70">
+                        {plan.total} record{plan.total !== 1 ? 's' : ''} total
+                      </span>
+                      {plan.total === 0 && (
+                        <span className="text-foreground/50">No data yet</span>
+                      )}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-4 text-lg font-medium text-foreground">Recent records</h2>
+            {recentRecords.length === 0 ? (
+              <p className="text-foreground/60">No records yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {recentRecords.map((r) => (
+                  <li key={r.id} className="flex items-center justify-between">
+                    <Link
+                      to={`/results/${r.id}`}
+                      className="text-foreground hover:underline"
+                    >
+                      {r.planName} - {format(new Date(r.recordedAt), 'PPp')}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSortableHeader } from '../hooks/useSortableHeader'
+import { useUserPreference } from '../hooks/useUserPreference'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import type { TestPlan } from '../types'
 
-type SortKey = 'name' | 'description'
+type SortKey = 'name' | 'shortDescription'
 type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
 
 export function TestPlansList() {
   const [plans, setPlans] = useState<TestPlan[]>([])
   const [loading, setLoading] = useState(true)
   const [exportPlanId, setExportPlanId] = useState<string | null>(null)
-  const [sortOrder, setSortOrder] = useState<SortLevel[]>([{ key: 'name', dir: 'asc' }])
+  const [sortOrder, setSortOrder] = useUserPreference<SortLevel[]>(
+    'atlas-test-plans-sort',
+    [{ key: 'name', dir: 'asc' }]
+  )
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const navigate = useNavigate()
 
   const getVal = (plan: TestPlan, key: SortKey) =>
-    key === 'name' ? (plan.name ?? '') : (plan.description ?? '')
+    key === 'name' ? (plan.name ?? '') : (plan.shortDescription ?? '')
 
   const sortedPlans = useMemo(() => {
     const copy = [...plans]
@@ -104,17 +108,20 @@ export function TestPlansList() {
                 </th>
                 <th
                   className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
-                  {...getSortHandlers('description')}
+                  {...getSortHandlers('shortDescription')}
                   title="Tap to sort. Long-press or Shift+click to add secondary sort."
                 >
                   <span className="flex items-center gap-1">
-                    Test plan
-                    {getSortIndex('description') >= 0 && (
+                    Description
+                    {getSortIndex('shortDescription') >= 0 && (
                       <span className="text-foreground/60">
-                        {getSortIndex('description') + 1}{getSortDir('description') === 'asc' ? '↑' : '↓'}
+                        {getSortIndex('shortDescription') + 1}{getSortDir('shortDescription') === 'asc' ? '↑' : '↓'}
                       </span>
                     )}
                   </span>
+                </th>
+                <th className="px-4 py-3 text-right text-sm font-medium text-foreground">
+                  Records
                 </th>
                 <th className="px-4 py-3 text-right text-sm font-medium text-foreground">
                   Actions
@@ -139,7 +146,10 @@ export function TestPlansList() {
                     {plan.name}
                   </td>
                   <td className="px-4 py-3 text-sm text-foreground/70">
-                    {plan.description || '—'}
+                    {plan.shortDescription?.trim() || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm text-foreground/70">
+                    {plan.recordCount ?? 0} record{(plan.recordCount ?? 0) !== 1 ? 's' : ''}
                   </td>
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">

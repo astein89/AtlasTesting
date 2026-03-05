@@ -18,12 +18,19 @@ export interface DataField {
   label: string
   type: FieldType
   config?: FieldConfig
+  createdAt?: string | null
+  updatedAt?: string | null
+  createdBy?: string | null
+  updatedBy?: string | null
+  createdByName?: string | null
+  updatedByName?: string | null
 }
 
 export interface TestPlan {
   id: string
   name: string
   description?: string
+  shortDescription?: string
   constraints?: string
   fieldIds?: string[]
   /** Map of field id -> width (e.g. "80px", "120px", "auto") for data table */
@@ -31,19 +38,14 @@ export interface TestPlan {
   /** Ordered list of field ids and separator ids (newline-xxx) for form layout */
   formLayoutOrder?: string[]
   createdAt?: string
-}
-
-export interface Test {
-  id: string
-  testPlanId: string
-  name: string
-  description?: string
-  fieldIds: string[]
+  /** Number of records in this plan (from list endpoint) */
+  recordCount?: number
 }
 
 export interface DataRecord {
   id: string
-  testId: string
+  testPlanId: string
+  planName?: string
   recordedAt: string
   enteredBy: string
   status: 'pass' | 'fail' | 'partial'

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { PopupSelect } from '../components/ui/PopupSelect'
 
 export function DbTablesViewer() {
   const [tables, setTables] = useState<string[]>([])
@@ -33,18 +34,12 @@ export function DbTablesViewer() {
     <div>
       <h1 className="mb-6 text-2xl font-semibold text-foreground">DB Tables</h1>
       <div className="mb-4">
-        <label className="mr-2 text-sm text-foreground">Table:</label>
-        <select
+        <PopupSelect
+          label="Table"
           value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-        >
-          {tables.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+          onChange={setSelected}
+          options={tables}
+        />
       </div>
       {loading ? (
         <p className="text-foreground/60">Loading...</p>

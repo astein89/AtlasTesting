@@ -50,8 +50,12 @@ input, select, textarea, button {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Prevent scroll chaining on mobile - stops scroll from leaking to parent */
-.overflow-x-auto,
+/* Contain overscroll only in the scroll direction - allows vertical scroll to propagate to parent when over horizontally-scrolling tables (PC) */
+.overflow-x-auto {
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+}
 .overflow-y-auto {
-  overscroll-behavior: contain;
+  overscroll-behavior-x: auto;
+  overscroll-behavior-y: contain;
 }

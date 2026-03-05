@@ -67,18 +67,7 @@ export function DynamicDataEntryForm({
       acc[f.key] = data[f.key]
       return acc
     }, {} as Record<string, string | number | boolean>)
-
-    let status = 'pass'
-    for (const f of fields) {
-      const val = config[f.key]
-      const cfg = f.config || {}
-      if ((f.type === 'number' || f.type === 'fraction') && typeof val === 'number') {
-        if (cfg.min != null && val < cfg.min) status = 'fail'
-        if (cfg.max != null && val > cfg.max) status = 'fail'
-      }
-      if (f.type === 'select' && cfg.options?.length && val === 'Fail') status = 'fail'
-    }
-    onSubmit(config, status)
+    onSubmit(config, 'partial')
   }
 
   return (

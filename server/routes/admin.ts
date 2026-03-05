@@ -3,7 +3,7 @@ import { db } from '../db/index.js'
 import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
-const APP_TABLES = ['users', 'fields', 'test_plans', 'tests', 'test_runs', 'refresh_tokens']
+const APP_TABLES = ['users', 'fields', 'test_plans', 'test_runs', 'refresh_tokens', 'user_preferences']
 
 router.get('/tables', authMiddleware, requireAdmin, (_, res) => {
   res.json(APP_TABLES)

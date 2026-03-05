@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { AdminChangePasswordModal } from '../components/auth/AdminChangePasswordModal'
+import { PopupSelect } from '../components/ui/PopupSelect'
 import type { User } from '../types'
 
 export function Users() {
@@ -88,14 +89,15 @@ export function Users() {
               onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
               className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
             />
-            <select
+            <PopupSelect
               value={form.role}
-              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
+              onChange={(v) => setForm((f) => ({ ...f, role: v }))}
+              options={[
+                { value: 'user', label: 'User' },
+                { value: 'admin', label: 'Admin' },
+              ]}
+              placeholder="Role"
+            />
           </div>
           <div className="mt-4 flex gap-2">
             <button
@@ -160,16 +162,17 @@ export function Users() {
                       />
                     </td>
                     <td className="px-4 py-2">
-                      <select
+                      <PopupSelect
                         value={form.role}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, role: e.target.value }))
+                        onChange={(v) =>
+                          setForm((f) => ({ ...f, role: v }))
                         }
-                        className="rounded border border-border bg-background px-2 py-1 text-foreground"
-                      >
-                        <option value="user">User</option>
-                        <option value="admin">Admin</option>
-                      </select>
+                        options={[
+                          { value: 'user', label: 'User' },
+                          { value: 'admin', label: 'Admin' },
+                        ]}
+                        className="min-w-[100px]"
+                      />
                     </td>
                     <td className="px-4 py-2 text-right">
                       <button

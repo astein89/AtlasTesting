@@ -21,18 +21,21 @@ export function runSeed() {
 
   const fieldIds = [uuidv4(), uuidv4(), uuidv4()]
   db.prepare(`
-    INSERT INTO fields (id, key, label, type, config)
+    INSERT INTO fields (id, key, label, type, config, created_by)
     VALUES 
-      (?, 'cycle_time_sec', 'Cycle Time (sec)', 'number', ?),
-      (?, 'result', 'Result', 'select', ?),
-      (?, 'notes', 'Notes', 'text', ?)
+      (?, 'cycle_time_sec', 'Cycle Time (sec)', 'number', ?, ?),
+      (?, 'result', 'Result', 'select', ?, ?),
+      (?, 'notes', 'Notes', 'text', ?, ?)
   `).run(
     fieldIds[0],
     JSON.stringify({ unit: 'sec', min: 0, max: 300, required: true }),
+    adminId,
     fieldIds[1],
     JSON.stringify({ options: ['Pass', 'Fail', 'N/A'], required: true }),
+    adminId,
     fieldIds[2],
-    JSON.stringify({ required: false })
+    JSON.stringify({ required: false }),
+    adminId
   )
 
   const planId = uuidv4()
@@ -46,21 +49,15 @@ export function runSeed() {
     JSON.stringify(fieldIds)
   )
 
-  const testId = uuidv4()
   db.prepare(`
-    INSERT INTO tests (id, test_plan_id, name, description, field_ids)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(testId, planId, 'Pallet Cycle Test', 'Standard cycle time verification', JSON.stringify(fieldIds))
-
-  db.prepare(`
-    INSERT INTO test_runs (id, test_id, run_at, entered_by, status, data)
+    INSERT INTO test_runs (id, test_plan_id, run_at, entered_by, status, data)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     uuidv4(),
-    testId,
+    planId,
     new Date().toISOString(),
     adminId,
-    'pass',
+    'partial',
     JSON.stringify({ cycle_time_sec: 45, result: 'Pass', notes: 'Sample run' })
   )
 

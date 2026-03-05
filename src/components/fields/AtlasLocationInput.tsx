@@ -27,15 +27,16 @@ export function AtlasLocationInput({ value, onChange, className = '' }: AtlasLoc
   const [open, setOpen] = useState(false)
   const [building, setBuilding] = useState<Partial<AtlasLocationParts>>({})
 
-  const parts = parseAtlasLocation(value)
   const stepIndex = STEPS.findIndex((s) => building[s.key as keyof AtlasLocationParts] == null)
   const isComplete = stepIndex < 0
   const hasValue = Object.keys(building).length === 5
 
+  const [laneTens, setLaneTens] = useState<number | null>(null)
+
   const openBuilder = () => {
     const p = parseAtlasLocation(value)
     setBuilding(p ? { level: p.level, aisle: p.aisle, lane: p.lane, side: p.side, position: p.position } : {})
-    setLaneInput('')
+    setLaneTens(null)
     setOpen(true)
   }
 
@@ -48,26 +49,32 @@ export function AtlasLocationInput({ value, onChange, className = '' }: AtlasLoc
     }
   }
 
-  const [laneInput, setLaneInput] = useState('')
-  const laneDisplay = building.lane != null ? String(building.lane) : laneInput || ''
-  const setLaneAndAdvance = () => {
-    const n = Math.min(90, Math.max(1, parseInt(laneDisplay, 10) || 1))
-    setLaneInput('')
-    select('lane', n)
+  const LANE_TENS_OPTIONS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90] as const
+  const getLaneSubOptions = (tens: number): number[] => {
+    if (tens === 0) return [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    if (tens === 90) return [90]
+    return Array.from({ length: 10 }, (_, i) => tens + i)
   }
-  const handleLaneDigit = (d: string) => {
-    const next = laneDisplay + d
-    const num = parseInt(next, 10)
-    if (num <= 90) setLaneInput(next)
-  }
-  const handleLaneBackspace = () => setLaneInput((s) => s.slice(0, -1))
-  const handleLaneClear = () => setLaneInput('')
 
   const cancel = () => {
     setOpen(false)
     setBuilding({})
   }
 
+  const goBack = () => {
+    if (stepIndex === 2 && laneTens != null) {
+      setLaneTens(null)
+      return
+    }
+    if (stepIndex <= 0) return
+    const keyToClear = STEPS[stepIndex - 1].key as keyof AtlasLocationParts
+    const next = { ...building }
+    delete next[keyToClear]
+    setBuilding(next)
+    if (keyToClear === 'lane') setLaneTens(null)
+  }
+
+  const canGoBack = stepIndex > 0 || (stepIndex === 2 && laneTens != null)
   const displayValue = value || 'Click to set location'
 
   return (
@@ -93,120 +100,68 @@ export function AtlasLocationInput({ value, onChange, className = '' }: AtlasLoc
               <span className="font-medium text-foreground">
                 {formatPartialAtlasLocation(building) || 'S-'}
               </span>
-              <button
-                type="button"
-                onClick={cancel}
-                className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background"
-              >
-                Cancel
-              </button>
+              <div className="flex items-center gap-2">
+                {canGoBack && (
+                  <button
+                    type="button"
+                    onClick={goBack}
+                    className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                  >
+                    ← Back
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={cancel}
+                  className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
 
             {!isComplete && (
               <div>
                 <p className="mb-3 text-sm text-foreground/70">
-                  {stepIndex === 2 ? 'Enter Lane (01–90)' : `Select ${STEPS[stepIndex].label}`}
+                  {stepIndex === 2 ? 'Select Lane' : `Select ${STEPS[stepIndex].label}`}
                 </p>
                 {stepIndex === 2 ? (
                   <div>
-                    <div className="mb-3 rounded border border-border bg-background px-3 py-2">
-                      <span className="text-lg font-medium text-foreground">
-                        {laneDisplay || '—'}
-                      </span>
-                    </div>
-                    <div className="mb-3 grid grid-cols-4 grid-rows-4 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('7')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        7
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('8')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        8
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('9')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        9
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleLaneBackspace}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-foreground hover:bg-card"
-                      >
-                        ⌫
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('4')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        4
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('5')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        5
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('6')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        6
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleLaneClear}
-                        className="row-span-2 min-h-0 rounded-lg border border-border bg-background text-foreground hover:bg-card"
-                      >
-                        C
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('1')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        1
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('2')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        2
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('3')}
-                        className="min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        3
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLaneDigit('0')}
-                        className="col-span-2 min-h-[48px] rounded-lg border border-border bg-background text-lg text-foreground hover:bg-card"
-                      >
-                        0
-                      </button>
-                      <button
-                        type="button"
-                        onClick={setLaneAndAdvance}
-                        className="col-span-2 min-h-[48px] rounded-lg bg-primary text-primary-foreground hover:opacity-90"
-                      >
-                        Next
-                      </button>
-                    </div>
+                    <p className="mb-2 text-xs text-foreground/60">
+                      {laneTens == null ? 'Select lane range' : laneTens === 90 ? 'Lane 90' : `Lanes ${String(laneTens).padStart(2, '0')}–${String(laneTens + 9).padStart(2, '0')}`}
+                    </p>
+                    {laneTens == null ? (
+                      <div className="grid grid-cols-5 gap-2">
+                        {LANE_TENS_OPTIONS.map((tens) => (
+                          <button
+                            key={tens}
+                            type="button"
+                            onClick={() => setLaneTens(tens)}
+                            className="min-h-[44px] rounded-lg border border-border bg-background px-2 py-2 text-lg font-medium text-foreground hover:bg-card"
+                          >
+                            {String(tens).padStart(2, '0')}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-5 gap-2">
+                          {getLaneSubOptions(laneTens).map((lane) => (
+                            <button
+                              key={lane}
+                              type="button"
+                              onClick={() => {
+                                select('lane', lane)
+                                setLaneTens(null)
+                              }}
+                              className="min-h-[44px] rounded-lg border border-border bg-background px-2 py-2 text-foreground hover:bg-card"
+                            >
+                              {String(lane).padStart(2, '0')}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-5 gap-2">
@@ -229,7 +184,7 @@ export function AtlasLocationInput({ value, onChange, className = '' }: AtlasLoc
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setBuilding({})}
+                  onClick={() => { setBuilding({}); setLaneTens(null) }}
                   className="rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
                 >
                   Change

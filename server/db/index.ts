@@ -6,8 +6,10 @@ import fs from 'fs'
 import { initSchema } from './schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-// __dirname is dist/server/db when compiled; go up 3 levels to project root
-const dbPath = process.env.DB_PATH || path.join(__dirname, '..', '..', '..', 'atlas.db')
+// Dev (tsx): __dirname is server/db -> 2 levels up to project root
+// Prod: __dirname is dist/server/db -> 3 levels up to project root
+const levelsUp = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
+const dbPath = process.env.DB_PATH || path.join(__dirname, ...Array(levelsUp).fill('..'), 'atlas.db')
 
 let sqlDb: import('sql.js').Database
 
@@ -35,7 +37,12 @@ const dbWrapper = {
     return {
       run: (...params: unknown[]) => {
         try {
-          sqlDb.run(sql, params as (string | number | null)[])
+          const stmt = sqlDb.prepare(sql)
+          if (params.length > 0) {
+            stmt.bind(params as (string | number | null)[])
+          }
+          stmt.step()
+          stmt.free()
           save()
           return { changes: sqlDb.getRowsModified() }
         } catch (e) {

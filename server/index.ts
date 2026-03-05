@@ -7,9 +7,9 @@ import { authRouter } from './routes/auth.js'
 import { adminRouter } from './routes/admin.js'
 import { fieldsRouter } from './routes/fields.js'
 import { testPlansRouter } from './routes/testPlans.js'
-import { testsRouter } from './routes/tests.js'
 import { recordsRouter } from './routes/records.js'
 import { usersRouter } from './routes/users.js'
+import { preferencesRouter } from './routes/preferences.js'
 import { uploadsRouter } from './routes/uploads.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -24,9 +24,9 @@ app.use('/api/auth', authRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/fields', fieldsRouter)
 app.use('/api/test-plans', testPlansRouter)
-app.use('/api/tests', testsRouter)
 app.use('/api/records', recordsRouter)
 app.use('/api/users', usersRouter)
+app.use('/api/preferences', preferencesRouter)
 app.use('/api/upload', uploadsRouter)
 app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')))
 

@@ -31,7 +31,12 @@ export function initSchema(db: SqlDb) {
       label TEXT NOT NULL,
       type TEXT NOT NULL,
       config TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT,
+      created_by TEXT,
+      updated_by TEXT,
+      FOREIGN KEY (created_by) REFERENCES users(id),
+      FOREIGN KEY (updated_by) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS test_plans (
@@ -43,24 +48,14 @@ export function initSchema(db: SqlDb) {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
-    CREATE TABLE IF NOT EXISTS tests (
-      id TEXT PRIMARY KEY,
-      test_plan_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT,
-      field_ids TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (test_plan_id) REFERENCES test_plans(id)
-    );
-
     CREATE TABLE IF NOT EXISTS test_runs (
       id TEXT PRIMARY KEY,
-      test_id TEXT NOT NULL,
+      test_plan_id TEXT NOT NULL,
       run_at TEXT NOT NULL,
       entered_by TEXT NOT NULL,
       status TEXT NOT NULL,
       data TEXT,
-      FOREIGN KEY (test_id) REFERENCES tests(id),
+      FOREIGN KEY (test_plan_id) REFERENCES test_plans(id),
       FOREIGN KEY (entered_by) REFERENCES users(id)
     );
 
@@ -71,9 +66,6 @@ export function initSchema(db: SqlDb) {
       expires_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
-
-    CREATE INDEX IF NOT EXISTS idx_test_runs_test_id ON test_runs(test_id);
-    CREATE INDEX IF NOT EXISTS idx_test_runs_run_at ON test_runs(run_at);
   `)
   migrateEmailToUsername(db)
   migrateTestsToPlans(db)
@@ -81,7 +73,50 @@ export function initSchema(db: SqlDb) {
   migratePlanFieldLayout(db)
   migratePlanFormLayout(db)
   migratePlanConstraints(db)
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tests_test_plan_id ON tests(test_plan_id)`)
+  migratePlanShortDescription(db)
+  migrateRecordsToPlanDirect(db)
+  migrateUserPreferences(db)
+  migrateFieldsAudit(db)
+  // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
+    CREATE INDEX IF NOT EXISTS idx_test_runs_run_at ON test_runs(run_at);
+  `)
+}
+
+function migrateRecordsToPlanDirect(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_runs)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasTestId = rows.some((r) => r[1] === 'test_id')
+    if (!hasTestId) {
+      db.run('DROP TABLE IF EXISTS tests')
+      return
+    }
+    db.exec(`
+      CREATE TABLE test_runs_new (
+        id TEXT PRIMARY KEY,
+        test_plan_id TEXT NOT NULL,
+        run_at TEXT NOT NULL,
+        entered_by TEXT NOT NULL,
+        status TEXT NOT NULL,
+        data TEXT,
+        FOREIGN KEY (test_plan_id) REFERENCES test_plans(id),
+        FOREIGN KEY (entered_by) REFERENCES users(id)
+      );
+      INSERT INTO test_runs_new (id, test_plan_id, run_at, entered_by, status, data)
+      SELECT tr.id, t.test_plan_id, tr.run_at, tr.entered_by, tr.status, tr.data
+      FROM test_runs tr JOIN tests t ON tr.test_id = t.id;
+      DROP TABLE test_runs;
+      ALTER TABLE test_runs_new RENAME TO test_runs;
+      CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
+      CREATE INDEX IF NOT EXISTS idx_test_runs_run_at ON test_runs(run_at);
+      DROP TABLE IF EXISTS tests;
+    `)
+  } catch {
+    // Ignore
+  }
 }
 
 function migratePlanConstraints(db: SqlDb) {
@@ -92,6 +127,19 @@ function migratePlanConstraints(db: SqlDb) {
     const hasConstraints = rows.some((r) => r[1] === 'constraints')
     if (hasConstraints) return
     db.run('ALTER TABLE test_plans ADD COLUMN constraints TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanShortDescription(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasShortDesc = rows.some((r) => r[1] === 'short_description')
+    if (hasShortDesc) return
+    db.run('ALTER TABLE test_plans ADD COLUMN short_description TEXT')
   } catch {
     // Ignore
   }
@@ -131,6 +179,8 @@ function migratePlanFieldIds(db: SqlDb) {
     const hasFieldIds = rows.some((r) => r[1] === 'field_ids')
     if (hasFieldIds) return
     db.run('ALTER TABLE test_plans ADD COLUMN field_ids TEXT')
+    const tablesInfo = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='tests'")
+    if (!tablesInfo.length || !(tablesInfo[0].values as unknown[][])?.length) return
     const stmt = db.prepare('SELECT test_plan_id, field_ids FROM tests')
     const planFields = new Map<string, string>()
     while (stmt.step()) {
@@ -142,6 +192,42 @@ function migratePlanFieldIds(db: SqlDb) {
     stmt.free()
     for (const [planId, fieldIds] of planFields) {
       db.run('UPDATE test_plans SET field_ids = ? WHERE id = ?', [fieldIds, planId])
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateUserPreferences(db: SqlDb) {
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (user_id, key),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `)
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateFieldsAudit(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(fields)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const cols = rows.map((r) => r[1] as string)
+    if (!cols.includes('updated_at')) {
+      db.run('ALTER TABLE fields ADD COLUMN updated_at TEXT')
+    }
+    if (!cols.includes('created_by')) {
+      db.run('ALTER TABLE fields ADD COLUMN created_by TEXT')
+    }
+    if (!cols.includes('updated_by')) {
+      db.run('ALTER TABLE fields ADD COLUMN updated_by TEXT')
     }
   } catch {
     // Ignore

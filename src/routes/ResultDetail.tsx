@@ -5,8 +5,8 @@ import { format } from 'date-fns'
 
 interface Record {
   id: string
-  testId: string
-  testName: string
+  testPlanId: string
+  planName: string
   recordedAt: string
   enteredBy: string
   status: string
@@ -34,7 +34,7 @@ export function ResultDetail() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-foreground">
-          {record.testName} - {format(new Date(record.recordedAt), 'PPp')}
+          {record.planName} - {format(new Date(record.recordedAt), 'PPp')}
         </h1>
         <Link
           to="/results"
@@ -45,17 +45,6 @@ export function ResultDetail() {
       </div>
       <div className="space-y-4 rounded-lg border border-border bg-card p-6">
         <div className="flex gap-4">
-          <span
-            className={`rounded px-2 py-1 text-sm ${
-              record.status === 'pass'
-                ? 'bg-green-500/20 text-green-600 dark:text-green-400'
-                : record.status === 'fail'
-                  ? 'bg-red-500/20 text-red-600 dark:text-red-400'
-                  : 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400'
-            }`}
-          >
-            {record.status}
-          </span>
           <span className="text-foreground/60">Entered by: {record.enteredBy}</span>
         </div>
         <div>

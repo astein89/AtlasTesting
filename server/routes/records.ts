@@ -8,23 +8,19 @@ const router = Router()
 router.use(authMiddleware)
 
 router.get('/', (req: AuthRequest, res) => {
-  const { testId, testPlanId, from, to, limit = 50 } = req.query
+  const { testPlanId, from, to, limit = 50 } = req.query
   let sql = `
-    SELECT tr.*, t.name as test_name, t.test_plan_id,
+    SELECT tr.*, tp.name as plan_name,
     COALESCE(u.name, u.username) as entered_by_name
     FROM test_runs tr
-    JOIN tests t ON tr.test_id = t.id
+    JOIN test_plans tp ON tr.test_plan_id = tp.id
     LEFT JOIN users u ON tr.entered_by = u.id
     WHERE 1=1
   `
   const params: unknown[] = []
 
-  if (testId) {
-    sql += ' AND tr.test_id = ?'
-    params.push(testId)
-  }
   if (testPlanId) {
-    sql += ' AND t.test_plan_id = ?'
+    sql += ' AND tr.test_plan_id = ?'
     params.push(testPlanId)
   }
   if (from) {
@@ -40,20 +36,20 @@ router.get('/', (req: AuthRequest, res) => {
 
   const rows = db.prepare(sql).all(...params) as Array<{
     id: string
-    test_id: string
+    test_plan_id: string
     run_at: string
     entered_by: string
     status: string
     data: string | null
-    test_name: string
+    plan_name: string
     entered_by_name: string | null
   }>
 
   res.json(
     rows.map((r) => ({
       id: r.id,
-      testId: r.test_id,
-      testName: r.test_name,
+      testPlanId: r.test_plan_id,
+      planName: r.plan_name,
       recordedAt: r.run_at,
       enteredBy: r.entered_by,
       enteredByName: r.entered_by_name || r.entered_by,
@@ -66,18 +62,18 @@ router.get('/', (req: AuthRequest, res) => {
 router.get('/:id', (req: AuthRequest, res) => {
   const row = db
     .prepare(
-      `SELECT tr.*, t.name as test_name FROM test_runs tr
-       JOIN tests t ON tr.test_id = t.id WHERE tr.id = ?`
+      `SELECT tr.*, tp.name as plan_name FROM test_runs tr
+       JOIN test_plans tp ON tr.test_plan_id = tp.id WHERE tr.id = ?`
     )
     .get(req.params.id) as
     | {
         id: string
-        test_id: string
+        test_plan_id: string
         run_at: string
         entered_by: string
         status: string
         data: string | null
-        test_name: string
+        plan_name: string
       }
     | undefined
 
@@ -85,8 +81,8 @@ router.get('/:id', (req: AuthRequest, res) => {
 
   res.json({
     id: row.id,
-    testId: row.test_id,
-    testName: row.test_name,
+    testPlanId: row.test_plan_id,
+    planName: row.plan_name,
     recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,
@@ -95,48 +91,50 @@ router.get('/:id', (req: AuthRequest, res) => {
 })
 
 router.post('/', (req: AuthRequest, res) => {
-  const { testId, data, status } = req.body
-  if (!testId || !req.user) {
-    return res.status(400).json({ error: 'testId required' })
+  const { testPlanId, data, status } = req.body
+  if (!testPlanId || !req.user) {
+    return res.status(400).json({ error: 'testPlanId required' })
+  }
+  if (!status || !['pass', 'fail', 'partial'].includes(status)) {
+    return res.status(400).json({ error: 'status required (pass, fail, or partial)' })
   }
 
-  const test = db.prepare('SELECT id FROM tests WHERE id = ?').get(testId)
-  if (!test) return res.status(404).json({ error: 'Test not found' })
+  const plan = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(testPlanId)
+  if (!plan) return res.status(404).json({ error: 'Test plan not found' })
 
   const id = uuidv4()
   const recordedAt = new Date().toISOString()
-  const statusVal = status || 'pass'
 
   db.prepare(
-    'INSERT INTO test_runs (id, test_id, run_at, entered_by, status, data) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_runs (id, test_plan_id, run_at, entered_by, status, data) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(
     id,
-    testId,
+    testPlanId,
     recordedAt,
     req.user.id,
-    statusVal,
+    status,
     data ? JSON.stringify(data) : null
   )
 
   const row = db
     .prepare(
-      `SELECT tr.*, t.name as test_name FROM test_runs tr
-       JOIN tests t ON tr.test_id = t.id WHERE tr.id = ?`
+      `SELECT tr.*, tp.name as plan_name FROM test_runs tr
+       JOIN test_plans tp ON tr.test_plan_id = tp.id WHERE tr.id = ?`
     )
     .get(id) as {
     id: string
-    test_id: string
+    test_plan_id: string
     run_at: string
     entered_by: string
     status: string
     data: string | null
-    test_name: string
+    plan_name: string
   }
 
   res.status(201).json({
     id: row.id,
-    testId: row.test_id,
-    testName: row.test_name,
+    testPlanId: row.test_plan_id,
+    planName: row.plan_name,
     recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,
@@ -150,7 +148,7 @@ router.put('/:id', (req: AuthRequest, res) => {
 
   const existing = db.prepare('SELECT * FROM test_runs WHERE id = ?').get(id) as {
     id: string
-    test_id: string
+    test_plan_id: string
     run_at: string
     entered_by: string
     status: string
@@ -169,9 +167,11 @@ router.put('/:id', (req: AuthRequest, res) => {
     values.push(status)
   }
   if (updates.length === 0) {
+    const planRow = db.prepare('SELECT name FROM test_plans WHERE id = ?').get(existing.test_plan_id) as { name: string }
     return res.json({
       id: existing.id,
-      testId: existing.test_id,
+      testPlanId: existing.test_plan_id,
+      planName: planRow?.name || '',
       recordedAt: existing.run_at,
       enteredBy: existing.entered_by,
       status: existing.status,
@@ -183,22 +183,22 @@ router.put('/:id', (req: AuthRequest, res) => {
 
   const row = db
     .prepare(
-      `SELECT tr.*, t.name as test_name FROM test_runs tr
-       JOIN tests t ON tr.test_id = t.id WHERE tr.id = ?`
+      `SELECT tr.*, tp.name as plan_name FROM test_runs tr
+       JOIN test_plans tp ON tr.test_plan_id = tp.id WHERE tr.id = ?`
     )
     .get(id) as {
     id: string
-    test_id: string
+    test_plan_id: string
     run_at: string
     entered_by: string
     status: string
     data: string | null
-    test_name: string
+    plan_name: string
   }
   res.json({
     id: row.id,
-    testId: row.test_id,
-    testName: row.test_name,
+    testPlanId: row.test_plan_id,
+    planName: row.plan_name,
     recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,

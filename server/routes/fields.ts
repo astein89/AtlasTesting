@@ -7,44 +7,90 @@ const router = Router()
 
 router.use(authMiddleware)
 
+function toFieldJson(r: {
+  id: string
+  key: string
+  label: string
+  type: string
+  config: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  created_by?: string | null
+  updated_by?: string | null
+  created_by_name?: string | null
+  updated_by_name?: string | null
+}) {
+  return {
+    id: r.id,
+    key: r.key,
+    label: r.label,
+    type: r.type,
+    config: r.config ? JSON.parse(r.config) : {},
+    createdAt: r.created_at ?? null,
+    updatedAt: r.updated_at ?? null,
+    createdBy: r.created_by ?? null,
+    updatedBy: r.updated_by ?? null,
+    createdByName: r.created_by_name ?? null,
+    updatedByName: r.updated_by_name ?? null,
+  }
+}
+
 router.get('/', (_, res) => {
-  const rows = db.prepare('SELECT * FROM fields ORDER BY key').all() as Array<{
+  const rows = db
+    .prepare(
+      `SELECT f.*,
+        COALESCE(uc.name, uc.username) as created_by_name,
+        COALESCE(uu.name, uu.username) as updated_by_name
+       FROM fields f
+       LEFT JOIN users uc ON f.created_by = uc.id
+       LEFT JOIN users uu ON f.updated_by = uu.id
+       ORDER BY f.key`
+    )
+    .all() as Array<{
     id: string
     key: string
     label: string
     type: string
     config: string | null
+    created_at?: string | null
+    updated_at?: string | null
+    created_by?: string | null
+    updated_by?: string | null
+    created_by_name?: string | null
+    updated_by_name?: string | null
   }>
-  res.json(
-    rows.map((r) => ({
-      id: r.id,
-      key: r.key,
-      label: r.label,
-      type: r.type,
-      config: r.config ? JSON.parse(r.config) : {},
-    }))
-  )
+  res.json(rows.map(toFieldJson))
 })
 
 router.get('/:id', (req, res) => {
-  const row = db.prepare('SELECT * FROM fields WHERE id = ?').get(req.params.id) as {
+  const row = db
+    .prepare(
+      `SELECT f.*,
+        COALESCE(uc.name, uc.username) as created_by_name,
+        COALESCE(uu.name, uu.username) as updated_by_name
+       FROM fields f
+       LEFT JOIN users uc ON f.created_by = uc.id
+       LEFT JOIN users uu ON f.updated_by = uu.id
+       WHERE f.id = ?`
+    )
+    .get(req.params.id) as {
     id: string
     key: string
     label: string
     type: string
     config: string | null
+    created_at?: string | null
+    updated_at?: string | null
+    created_by?: string | null
+    updated_by?: string | null
+    created_by_name?: string | null
+    updated_by_name?: string | null
   } | undefined
   if (!row) return res.status(404).json({ error: 'Field not found' })
-  res.json({
-    id: row.id,
-    key: row.key,
-    label: row.label,
-    type: row.type,
-    config: row.config ? JSON.parse(row.config) : {},
-  })
+  res.json(toFieldJson(row))
 })
 
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requireAdmin, (req: AuthRequest, res) => {
   const { key, label, type, config } = req.body
   if (!key || !label || !type) {
     return res.status(400).json({ error: 'key, label, type required' })
@@ -56,27 +102,24 @@ router.post('/', requireAdmin, (req, res) => {
   }
 
   const id = uuidv4()
+  const createdBy = req.user?.id ?? null
   db.prepare(
-    'INSERT INTO fields (id, key, label, type, config) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, key, label, type, config ? JSON.stringify(config) : null)
+    'INSERT INTO fields (id, key, label, type, config, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, key, label, type, config ? JSON.stringify(config) : null, createdBy)
 
-  const row = db.prepare('SELECT * FROM fields WHERE id = ?').get(id) as {
-    id: string
-    key: string
-    label: string
-    type: string
-    config: string | null
-  }
-  res.status(201).json({
-    id: row.id,
-    key: row.key,
-    label: row.label,
-    type: row.type,
-    config: row.config ? JSON.parse(row.config) : {},
-  })
+  const row = db
+    .prepare(
+      `SELECT f.*, COALESCE(uc.name, uc.username) as created_by_name, COALESCE(uu.name, uu.username) as updated_by_name
+       FROM fields f
+       LEFT JOIN users uc ON f.created_by = uc.id
+       LEFT JOIN users uu ON f.updated_by = uu.id
+       WHERE f.id = ?`
+    )
+    .get(id) as Parameters<typeof toFieldJson>[0]
+  res.status(201).json(toFieldJson(row))
 })
 
-router.put('/:id', requireAdmin, (req, res) => {
+router.put('/:id', requireAdmin, (req: AuthRequest, res) => {
   const { key, label, type, config } = req.body
   const { id } = req.params
 
@@ -107,38 +150,31 @@ router.put('/:id', requireAdmin, (req, res) => {
     values.push(JSON.stringify(config))
   }
   if (updates.length === 0) {
-    const row = db.prepare('SELECT * FROM fields WHERE id = ?').get(id) as {
-      id: string
-      key: string
-      label: string
-      type: string
-      config: string | null
-    }
-    return res.json({
-      id: row.id,
-      key: row.key,
-      label: row.label,
-      type: row.type,
-      config: row.config ? JSON.parse(row.config) : {},
-    })
+    const row = db
+      .prepare(
+        `SELECT f.*, uc.username as created_by_name, uu.username as updated_by_name
+         FROM fields f
+         LEFT JOIN users uc ON f.created_by = uc.id
+         LEFT JOIN users uu ON f.updated_by = uu.id
+         WHERE f.id = ?`
+      )
+      .get(id) as Parameters<typeof toFieldJson>[0]
+    return res.json(toFieldJson(row))
   }
-  values.push(id)
+  updates.push('updated_at = ?', 'updated_by = ?')
+  values.push(new Date().toISOString(), req.user?.id ?? null, id)
   db.prepare(`UPDATE fields SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
-  const row = db.prepare('SELECT * FROM fields WHERE id = ?').get(id) as {
-    id: string
-    key: string
-    label: string
-    type: string
-    config: string | null
-  }
-  res.json({
-    id: row.id,
-    key: row.key,
-    label: row.label,
-    type: row.type,
-    config: row.config ? JSON.parse(row.config) : {},
-  })
+  const row = db
+    .prepare(
+      `SELECT f.*, COALESCE(uc.name, uc.username) as created_by_name, COALESCE(uu.name, uu.username) as updated_by_name
+       FROM fields f
+       LEFT JOIN users uc ON f.created_by = uc.id
+       LEFT JOIN users uu ON f.updated_by = uu.id
+       WHERE f.id = ?`
+    )
+    .get(id) as Parameters<typeof toFieldJson>[0]
+  res.json(toFieldJson(row))
 })
 
 router.delete('/:id', requireAdmin, (req, res) => {

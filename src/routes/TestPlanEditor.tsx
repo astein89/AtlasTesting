@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import { PlanFieldSelector } from '../components/fields/PlanFieldSelector'
-import { FormLayoutEditor } from '../components/fields/FormLayoutEditor'
+import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
-import { createSeparatorId } from '../utils/formLayout'
+import { getFieldIdsFromOrder } from '../utils/formLayout'
 import type { TestPlan } from '../types'
 
 export function TestPlanEditor() {
@@ -14,6 +13,7 @@ export function TestPlanEditor() {
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const isNew = !planId
   const [name, setName] = useState('')
+  const [shortDescription, setShortDescription] = useState('')
   const [description, setDescription] = useState('')
   const [constraints, setConstraints] = useState('')
   const [fieldIds, setFieldIds] = useState<string[]>([])
@@ -28,6 +28,7 @@ export function TestPlanEditor() {
         .get<TestPlan>(`/test-plans/${planId}`)
         .then((r) => {
           setName(r.data.name)
+          setShortDescription(r.data.shortDescription || '')
           setDescription(r.data.description || '')
           setConstraints(r.data.constraints || '')
           setFieldIds(r.data.fieldIds || [])
@@ -48,24 +49,9 @@ export function TestPlanEditor() {
     setShowCreateField(false)
   }
 
-  const handleAddSeparator = () => {
-    setFormLayoutOrder((prev) => {
-      const base = prev.length > 0 ? prev : fieldIds
-      return [...base, createSeparatorId()]
-    })
-  }
-
-  const handleFieldIdsChange = (ids: string[]) => {
-    setFieldIds(ids)
-    setFormLayoutOrder((order) => {
-      const fieldIdsSet = new Set(ids)
-      const filtered = order.filter((id) =>
-        id.startsWith('newline-') ? true : fieldIdsSet.has(id)
-      )
-      const inOrder = new Set(filtered.filter((id) => !id.startsWith('newline-')))
-      const appended = ids.filter((id) => !inOrder.has(id))
-      return [...filtered, ...appended]
-    })
+  const handleFormLayoutChange = (order: string[]) => {
+    setFormLayoutOrder(order)
+    setFieldIds(getFieldIdsFromOrder(order))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -76,6 +62,7 @@ export function TestPlanEditor() {
       if (isNew) {
         const { data } = await api.post<{ id: string }>('/test-plans', {
           name: name.trim(),
+          shortDescription: shortDescription.trim() || undefined,
           description: description.trim() || undefined,
           constraints: constraints.trim() || undefined,
           fieldIds,
@@ -85,6 +72,7 @@ export function TestPlanEditor() {
       } else {
         await api.put(`/test-plans/${planId}`, {
           name: name.trim(),
+          shortDescription: shortDescription.trim() || undefined,
           description: description.trim() || undefined,
           constraints: constraints.trim() || undefined,
           fieldIds,
@@ -119,7 +107,7 @@ export function TestPlanEditor() {
       <h1 className="mb-6 text-2xl font-semibold text-foreground">
         {isNew ? 'New Test Plan' : 'Edit Test Plan'}
       </h1>
-      <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
+      <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
         <div>
           <label className="block text-sm font-medium text-foreground">Name</label>
           <input
@@ -127,6 +115,16 @@ export function TestPlanEditor() {
             onChange={(e) => setName(e.target.value)}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
             required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
+            Description
+          </label>
+          <input
+            value={shortDescription}
+            onChange={(e) => setShortDescription(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
           />
         </div>
         <div>
@@ -156,24 +154,17 @@ export function TestPlanEditor() {
             Data collection fields
           </label>
           <p className="mt-1 mb-2 text-sm text-foreground/60">
-            Select which fields to collect. Order and new lines are set in Form layout below.
+            Add fields, drag to reorder, and use New line or Separator to
+            control layout.
           </p>
           <div className="mt-2">
-            <PlanFieldSelector
-              selectedIds={fieldIds}
-              onChange={handleFieldIdsChange}
+            <PlanFieldsEditor
+              formLayoutOrder={formLayoutOrder}
+              onChange={handleFormLayoutChange}
               onCreateNew={() => setShowCreateField(true)}
             />
           </div>
         </div>
-        {fieldIds.length > 0 && (
-          <FormLayoutEditor
-            fieldIds={fieldIds}
-            value={formLayoutOrder}
-            onChange={setFormLayoutOrder}
-            onAddSeparator={handleAddSeparator}
-          />
-        )}
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"
@@ -193,7 +184,7 @@ export function TestPlanEditor() {
             <button
               type="button"
               onClick={async () => {
-                if (!confirm(`Delete plan "${name}"? This will also delete all tests and data in this plan.`)) return
+                if (!confirm(`Delete plan "${name}"? This will also delete all data in this plan.`)) return
                 try {
                   await api.delete(`/test-plans/${planId}`)
                   navigate('/test-plans', { replace: true })

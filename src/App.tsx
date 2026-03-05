@@ -10,9 +10,6 @@ import { FieldEditor } from './routes/FieldEditor'
 import { TestPlansList } from './routes/TestPlansList'
 import { TestPlanDataRedirect } from './routes/TestPlanDataRedirect'
 import { TestPlanEditor } from './routes/TestPlanEditor'
-import { TestsNew } from './routes/TestsNew'
-import { TestEditor } from './routes/TestEditor'
-import { TestData } from './routes/TestData'
 import { ResultsList } from './routes/ResultsList'
 import { ResultDetail } from './routes/ResultDetail'
 import { Users } from './routes/Users'
@@ -89,18 +86,6 @@ function App() {
           <Route path="test-plans/:planId" element={<Navigate to="data" replace />} />
           <Route path="test-plans/:planId/data" element={<TestPlanDataRedirect />} />
           <Route path="test-plans/:planId/edit" element={<AdminGuard><TestPlanEditor /></AdminGuard>} />
-          <Route
-            path="test-plans/:planId/tests/new"
-            element={
-              <AdminGuard>
-                <TestsNew />
-              </AdminGuard>
-            }
-          />
-          <Route path="test-plans/:planId/tests" element={<Navigate to="../data" replace />} />
-          <Route path="tests/:id" element={<TestEditor />} />
-          <Route path="tests/:id/data" element={<TestData />} />
-          <Route path="tests/:id/run" element={<Navigate to="../data" replace />} />
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
           <Route path="export" element={<Navigate to="/test-plans" replace />} />
