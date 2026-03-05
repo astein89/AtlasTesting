@@ -340,7 +340,7 @@ export function PlanFieldsEditor({
                 onDragEnd={handleDndDragEnd}
               >
                 <SortableContext items={order} strategy={verticalListSortingStrategy}>
-                  <ul className="min-h-[10rem] max-h-[min(24rem,60vh)] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
+                  <ul className="h-[25rem] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
                     {order.map((id, i) => (
                       <SortableLayoutItem
                         key={id}
@@ -357,7 +357,7 @@ export function PlanFieldsEditor({
                 </SortableContext>
               </DndContext>
             ) : (
-              <ul className="min-h-[10rem] max-h-[min(24rem,60vh)] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
+              <ul className="h-[25rem] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
                 {order.map((id, i) => {
                   if (isSeparatorId(id)) {
                     return (
