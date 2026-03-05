@@ -130,7 +130,7 @@ function SortableLayoutItem({
       <span className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base" title={field.label}>
         {field.label}
       </span>
-      <div className="flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
+      <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
         <span className="text-xs text-foreground/60 sm:text-sm">
           {span === 1 ? '⅓' : span === 4 ? '½' : span === 2 ? '⅔' : 'Full'}
         </span>
@@ -316,11 +316,6 @@ export function PlanFieldsEditor({
             <h3 className="mb-2 shrink-0 text-sm font-medium text-foreground">
               Form layout
             </h3>
-            <p className="mb-3 shrink-0 text-sm text-foreground/60">
-              Drag to reorder. New fields are full width by default; use ⅓, ½,
-              or ⅔ for narrower. Use “Separator” for a visible divider between
-              sections.
-            </p>
             <div className="mb-2 flex shrink-0 items-center gap-2">
               <button
                 type="button"
@@ -455,7 +450,7 @@ export function PlanFieldsEditor({
                       <span className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base" title={field.label}>
                         {field.label}
                       </span>
-                      <div className="flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
+                      <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
                         <span className="text-xs text-foreground/60 sm:text-sm">
                           {span === 1 ? '⅓' : span === 4 ? '½' : span === 2 ? '⅔' : 'Full'}
                         </span>
@@ -502,11 +497,11 @@ export function PlanFieldsEditor({
             )}
             </div>
           </div>
-          <div className="flex-1 rounded-lg border border-border p-4">
-            <h3 className="mb-2 text-sm font-medium text-foreground">
+          <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border p-4">
+            <h3 className="mb-2 shrink-0 text-sm font-medium text-foreground">
               Available
             </h3>
-            <ul className="max-h-40 space-y-1 overflow-y-auto">
+            <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
               {availableFields.map((f) => (
                 <li key={f.id}>
                   <button
