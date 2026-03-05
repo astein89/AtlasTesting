@@ -501,7 +501,7 @@ export function PlanFieldsEditor({
             <h3 className="mb-2 shrink-0 text-sm font-medium text-foreground">
               Available
             </h3>
-            <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+            <ul className="h-[25rem] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
               {availableFields.map((f) => (
                 <li key={f.id}>
                   <button
