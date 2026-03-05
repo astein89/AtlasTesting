@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 interface ColumnFilterDropdownProps {
   columnKey: string
@@ -21,6 +22,7 @@ export function ColumnFilterDropdown({
 }: ColumnFilterDropdownProps) {
   const [search, setSearch] = useState('')
   const [localSelected, setLocalSelected] = useState(selected)
+  const [position, setPosition] = useState({ top: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
 
   const uniqueValues = [...new Set(values)].filter((v) => v !== '' && v != null).sort()
@@ -29,6 +31,21 @@ export function ColumnFilterDropdown({
         String(v).toLowerCase().includes(search.toLowerCase())
       )
     : uniqueValues
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    if (!anchor) return
+    const rect = anchor.getBoundingClientRect()
+    const dropdownWidth = 280
+    const dropdownHeight = 320
+    const gap = 4
+    let left = rect.left
+    let top = rect.bottom + gap
+    if (left + dropdownWidth > window.innerWidth) left = window.innerWidth - dropdownWidth
+    if (left < 0) left = 0
+    if (top + dropdownHeight > window.innerHeight) top = Math.max(0, rect.top - dropdownHeight - gap)
+    setPosition({ top, left })
+  }, [anchorRef])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -75,10 +92,11 @@ export function ColumnFilterDropdown({
   const allSelected = filteredValues.length > 0 && filteredValues.every((v) => localSelected.has(v))
   const someSelected = localSelected.size > 0
 
-  return (
+  const dropdown = (
     <div
       ref={ref}
-      className="absolute left-0 top-full z-50 mt-1 min-w-[200px] max-w-[280px] rounded-lg border border-border bg-card py-2 shadow-lg"
+      className="fixed z-[100] min-w-[200px] max-w-[280px] rounded-lg border border-border bg-card py-2 shadow-lg"
+      style={{ top: position.top, left: position.left }}
     >
       <div className="border-b border-border px-3 pb-2">
         <input
@@ -150,4 +168,6 @@ export function ColumnFilterDropdown({
       </div>
     </div>
   )
+
+  return typeof document !== 'undefined' ? createPortal(dropdown, document.body) : dropdown
 }

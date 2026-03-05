@@ -96,6 +96,19 @@ router.get('/', (_, res) => {
   )
 })
 
+function parseDefaultSortOrder(json: string | null): Array<{ key: string; dir: 'asc' | 'desc' }> {
+  try {
+    const parsed = json ? JSON.parse(json) : null
+    if (!Array.isArray(parsed) || parsed.length === 0) return []
+    return parsed.filter(
+      (x): x is { key: string; dir: 'asc' | 'desc' } =>
+        x && typeof x.key === 'string' && (x.dir === 'asc' || x.dir === 'desc')
+    )
+  } catch {
+    return []
+  }
+}
+
 router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(req.params.id) as {
     id: string
@@ -106,6 +119,7 @@ router.get('/:id', (req, res) => {
     field_ids: string | null
     field_layout: string | null
     form_layout: string | null
+    default_sort_order?: string | null
     created_at: string
   } | undefined
   if (!row) return res.status(404).json({ error: 'Test plan not found' })
@@ -118,12 +132,14 @@ router.get('/:id', (req, res) => {
     fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
+    defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
     createdAt: row.created_at,
   })
 })
 
 router.post('/', requireAdmin, (req, res) => {
-  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder } = req.body
+  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder } =
+    req.body
   if (!name) {
     return res.status(400).json({ error: 'name required' })
   }
@@ -138,9 +154,23 @@ router.post('/', requireAdmin, (req, res) => {
     Array.isArray(formLayoutOrder)
       ? JSON.stringify(formLayoutOrder)
       : null
+  const defaultSortJson =
+    Array.isArray(defaultSortOrder) && defaultSortOrder.length > 0
+      ? JSON.stringify(defaultSortOrder)
+      : null
   db.prepare(
-    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, name, description || null, constraints || null, shortDescription || null, fieldIdsJson, fieldLayoutJson, formLayoutJson)
+    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    id,
+    name,
+    description || null,
+    constraints || null,
+    shortDescription || null,
+    fieldIdsJson,
+    fieldLayoutJson,
+    formLayoutJson,
+    defaultSortJson
+  )
 
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
     id: string
@@ -151,6 +181,7 @@ router.post('/', requireAdmin, (req, res) => {
     field_ids: string | null
     field_layout: string | null
     form_layout: string | null
+    default_sort_order?: string | null
     created_at: string
   }
   res.status(201).json({
@@ -162,12 +193,14 @@ router.post('/', requireAdmin, (req, res) => {
     fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
+    defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
     createdAt: row.created_at,
   })
 })
 
 router.put('/:id', requireAdmin, (req, res) => {
-  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder } = req.body
+  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder } =
+    req.body
   const { id } = req.params
 
   const existing = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
@@ -215,6 +248,14 @@ router.put('/:id', requireAdmin, (req, res) => {
         : null
     )
   }
+  if (defaultSortOrder !== undefined) {
+    updates.push('default_sort_order = ?')
+    values.push(
+      Array.isArray(defaultSortOrder) && defaultSortOrder.length > 0
+        ? JSON.stringify(defaultSortOrder)
+        : null
+    )
+  }
   if (updates.length === 0) {
     const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
       id: string
@@ -224,6 +265,7 @@ router.put('/:id', requireAdmin, (req, res) => {
       field_ids: string | null
       field_layout: string | null
       form_layout: string | null
+      default_sort_order?: string | null
       created_at: string
     }
     return res.json({
@@ -235,6 +277,7 @@ router.put('/:id', requireAdmin, (req, res) => {
       fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
       fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
       formLayoutOrder: parseFormLayoutOrder(row.form_layout),
+      defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
       createdAt: row.created_at,
     })
   }
@@ -249,6 +292,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     field_ids: string | null
     field_layout: string | null
     form_layout: string | null
+    default_sort_order?: string | null
     created_at: string
   }
   res.json({
@@ -260,6 +304,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
+    defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
     createdAt: row.created_at,
   })
 })

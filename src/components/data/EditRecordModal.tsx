@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { renderFormField } from '../fields/FormFieldRenderer'
-import { buildFormRowsFromOrder, normalizeFormLayoutOrder } from '../../utils/formLayout'
+import { SelectInput } from '../fields/SelectInput'
+import { buildFormRowsFromOrder, isSeparatorId, isSeparatorLineId, normalizeFormLayoutOrder, parseFieldEntry, SPAN_TO_COLS } from '../../utils/formLayout'
 import type { DataField } from '../../types'
+import { getStatusOptions } from '../../types'
 
 interface Record {
   id: string
@@ -71,6 +73,14 @@ export function EditRecordModal({
     onCancel()
   }, [onCancel])
 
+  const statusField = fields.find((f) => f.type === 'status')
+  const formOrderWithoutStatus = statusField
+    ? normalizeFormLayoutOrder(formLayoutOrder, fields).filter((entry) => {
+        if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
+        return parseFieldEntry(entry).fieldId !== statusField.id
+      })
+    : normalizeFormLayoutOrder(formLayoutOrder, fields)
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -94,36 +104,57 @@ export function EditRecordModal({
       onClick={handleClose}
     >
       <div
-        className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:rounded-lg"
+        className="flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
           <h2 className="mb-4 text-lg font-semibold text-foreground">
             Edit row — {new Date(record.recordedAt).toLocaleString()}
           </h2>
-            <div className="space-y-4">
-              {buildFormRowsFromOrder(fields, normalizeFormLayoutOrder(formLayoutOrder, fields)).map((row, ri) =>
-                Array.isArray(row) ? (
-                  <div key={ri} className="grid grid-cols-6 gap-4">
-                    {row.map(({ field, span }) => (
-                      <div
-                        key={field.id}
-                        className={`min-w-0 ${span === 1 ? 'col-span-2' : span === 4 ? 'col-span-3' : span === 2 ? 'col-span-4' : 'col-span-6'}`}
-                      >
-                        <label className="mb-1 block text-sm font-medium text-foreground">
-                          {field.label}
-                        </label>
+          <div className="w-full min-w-0 space-y-4">
+            {buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
+              Array.isArray(row) ? (
+                <div
+                  key={ri}
+                  className="grid w-full gap-4"
+                  style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' }}
+                >
+                  {row.map(({ field, span }) => (
+                    <div
+                      key={field.id}
+                      className="min-w-0 w-full"
+                      style={{ gridColumn: `span ${SPAN_TO_COLS[span]}` }}
+                    >
+                      <label className="mb-1 block text-sm font-medium text-foreground">
+                        {field.label}
+                      </label>
+                      <div className="min-w-0 w-full">
                         {renderFormField(field, data[field.key], onDataChange)}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div key={ri} className="my-4 border-t-2 border-border" />
-                )
-              )}
-            </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div key={ri} className="my-4 border-t-2 border-border" />
+              )
+            )}
+          </div>
         </div>
-        <div className="flex shrink-0 justify-between gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+          {statusField ? (
+            <div className="flex w-full min-w-0 basis-full items-center gap-2 sm:basis-0 sm:w-auto">
+              <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
+              <SelectInput
+                value={String(data[statusField.key] ?? '')}
+                onChange={(v) => onDataChange(statusField.key, v)}
+                options={getStatusOptions(statusField)}
+                className="min-w-0 flex-1 shrink-0 sm:min-w-[140px] sm:flex-none"
+                valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
+                optionColors={statusField.config?.statusColors}
+              />
+            </div>
+          ) : null}
+          <div className="flex w-full shrink-0 justify-end gap-2 sm:ml-auto sm:w-auto">
           <button
             type="button"
             onClick={onDelete}
@@ -132,7 +163,6 @@ export function EditRecordModal({
           >
             Delete
           </button>
-          <div className="flex gap-2">
             <button
               type="button"
               onClick={handleClose}

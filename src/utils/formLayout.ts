@@ -131,3 +131,22 @@ export function buildFormRowsFromOrder(
   if (currentRow.length > 0) rows.push(currentRow)
   return rows
 }
+
+/** Truncate form rows for compact card view: stop at first separator or after maxFieldRows. */
+export function truncateFormRowsForCompact(
+  rows: LayoutRow[],
+  maxFieldRows: number = 3
+): { rows: LayoutRow[]; truncated: boolean } {
+  const result: LayoutRow[] = []
+  let fieldRowCount = 0
+  for (const row of rows) {
+    if (Array.isArray(row)) {
+      if (fieldRowCount >= maxFieldRows) return { rows: result, truncated: true }
+      result.push(row)
+      fieldRowCount++
+    } else {
+      return { rows: result, truncated: true }
+    }
+  }
+  return { rows: result, truncated: false }
+}

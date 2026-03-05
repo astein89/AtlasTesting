@@ -4,6 +4,7 @@ import { FractionInput } from './FractionInput'
 import { ImageInput } from './ImageInput'
 import { SelectInput } from './SelectInput'
 import { parseFractionScale } from '../../utils/fraction'
+import { getStatusOptions } from '../../types'
 import type { DataField } from '../../types'
 
 export function renderFormField(
@@ -89,6 +90,20 @@ export function renderFormField(
         onChange={(v) => onChange(f.key, v)}
         options={f.config?.options || []}
         className="w-full"
+      />
+    )
+    return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
+  }
+  if (f.type === 'status') {
+    const statusVal = String(value ?? '')
+    const content = (
+      <SelectInput
+        value={statusVal}
+        onChange={(v) => onChange(f.key, v)}
+        options={getStatusOptions(f)}
+        className="w-full"
+        valueColor={f.config?.statusColors?.[statusVal]}
+        optionColors={f.config?.statusColors}
       />
     )
     return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content

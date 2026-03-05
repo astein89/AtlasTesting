@@ -6,6 +6,7 @@ import { FractionInput } from '../fields/FractionInput'
 import { ImageInput } from '../fields/ImageInput'
 import { SelectInput } from '../fields/SelectInput'
 import { parseFractionScale } from '../../utils/fraction'
+import { getStatusOptions } from '../../types'
 import type { DataField } from '../../types'
 
 interface DynamicDataEntryFormProps {
@@ -160,8 +161,19 @@ export function DynamicDataEntryForm({
                 value={String(watch(f.key) ?? '')}
                 onChange={(v) => setValue(f.key, v)}
                 options={f.config?.options || []}
-                placeholder="Click to select"
+                placeholder="(Select)"
                 className="w-full"
+              />
+            )}
+            {f.type === 'status' && (
+              <SelectInput
+                value={String(watch(f.key) ?? '')}
+                onChange={(v) => setValue(f.key, v)}
+                options={getStatusOptions(f)}
+                placeholder="(Select)"
+                className="w-full"
+                valueColor={f.config?.statusColors?.[String(watch(f.key) ?? '')]}
+                optionColors={f.config?.statusColors}
               />
             )}
             {errors[f.key] && (

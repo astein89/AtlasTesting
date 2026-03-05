@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/authStore'
 import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
 import { getFieldIdsFromOrder } from '../utils/formLayout'
-import type { TestPlan } from '../types'
+import type { DataField, TestPlan } from '../types'
 
 export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
@@ -18,6 +18,10 @@ export function TestPlanEditor() {
   const [constraints, setConstraints] = useState('')
   const [fieldIds, setFieldIds] = useState<string[]>([])
   const [formLayoutOrder, setFormLayoutOrder] = useState<string[]>([])
+  const [defaultSortOrder, setDefaultSortOrder] = useState<Array<{ key: string; dir: 'asc' | 'desc' }>>([
+    { key: 'date', dir: 'desc' },
+  ])
+  const [planFields, setPlanFields] = useState<DataField[]>([])
   const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
@@ -37,6 +41,9 @@ export function TestPlanEditor() {
               ? r.data.formLayoutOrder
               : r.data.fieldIds || []
           )
+          setDefaultSortOrder(
+            r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
+          )
         })
         .catch(() => navigate('/test-plans'))
         .finally(() => setLoading(false))
@@ -54,6 +61,20 @@ export function TestPlanEditor() {
     setFieldIds(getFieldIdsFromOrder(order))
   }
 
+  useEffect(() => {
+    if (fieldIds.length === 0) {
+      setPlanFields([])
+      return
+    }
+    api
+      .get<DataField[]>('/fields')
+      .then((r) => {
+        const all = r.data
+        setPlanFields(fieldIds.map((id) => all.find((f) => f.id === id)).filter(Boolean) as DataField[])
+      })
+      .catch(() => setPlanFields([]))
+  }, [fieldIds.join(',')])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
@@ -67,6 +88,7 @@ export function TestPlanEditor() {
           constraints: constraints.trim() || undefined,
           fieldIds,
           formLayoutOrder: formLayoutOrder.length > 0 ? formLayoutOrder : undefined,
+          defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
         })
         navigate(`/test-plans/${data.id}/edit`)
       } else {
@@ -77,6 +99,7 @@ export function TestPlanEditor() {
           constraints: constraints.trim() || undefined,
           fieldIds,
           formLayoutOrder,
+          defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
         })
         navigate('/test-plans')
       }
@@ -148,6 +171,70 @@ export function TestPlanEditor() {
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
             rows={3}
           />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
+            Default sort order (data view)
+          </label>
+          <p className="mt-1 mb-2 text-sm text-foreground/60">
+            Initial sort when viewing this plan&apos;s data. First row is primary, then secondary, etc.
+          </p>
+          <div className="mt-2 space-y-2">
+            {defaultSortOrder.map((level, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-foreground/60">{i + 1}.</span>
+                <select
+                  value={level.key}
+                  onChange={(e) =>
+                    setDefaultSortOrder((prev) =>
+                      prev.map((s, j) => (j === i ? { ...s, key: e.target.value } : s))
+                    )
+                  }
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                >
+                  <option value="date">Date</option>
+                  {planFields.map((f) => (
+                    <option key={f.id} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={level.dir}
+                  onChange={(e) =>
+                    setDefaultSortOrder((prev) =>
+                      prev.map((s, j) => (j === i ? { ...s, dir: e.target.value as 'asc' | 'desc' } : s))
+                    )
+                  }
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                >
+                  <option value="desc">Descending</option>
+                  <option value="asc">Ascending</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDefaultSortOrder((prev) =>
+                      prev.length > 1 ? prev.filter((_, j) => j !== i) : prev
+                    )
+                  }
+                  className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background hover:text-foreground"
+                  title="Remove sort"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setDefaultSortOrder((prev) => [...prev, { key: 'date', dir: 'desc' }])
+              }
+              className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+            >
+              + Add sort
+            </button>
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">

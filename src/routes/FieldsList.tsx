@@ -65,6 +65,9 @@ export function FieldsList() {
         return `${f.type} (${list})`
       }
     }
+    if (f.type === 'status') {
+      return 'status (In Progress, Complete, Passed, …)'
+    }
     if (f.type === 'fraction' && f.config?.fractionScale) {
       return `${f.type} (${f.config.fractionScale})`
     }
@@ -105,7 +108,7 @@ export function FieldsList() {
   }
 
   return (
-    <div>
+    <div className="w-full min-w-0">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-foreground">Data Fields</h1>
         <Link
@@ -118,7 +121,51 @@ export function FieldsList() {
       {loading ? (
         <p className="text-foreground/60">Loading...</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <>
+          {/* Mobile: card layout */}
+          <div className="w-full min-w-0 space-y-2 md:hidden">
+            {sortedFields.length === 0 ? (
+              <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
+                No data fields yet.
+              </p>
+            ) : (
+              sortedFields.map((f) => (
+                <div
+                  key={f.id}
+                  onClick={(e) => handleRowClick(f, e)}
+                  className="w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70"
+                >
+                  <p className="truncate font-medium text-foreground">{f.key}</p>
+                  <p className="mt-0.5 truncate text-sm text-foreground">{f.label}</p>
+                  <p className="mt-0.5 truncate text-sm text-foreground/70">{formatType(f)}</p>
+                  <p className="mt-0.5 truncate text-xs text-foreground/60">
+                    {f.updatedAt
+                      ? `${new Date(f.updatedAt).toLocaleDateString()}${f.updatedByName ? ` by ${f.updatedByName}` : ''}`
+                      : f.createdAt
+                        ? `${new Date(f.createdAt).toLocaleDateString()}${f.createdByName ? ` by ${f.createdByName}` : ''}`
+                        : '—'}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                    <Link
+                      to={`/fields/${f.id}`}
+                      className="min-h-[44px] flex items-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+                    >
+                      Edit
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(f.id, f.key)}
+                      className="min-h-[44px] rounded border border-red-500/50 px-3 py-2 text-sm text-red-500 hover:bg-red-500/10"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          {/* Desktop: table */}
+          <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
           <table className="w-full">
             <thead className="bg-card">
               <tr>
@@ -221,7 +268,8 @@ export function FieldsList() {
               )}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

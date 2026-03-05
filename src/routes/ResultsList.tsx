@@ -74,7 +74,7 @@ export function ResultsList() {
   }
 
   return (
-    <div>
+    <div className="w-full min-w-0">
       <h1 className="mb-6 text-2xl font-semibold text-foreground">Results</h1>
       <div className="mb-4 flex flex-wrap items-end gap-4">
         <PopupSelect
@@ -119,20 +119,44 @@ export function ResultsList() {
       {loading ? (
         <p className="text-foreground/60">Loading...</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <>
+          {/* Mobile: card layout */}
+          <div className="w-full min-w-0 space-y-2 md:hidden">
+            {filteredRecords.length === 0 ? (
+              <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
+                {records.length === 0 ? 'No results.' : 'No rows match the current filters.'}
+              </p>
+            ) : (
+              filteredRecords.map((r) => (
+                <Link
+                  key={r.id}
+                  to={`/results/${r.id}`}
+                  className="block w-full min-w-0 overflow-hidden rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-background/50"
+                >
+                  <p className="truncate font-medium text-foreground">{r.planName}</p>
+                  <p className="mt-0.5 truncate text-sm text-foreground/70">
+                    {format(new Date(r.recordedAt), 'PPp')}
+                  </p>
+                  <span className="mt-2 inline-block text-sm text-primary">View →</span>
+                </Link>
+              ))
+            )}
+          </div>
+          {/* Desktop: table */}
+          <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
           <table className="w-full">
             <thead className="bg-card">
               <tr>
                 <th
                   ref={(el) => { filterAnchorRefs.current['plan'] = el }}
-                  className="relative px-4 py-2 text-left text-sm font-medium text-foreground"
+                  className="relative min-w-0 px-4 py-2 text-left text-sm font-medium text-foreground"
                 >
-                  <span className="flex items-center gap-1">
-                    Plan
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="min-w-0 truncate">Plan</span>
                     <button
                       type="button"
                       onClick={() => setOpenFilterColumn((c) => (c === 'plan' ? null : 'plan'))}
-                      className={`rounded p-0.5 hover:bg-background ${columnFilters['plan']?.size ? 'text-primary' : 'text-foreground/50'}`}
+                      className={`shrink-0 rounded p-0.5 hover:bg-background ${columnFilters['plan']?.size ? 'text-primary' : 'text-foreground/50'}`}
                       title="Filter column"
                     >
                       <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -154,14 +178,14 @@ export function ResultsList() {
                 </th>
                 <th
                   ref={(el) => { filterAnchorRefs.current['runAt'] = el }}
-                  className="relative px-4 py-2 text-left text-sm font-medium text-foreground"
+                  className="relative min-w-0 px-4 py-2 text-left text-sm font-medium text-foreground"
                 >
-                  <span className="flex items-center gap-1">
-                    Run At
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="min-w-0 truncate">Run At</span>
                     <button
                       type="button"
                       onClick={() => setOpenFilterColumn((c) => (c === 'runAt' ? null : 'runAt'))}
-                      className={`rounded p-0.5 hover:bg-background ${columnFilters['runAt']?.size ? 'text-primary' : 'text-foreground/50'}`}
+                      className={`shrink-0 rounded p-0.5 hover:bg-background ${columnFilters['runAt']?.size ? 'text-primary' : 'text-foreground/50'}`}
                       title="Filter column"
                     >
                       <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -213,7 +237,8 @@ export function ResultsList() {
               )}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

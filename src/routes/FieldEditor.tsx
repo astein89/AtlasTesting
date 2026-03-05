@@ -4,20 +4,22 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { api } from '../api/client'
+import { DraggableOptionList } from '../components/ui/DraggableOptionList'
 import { PopupSelect } from '../components/ui/PopupSelect'
 import { FRACTION_SCALES, type FractionScale } from '../utils/fraction'
 import type { DataField, FieldType } from '../types'
+import { STATUS_OPTIONS } from '../types'
 
 const schema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'fraction', 'atlas_location', 'image']),
+  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image']),
   config: z.record(z.unknown()).optional(),
 })
 
 type FormData = z.infer<typeof schema>
 
-const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'fraction', 'atlas_location', 'image']
+const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image']
 const TYPE_LABELS: Record<FieldType, string> = {
   number: 'Number',
   text: 'Text',
@@ -25,6 +27,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
   boolean: 'Boolean',
   datetime: 'Date/time',
   select: 'Select',
+  status: 'Status',
   fraction: 'Fraction (inches)',
   atlas_location: 'Atlas Location',
   image: 'Image',
@@ -37,6 +40,7 @@ export function FieldEditor() {
   const [options, setOptions] = useState<string[]>([])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
   const [imageMultiple, setImageMultiple] = useState(false)
+  const [statusColors, setStatusColors] = useState<Record<string, string>>({})
   const [fieldType, setFieldType] = useState<FieldType>('text')
 
   const {
@@ -55,6 +59,7 @@ export function FieldEditor() {
 
   useEffect(() => {
     if (typeVal) setFieldType(typeVal as FieldType)
+    if (typeVal === 'status') setOptions((prev) => (prev.length ? prev : [...STATUS_OPTIONS]))
   }, [typeVal])
 
   const onSubmit = async (data: FormData) => {
@@ -62,6 +67,10 @@ export function FieldEditor() {
     if (fieldType === 'select') config.options = options.filter(Boolean)
     if (fieldType === 'fraction') config.fractionScale = fractionScale
     if (fieldType === 'image') config.imageMultiple = imageMultiple
+    if (fieldType === 'status') {
+      config.options = options.filter(Boolean)
+      config.statusColors = statusColors
+    }
 
     try {
       if (isNew) {
@@ -85,13 +94,6 @@ export function FieldEditor() {
     })
   const removeOption = (i: number) =>
     setOptions((o) => o.filter((_, j) => j !== i))
-  const moveOption = (from: number, to: number) => {
-    if (to < 0 || to >= options.length) return
-    const next = [...options]
-    const [removed] = next.splice(from, 1)
-    next.splice(to, 0, removed)
-    setOptions(next)
-  }
 
   const [fieldMeta, setFieldMeta] = useState<{
     createdAt?: string | null
@@ -110,10 +112,15 @@ export function FieldEditor() {
           setValue('type', r.data.type)
           setValue('config', r.data.config || {})
           if (r.data.config?.options) setOptions(r.data.config.options)
+          if (r.data.type === 'status' && (!r.data.config?.options || !Array.isArray(r.data.config.options) || r.data.config.options.length === 0))
+            setOptions([...STATUS_OPTIONS])
           if (r.data.config?.fractionScale && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
             setFractionScale(r.data.config.fractionScale as FractionScale)
           }
           if (r.data.config?.imageMultiple != null) setImageMultiple(r.data.config.imageMultiple)
+          if (r.data.config?.statusColors && typeof r.data.config.statusColors === 'object') {
+            setStatusColors(r.data.config.statusColors as Record<string, string>)
+          }
           setFieldMeta({
             createdAt: r.data.createdAt,
             updatedAt: r.data.updatedAt,
@@ -212,59 +219,110 @@ export function FieldEditor() {
             </label>
           </div>
         )}
+        {fieldType === 'status' && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-foreground">
+                Status options
+              </label>
+              <p className="mt-1 mb-2 text-xs text-foreground/60">
+                Drag to reorder. Add or remove statuses below.
+              </p>
+              <DraggableOptionList
+                items={options}
+                onReorder={setOptions}
+                renderRow={(opt, i) => (
+                  <div className="flex min-w-0 items-center gap-2">
+                    <input
+                      value={opt}
+                      onChange={(e) => updateOption(i, e.target.value)}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                      placeholder="Status name"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeOption(i)}
+                      className="shrink-0 rounded-lg px-3 text-red-500 hover:bg-red-500/10"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                onAdd={addOption}
+                addLabel="+ Add status"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">
+                Status colors (optional)
+              </label>
+              <p className="mt-1 mb-2 text-xs text-foreground/60">
+                Set a color for each status to show in the data view.
+              </p>
+              <div className="mt-2 space-y-2">
+                {options.filter(Boolean).map((opt) => (
+                  <div key={opt} className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={statusColors[opt] ?? '#94a3b8'}
+                      onChange={(e) =>
+                        setStatusColors((prev) => ({ ...prev, [opt]: e.target.value }))
+                      }
+                      className="h-9 w-12 cursor-pointer rounded border border-border bg-transparent p-0"
+                      title={opt}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">{opt}</span>
+                    {(statusColors[opt] ?? '').length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setStatusColors((prev) => {
+                            const next = { ...prev }
+                            delete next[opt]
+                            return next
+                          })
+                        }
+                        className="text-xs text-foreground/60 hover:text-foreground"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
         {fieldType === 'select' && (
           <div>
             <label className="block text-sm font-medium text-foreground">
               Options (drag to reorder)
             </label>
             <p className="mt-1 mb-2 text-xs text-foreground/60">
-              Use ↑↓ to sort and arrange options.
+              Drag to reorder. Add or remove options below.
             </p>
-            <div className="mt-2 space-y-2">
-              {options.map((opt, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="flex flex-col gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => moveOption(i, i - 1)}
-                      disabled={i === 0}
-                      className="rounded p-1 text-foreground/60 hover:bg-background disabled:opacity-30"
-                      title="Move up"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveOption(i, i + 1)}
-                      disabled={i === options.length - 1}
-                      className="rounded p-1 text-foreground/60 hover:bg-background disabled:opacity-30"
-                      title="Move down"
-                    >
-                      ↓
-                    </button>
-                  </div>
+            <DraggableOptionList
+              items={options}
+              onReorder={setOptions}
+              renderRow={(opt, i) => (
+                <div className="flex min-w-0 items-center gap-2">
                   <input
                     value={opt}
                     onChange={(e) => updateOption(i, e.target.value)}
-                    className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   />
                   <button
                     type="button"
                     onClick={() => removeOption(i)}
-                    className="rounded-lg px-3 text-red-500 hover:bg-red-500/10"
+                    className="shrink-0 rounded-lg px-3 text-red-500 hover:bg-red-500/10"
                   >
                     Remove
                   </button>
                 </div>
-              ))}
-              <button
-                type="button"
-                onClick={addOption}
-                className="rounded-lg border border-border px-3 py-1 text-sm text-foreground hover:bg-background"
-              >
-                + Add option
-              </button>
-            </div>
+              )}
+              onAdd={addOption}
+              addLabel="+ Add option"
+            />
           </div>
         )}
         <div className="flex flex-wrap gap-2">

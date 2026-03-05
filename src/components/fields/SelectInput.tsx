@@ -6,6 +6,10 @@ interface SelectInputProps {
   options: string[]
   className?: string
   placeholder?: string
+  /** Optional background color for the selected value (e.g. status colors) */
+  valueColor?: string
+  /** Optional map of option value -> hex color to show in the dropdown list */
+  optionColors?: Record<string, string>
 }
 
 export function SelectInput({
@@ -13,7 +17,9 @@ export function SelectInput({
   onChange,
   options,
   className = '',
-  placeholder = 'Click to select',
+  placeholder = '(Select)',
+  valueColor,
+  optionColors,
 }: SelectInputProps) {
   const [open, setOpen] = useState(false)
 
@@ -22,7 +28,10 @@ export function SelectInput({
     setOpen(false)
   }
 
-  const displayValue = value ? value : placeholder
+  const hasColor = value && valueColor
+  const triggerStyle = hasColor
+    ? { backgroundColor: valueColor, color: '#fff', borderColor: valueColor }
+    : undefined
 
   return (
     <div className={className}>
@@ -30,8 +39,9 @@ export function SelectInput({
         type="button"
         onClick={() => setOpen(true)}
         className="min-h-[44px] w-full rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        style={triggerStyle}
       >
-        <span className={!value ? 'text-foreground/60' : ''}>
+        <span className={!value ? (hasColor ? '' : 'text-foreground/60') : ''}>
           {value ? value : placeholder}
         </span>
       </button>
@@ -72,18 +82,28 @@ export function SelectInput({
                   >
                     —
                   </button>
-                  {options.map((opt) => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => select(opt)}
-                      className={`block w-full px-4 py-3 text-left text-foreground hover:bg-card ${
-                        value === opt ? 'bg-primary/10 font-medium' : ''
-                      }`}
-                    >
-                      {opt}
-                    </button>
-                  ))}
+                  {options.map((opt) => {
+                    const optColor = optionColors?.[opt]
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => select(opt)}
+                        className={`flex w-full items-center gap-3 px-4 py-3 text-left text-foreground hover:bg-card ${
+                          value === opt ? 'bg-primary/10 font-medium' : ''
+                        }`}
+                      >
+                        {optColor ? (
+                          <span
+                            className="h-4 w-4 shrink-0 rounded-full border border-black/10"
+                            style={{ backgroundColor: optColor }}
+                            aria-hidden
+                          />
+                        ) : null}
+                        <span className="min-w-0 flex-1 truncate">{opt}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>

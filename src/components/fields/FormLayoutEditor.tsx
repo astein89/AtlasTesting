@@ -96,7 +96,7 @@ export function FormLayoutEditor({
               + New line
             </button>
           </div>
-          <ul className="max-h-64 space-y-1 overflow-y-auto rounded border border-border bg-card p-2">
+          <ul className="max-h-96 space-y-0.5 overflow-y-auto rounded border border-border bg-card p-2">
             {order.map((id, i) => {
               if (isSeparatorId(id)) {
                 return (
@@ -107,7 +107,7 @@ export function FormLayoutEditor({
                     onDragOver={(e) => handleDragOver(e, i)}
                     onDrop={handleDrop}
                     onDragEnd={handleDragEnd}
-                    className={`flex cursor-grab items-center gap-2 rounded border border-dashed border-foreground/30 px-2 py-1.5 active:cursor-grabbing ${
+                    className={`flex cursor-grab items-center gap-2 rounded border border-dashed border-foreground/30 px-2 py-1 active:cursor-grabbing ${
                       draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
                     }`}
                   >
@@ -135,7 +135,7 @@ export function FormLayoutEditor({
                   onDragOver={(e) => handleDragOver(e, i)}
                   onDrop={handleDrop}
                   onDragEnd={handleDragEnd}
-                  className={`flex cursor-grab items-center gap-2 rounded border border-transparent px-2 py-1.5 active:cursor-grabbing ${
+                  className={`flex cursor-grab items-center gap-2 rounded border border-transparent px-2 py-1 active:cursor-grabbing ${
                     draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
                   }`}
                 >

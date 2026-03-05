@@ -72,6 +72,7 @@ export function initSchema(db: SqlDb) {
   migratePlanFieldIds(db)
   migratePlanFieldLayout(db)
   migratePlanFormLayout(db)
+  migratePlanDefaultSortOrder(db)
   migratePlanConstraints(db)
   migratePlanShortDescription(db)
   migrateRecordsToPlanDirect(db)
@@ -166,6 +167,19 @@ function migratePlanFormLayout(db: SqlDb) {
     const hasFormLayout = rows.some((r) => r[1] === 'form_layout')
     if (hasFormLayout) return
     db.run('ALTER TABLE test_plans ADD COLUMN form_layout TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanDefaultSortOrder(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'default_sort_order')
+    if (has) return
+    db.run('ALTER TABLE test_plans ADD COLUMN default_sort_order TEXT')
   } catch {
     // Ignore
   }

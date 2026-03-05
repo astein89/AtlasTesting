@@ -260,6 +260,28 @@ export function PlanFieldsEditor({
     onChange([...order, formatFieldEntry(fieldId, 3)])
   }
 
+  const addStatusField = async () => {
+    const existing = allFields.find((f) => f.type === 'status')
+    if (existing) {
+      if (fieldIdsInOrder.includes(existing.id)) return
+      addField(existing.id)
+      return
+    }
+    try {
+      const { data } = await api.post<DataField>('/fields', {
+        key: 'status',
+        label: 'Status',
+        type: 'status',
+        config: {},
+      })
+      setAllFields((prev) => [...prev, data])
+      addField(data.id)
+    } catch (e: unknown) {
+      const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      alert(err || 'Failed to add Status field')
+    }
+  }
+
   const removeItem = (index: number) => {
     const next = order.filter((_, i) => i !== index)
     onChange(next)
@@ -317,7 +339,14 @@ export function PlanFieldsEditor({
               <h3 className="text-sm font-medium text-foreground">
                 Form layout
               </h3>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addStatusField}
+                  className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                >
+                  + Status
+                </button>
                 <button
                   type="button"
                   onClick={() => onChange([...order, createSeparatorId()])}

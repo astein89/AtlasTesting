@@ -95,7 +95,7 @@ export function useUserPreference<T>(
     } catch {
       setState(defaultValue)
     }
-  }, [key, loaded])
+  }, [key, loaded, defaultValue])
 
   const setValue = useCallback(
     (value: T | ((prev: T) => T)) => {

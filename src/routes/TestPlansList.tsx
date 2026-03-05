@@ -73,7 +73,7 @@ export function TestPlansList() {
   }, [])
 
   return (
-    <div>
+    <div className="w-full min-w-0">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold text-foreground">Test Plans</h1>
         {isAdmin && (
@@ -88,7 +88,53 @@ export function TestPlansList() {
       {loading ? (
         <p className="text-foreground/60">Loading...</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <>
+          {/* Mobile: card layout */}
+          <div className="w-full min-w-0 space-y-2 md:hidden">
+            {sortedPlans.length === 0 ? (
+              <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
+                No test plans yet.
+              </p>
+            ) : (
+              sortedPlans.map((plan) => (
+                <div
+                  key={plan.id}
+                  onClick={(e) => handleRowClick(plan, e)}
+                  className="w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70"
+                >
+                  <p className="truncate font-medium text-foreground">{plan.name}</p>
+                  <p className="mt-0.5 truncate text-sm text-foreground/70">
+                    {plan.shortDescription?.trim() || '—'}
+                  </p>
+                  <p className="mt-0.5 text-sm text-foreground/60">
+                    {plan.recordCount ?? 0} record{(plan.recordCount ?? 0) !== 1 ? 's' : ''}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setExportPlanId(plan.id)
+                      }}
+                      className="min-h-[44px] rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+                    >
+                      Export
+                    </button>
+                    {isAdmin && (
+                      <Link
+                        to={`/test-plans/${plan.id}/edit`}
+                        className="min-h-[44px] flex items-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+                      >
+                        Edit
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          {/* Desktop: table */}
+          <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
           <table className="w-full">
             <thead className="bg-card">
               <tr>
@@ -178,7 +224,8 @@ export function TestPlansList() {
               )}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
       {exportPlanId && (() => {
         const plan = plans.find((p) => p.id === exportPlanId)

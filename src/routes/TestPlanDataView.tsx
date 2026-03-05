@@ -10,7 +10,17 @@ import { EditRecordModal } from '../components/data/EditRecordModal'
 import { AddRecordModal } from '../components/data/AddRecordModal'
 import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
+import { SelectInput } from '../components/fields/SelectInput'
+import {
+  buildFormRowsFromOrder,
+  isSeparatorId,
+  isSeparatorLineId,
+  normalizeFormLayoutOrder,
+  parseFieldEntry,
+  truncateFormRowsForCompact,
+} from '../utils/formLayout'
 import type { DataField, TestPlan } from '../types'
+import { getStatusOptions } from '../types'
 
 interface Record {
   id: string
@@ -29,6 +39,10 @@ function getDefaultData(fields: DataField[]): Record<string, string | number | b
     else if (f.type === 'boolean') out[f.key] = false
     else if (f.type === 'longtext') out[f.key] = ''
     else if (f.type === 'select') out[f.key] = ''
+    else if (f.type === 'status') {
+      const opts = getStatusOptions(f)
+      out[f.key] = opts[0] ?? 'In Progress'
+    }
     else if (f.type === 'atlas_location') out[f.key] = ''
     else if (f.type === 'image') out[f.key] = f.config?.imageMultiple ? [] : ''
     else out[f.key] = ''
@@ -49,10 +63,27 @@ export function TestPlanDataView() {
   const [submitting, setSubmitting] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [compactCards, setCompactCards] = useUserPreference('atlas-compact-data-cards', false)
   const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({})
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
-  const filterAnchorRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
+  const [showMobileFilterPanel, setShowMobileFilterPanel] = useState(false)
+  const [selectedStatusTab, setSelectedStatusTab] = useState<string>('All')
+  const [openColumnPicker, setOpenColumnPicker] = useState(false)
+  const columnPickerAnchorRef = useRef<HTMLButtonElement | null>(null)
+  const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
   const isAdmin = useAuthStore((s) => s.isAdmin())
+
+  const columnsPrefKey = planId ? `atlas-data-hidden-columns-${planId}` : 'atlas-data-hidden-columns-default'
+  const [hiddenColumnKeys, setHiddenColumnKeys] = useUserPreference<string[]>(columnsPrefKey, [])
+  const visibleFields = useMemo(
+    () => fields.filter((f) => !hiddenColumnKeys.includes(f.key)),
+    [fields, hiddenColumnKeys]
+  )
+  const toggleColumnVisibility = (fieldKey: string) => {
+    setHiddenColumnKeys((prev) =>
+      prev.includes(fieldKey) ? prev.filter((k) => k !== fieldKey) : [...prev, fieldKey]
+    )
+  }
 
   const loadRecords = () => {
     if (!planId) return
@@ -160,15 +191,35 @@ export function TestPlanDataView() {
     setEditData((d) => ({ ...d, [key]: value }))
   }
 
+  const updateRecordField = async (record: Record, key: string, value: string | number | boolean) => {
+    const newData = { ...record.data, [key]: value }
+    try {
+      await api.put(`/records/${record.id}`, { data: newData, status: record.status })
+      setRecords((prev) =>
+        prev.map((r) => (r.id === record.id ? { ...r, data: newData } : r))
+      )
+    } catch (e: unknown) {
+      const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      alert(err || 'Failed to update')
+    }
+  }
+
   const fieldLayout = plan?.fieldLayout ?? {}
   const editingRecord = records.find((r) => r.id === editingId)
 
   type SortKey = 'date' | string
   type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
   const sortStorageKey = planId ? `atlas-data-sort-${planId}` : 'atlas-data-sort-default'
+  const defaultSortOrder = useMemo<SortLevel[]>(
+    () =>
+      plan?.defaultSortOrder?.length
+        ? plan.defaultSortOrder
+        : [{ key: 'date', dir: 'desc' }],
+    [plan?.defaultSortOrder]
+  )
   const [sortOrder, setSortOrder] = useUserPreference<SortLevel[]>(
     sortStorageKey,
-    [{ key: 'date', dir: 'desc' }],
+    defaultSortOrder,
     JSON.stringify,
     (s) => {
       try {
@@ -177,7 +228,7 @@ export function TestPlanDataView() {
       } catch {
         // ignore
       }
-      return [{ key: 'date', dir: 'desc' }]
+      return defaultSortOrder
     }
   )
 
@@ -223,8 +274,32 @@ export function TestPlanDataView() {
     return String(v ?? '')
   }
 
+  const statusField = fields.find((f) => f.type === 'status')
+  const statusTabs = useMemo(() => {
+    if (!statusField) return []
+    const values = new Set<string>()
+    let hasNoStatus = false
+    for (const r of sortedRecords) {
+      const v = String(r.data[statusField.key] ?? '').trim()
+      if (v) values.add(v)
+      else hasNoStatus = true
+    }
+    const rest = [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    return hasNoStatus ? ['All', '(No Status)', ...rest] : ['All', ...rest]
+  }, [statusField, sortedRecords])
+
+  useEffect(() => {
+    if (statusTabs.length > 0 && !statusTabs.includes(selectedStatusTab)) setSelectedStatusTab('All')
+  }, [statusTabs, selectedStatusTab])
+
   const filteredRecords = useMemo(() => {
     let result = sortedRecords
+    if (statusField && selectedStatusTab && selectedStatusTab !== 'All') {
+      result = result.filter((r) => {
+        const v = String(r.data[statusField.key] ?? '').trim()
+        return selectedStatusTab === '(No Status)' ? !v : v === selectedStatusTab
+      })
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim()
       result = result.filter((r) => {
@@ -246,14 +321,22 @@ export function TestPlanDataView() {
       })
     }
     return result
-  }, [sortedRecords, searchQuery, columnFilters, fields])
+  }, [sortedRecords, statusField, selectedStatusTab, searchQuery, columnFilters, fields])
 
   const hasActiveFilters = searchQuery.trim() !== '' || Object.values(columnFilters).some((s) => s.size > 0)
 
-  const clearAllFilters = () => {
+  const sortDiffersFromDefault =
+    sortOrder.length !== defaultSortOrder.length ||
+    sortOrder.some((s, i) => defaultSortOrder[i]?.key !== s.key || defaultSortOrder[i]?.dir !== s.dir)
+  const statusDiffersFromDefault = statusTabs.length > 0 && selectedStatusTab !== 'All'
+  const differsFromDefault = sortDiffersFromDefault || hasActiveFilters || statusDiffersFromDefault
+
+  const clearToDefault = () => {
+    setSortOrder(defaultSortOrder)
     setSearchQuery('')
     setColumnFilters({})
     setOpenFilterColumn(null)
+    setSelectedStatusTab('All')
   }
 
   const getColumnValues = (key: SortKey): string[] => {
@@ -295,41 +378,15 @@ export function TestPlanDataView() {
   const hasFields = fields.length > 0
 
   return (
-    <div>
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <Link
-            to="/test-plans"
-            className="mb-2 flex min-h-[44px] w-fit items-center text-sm text-foreground/60 hover:text-foreground sm:min-h-0"
-          >
-            ← Back to plans
-          </Link>
-          <h1 className="text-2xl font-semibold text-foreground">Data: {plan.name}</h1>
-          {(plan.constraints || plan.description) && (
-            <div className="mt-4 grid gap-4 rounded-lg border border-border bg-card/50 p-4 sm:grid-cols-2">
-              {plan.description && (
-                <div className="min-w-0">
-                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                    Test plan
-                  </h3>
-                  <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
-                    {plan.description}
-                  </p>
-                </div>
-              )}
-              {plan.constraints && (
-                <div className="min-w-0">
-                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                    Constraints
-                  </h3>
-                  <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
-                    {plan.constraints}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+    <div className="w-full min-w-0">
+      <Link
+        to="/test-plans"
+        className="mb-2 flex min-h-[44px] w-fit items-center text-sm text-foreground/60 hover:text-foreground sm:min-h-0"
+      >
+        ← Back to plans
+      </Link>
+      <div className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-foreground">Data: {plan.name}</h1>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
@@ -357,6 +414,32 @@ export function TestPlanDataView() {
           )}
         </div>
       </div>
+      {(plan.constraints || plan.description) && (
+        <div className="mb-6 w-full min-w-0 rounded-lg border border-border bg-card/50 p-5">
+          <div className="grid gap-6 sm:grid-cols-2">
+            {plan.description && (
+              <div className="min-w-0">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
+                  Test plan
+                </h3>
+                <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
+                  {plan.description}
+                </p>
+              </div>
+            )}
+            {plan.constraints && (
+              <div className="min-w-0">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
+                  Constraints
+                </h3>
+                <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
+                  {plan.constraints}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {isAdding && (
         <AddRecordModal
           fields={fields}
@@ -403,7 +486,7 @@ export function TestPlanDataView() {
           )}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="w-full min-w-0 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[160px] max-w-xs">
               <input
@@ -419,13 +502,13 @@ export function TestPlanDataView() {
                 </svg>
               </span>
             </div>
-            {hasActiveFilters && (
+            {differsFromDefault && (
               <button
                 type="button"
-                onClick={clearAllFilters}
+                onClick={clearToDefault}
                 className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
               >
-                Clear filters
+                Clear
               </button>
             )}
             {hasActiveFilters && (
@@ -433,8 +516,334 @@ export function TestPlanDataView() {
                 {filteredRecords.length} of {sortedRecords.length} rows
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setShowMobileFilterPanel((s) => !s)}
+              className={`flex min-h-[44px] items-center gap-2 rounded-lg border px-3 py-2 text-sm sm:min-h-0 md:hidden ${
+                hasActiveFilters
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border text-foreground hover:bg-background'
+              }`}
+              title="Filter by column"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              <span className="text-xs">Filters</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompactCards((c) => !c)}
+              className={`flex min-h-[44px] items-center gap-2 rounded-lg border px-3 py-2 text-sm sm:min-h-0 md:hidden ${
+                compactCards
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border text-foreground hover:bg-background'
+              }`}
+              title={compactCards ? 'Show full cards' : 'Show compact cards (first 3 lines or until separator)'}
+            >
+              <span className="text-xs">Compact</span>
+            </button>
+            <div className="relative hidden md:block">
+              <button
+                ref={columnPickerAnchorRef}
+                type="button"
+                onClick={() => setOpenColumnPicker((o) => !o)}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                  visibleFields.length < fields.length
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-foreground hover:bg-background'
+                }`}
+                title="Choose columns to display"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+                <span className="text-xs">Columns</span>
+              </button>
+              {openColumnPicker && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    aria-hidden
+                    onClick={() => setOpenColumnPicker(false)}
+                  />
+                  <div
+                    className="absolute right-0 top-full z-50 mt-1 min-w-[180px] max-w-[280px] rounded-lg border border-border bg-card py-2 shadow-lg"
+                    style={{ left: columnPickerAnchorRef.current ? 'auto' : 0 }}
+                  >
+                    <div className="border-b border-border px-3 pb-2">
+                      <span className="text-sm font-medium text-foreground">Show columns</span>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto px-2 py-1">
+                      <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background">
+                        <input type="checkbox" checked disabled className="h-4 w-4" />
+                        <span className="text-sm text-foreground">Date</span>
+                      </label>
+                      {fields.map((f) => (
+                        <label
+                          key={f.id}
+                          className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!hiddenColumnKeys.includes(f.key)}
+                            onChange={() => toggleColumnVisibility(f.key)}
+                            className="h-4 w-4"
+                          />
+                          <span className="truncate text-sm text-foreground">{f.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="border-t border-border px-3 pt-2">
+                      <span className="text-xs text-foreground/60">Actions always shown</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          {statusTabs.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 border-b border-border pb-2">
+              {statusTabs.map((tab) => {
+                const tabColor = statusField?.config?.statusColors?.[tab]
+                const isSelected = selectedStatusTab === tab
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setSelectedStatusTab(tab)}
+                    className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                      isSelected && !tabColor
+                        ? 'bg-primary text-primary-foreground'
+                        : isSelected && tabColor
+                          ? ''
+                          : 'text-foreground/80 hover:bg-background hover:text-foreground'
+                    }`}
+                    style={isSelected && tabColor ? { backgroundColor: tabColor, color: '#fff' } : undefined}
+                  >
+                    {tab}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {/* Mobile filter panel */}
+          {showMobileFilterPanel && (
+            <div className="rounded-lg border border-border bg-card p-3 md:hidden">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium text-foreground">Filter by</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMobileFilterPanel(false)
+                    setOpenFilterColumn(null)
+                  }}
+                  className="text-foreground/60 hover:text-foreground"
+                  aria-label="Close"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="space-y-1">
+                <div
+                  ref={(el) => { filterAnchorRefs.current['date'] = el }}
+                  className="relative"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOpenFilterColumn((c) => (c === 'date' ? null : 'date'))}
+                    className={`flex w-full min-h-[44px] items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-background ${
+                      columnFilters['date']?.size ? 'text-primary' : 'text-foreground'
+                    }`}
+                  >
+                    <span>Date</span>
+                    {columnFilters['date']?.size ? (
+                      <span className="text-xs text-foreground/60">{columnFilters['date'].size} selected</span>
+                    ) : (
+                      <svg className="h-4 w-4 text-foreground/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    )}
+                  </button>
+                  {openFilterColumn === 'date' && (
+                    <ColumnFilterDropdown
+                      columnKey="date"
+                      columnLabel="Date"
+                      values={getColumnValues('date')}
+                      selected={columnFilters['date'] ?? new Set()}
+                      onChange={(s) => setColumnFilters((p) => ({ ...p, date: s }))}
+                      onClose={() => setOpenFilterColumn(null)}
+                      anchorRef={{ current: filterAnchorRefs.current['date'] }}
+                    />
+                  )}
+                </div>
+                {fields.map((f) => (
+                  <div
+                    key={f.id}
+                    ref={(el) => { filterAnchorRefs.current[f.key] = el }}
+                    className="relative"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenFilterColumn((c) => (c === f.key ? null : f.key))}
+                      className={`flex w-full min-h-[44px] items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-background ${
+                        columnFilters[f.key]?.size ? 'text-primary' : 'text-foreground'
+                      }`}
+                    >
+                      <span>{f.label}</span>
+                      {columnFilters[f.key]?.size ? (
+                        <span className="text-xs text-foreground/60">{columnFilters[f.key]!.size} selected</span>
+                      ) : (
+                        <svg className="h-4 w-4 text-foreground/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      )}
+                    </button>
+                    {openFilterColumn === f.key && (
+                      <ColumnFilterDropdown
+                        columnKey={f.key}
+                        columnLabel={f.label}
+                        values={getColumnValues(f.key)}
+                        selected={columnFilters[f.key] ?? new Set()}
+                        onChange={(s) => setColumnFilters((p) => ({ ...p, [f.key]: s }))}
+                        onClose={() => setOpenFilterColumn(null)}
+                        anchorRef={{ current: filterAnchorRefs.current[f.key] }}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Mobile: card layout (same structure as editor) */}
+          <div className="w-full min-w-0 space-y-2 md:hidden">
+            {sortedRecords.length === 0 ? (
+              <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
+                No data yet. Click &quot;+ Add row&quot; to add.
+              </p>
+            ) : filteredRecords.length === 0 ? (
+              <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
+                No rows match the current filters.
+              </p>
+            ) : (
+              filteredRecords.map((record) => {
+                const cardFormOrder = statusField
+                  ? normalizeFormLayoutOrder(plan?.formLayoutOrder, fields).filter((entry) => {
+                      if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
+                      return parseFieldEntry(entry).fieldId !== statusField.id
+                    })
+                  : normalizeFormLayoutOrder(plan?.formLayoutOrder, fields)
+                const allFormRows = buildFormRowsFromOrder(fields, cardFormOrder)
+                const { rows: formRows, truncated } = compactCards
+                  ? truncateFormRowsForCompact(allFormRows, 3)
+                  : { rows: allFormRows, truncated: false }
+                return (
+                  <div
+                    key={record.id}
+                    onClick={(e) => handleRowClick(record, e)}
+                    className="w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70"
+                  >
+                    <h3 className="mb-2 truncate text-sm font-medium text-foreground/70">
+                      {format(new Date(record.recordedAt), 'MM/dd/yyyy HH:mm')}
+                    </h3>
+                    <div className="space-y-2">
+                      {formRows.map((row, ri) =>
+                        Array.isArray(row) ? (
+                          <div key={ri} className="flex w-full min-w-0 flex-wrap gap-x-4 gap-y-2">
+                            {row.map(({ field }) => (
+                              <div
+                                key={field.id}
+                                className="min-w-0 flex-1 basis-0 overflow-hidden"
+                              >
+                                <label className="mb-0.5 block truncate text-sm font-medium text-foreground">
+                                  {field.label}
+                                </label>
+                                <p className="truncate text-sm text-foreground">
+                                  {typeof record.data[field.key] === 'boolean'
+                                    ? record.data[field.key]
+                                      ? 'Yes'
+                                      : 'No'
+                                    : field.type === 'image'
+                                      ? (() => {
+                                          const v = record.data[field.key]
+                                          const arr = Array.isArray(v) ? v : v ? [v] : []
+                                          return arr.length ? `${arr.length} photo(s)` : '—'
+                                        })()
+                                      : field.type === 'longtext'
+                                        ? (() => {
+                                            const s = String(record.data[field.key] ?? '—')
+                                            return s.length > 80 ? `${s.slice(0, 80)}…` : s || '—'
+                                          })()
+                                        : field.type === 'fraction'
+                                          ? (() => {
+                                              const n = Number(record.data[field.key])
+                                              return n && Number.isFinite(n) ? formatDecimalAsFraction(n) : '—'
+                                            })()
+                                          : String(record.data[field.key] ?? '—')}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div key={ri} className="my-2 border-t-2 border-border" />
+                        )
+                      )}
+                    </div>
+                    {truncated && (
+                      <p className="mt-2 text-xs text-foreground/50">… more</p>
+                    )}
+                    <div
+                      className="mt-3 flex items-center justify-between gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {statusField ? (
+                        (() => {
+                          const statusVal = String(record.data[statusField.key] ?? '').trim() || '(No Status)'
+                          const statusColor = statusVal !== '(No Status)' ? statusField.config?.statusColors?.[statusVal] : undefined
+                          return (
+                            <span className="min-w-0 truncate text-sm text-foreground/70">
+                              <span className="font-medium text-foreground/50">Status:</span>{' '}
+                              {statusColor ? (
+                                <span
+                                  className="inline-flex rounded px-1.5 py-0.5 text-xs font-medium"
+                                  style={{ backgroundColor: statusColor, color: '#fff' }}
+                                >
+                                  {statusVal}
+                                </span>
+                              ) : (
+                                statusVal
+                              )}
+                            </span>
+                          )
+                        })()
+                      ) : null}
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(record)}
+                          className="min-h-[44px] rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteRecord(record.id)}
+                          disabled={submitting}
+                          className="min-h-[44px] rounded border border-red-500/50 px-3 py-2 text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+          {/* Desktop: table */}
+          <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
           <table
             className="w-full"
             style={{
@@ -444,7 +853,7 @@ export function TestPlanDataView() {
             {Object.keys(fieldLayout).length > 0 && (
               <colgroup>
                 <col style={{ width: '140px' }} />
-                {fields.map((f) => (
+                {visibleFields.map((f) => (
                   <col key={f.id} style={{ width: fieldLayout[f.id] || 'auto' }} />
                 ))}
                 <col style={{ width: '100px' }} />
@@ -454,21 +863,21 @@ export function TestPlanDataView() {
               <tr>
                 <th
                   ref={(el) => { filterAnchorRefs.current['date'] = el }}
-                  className="relative cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                  className="relative min-w-0 cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
                   {...getSortHandlers('date')}
                   title="Tap to sort. Long-press or Shift+click to add secondary sort."
                 >
-                  <span className="flex items-center gap-1">
-                    Date
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="min-w-0 truncate">Date</span>
                     {getSortIndex('date') >= 0 && (
-                      <span className="text-foreground/60">
+                      <span className="shrink-0 text-foreground/60">
                         {getSortIndex('date') + 1}{getSortDir('date') === 'asc' ? '↑' : '↓'}
                       </span>
                     )}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setOpenFilterColumn((c) => (c === 'date' ? null : 'date')) }}
-                      className={`ml-1 rounded p-0.5 hover:bg-background ${columnFilters['date']?.size ? 'text-primary' : 'text-foreground/50'}`}
+                      className={`ml-1 shrink-0 rounded p-0.5 hover:bg-background ${columnFilters['date']?.size ? 'text-primary' : 'text-foreground/50'}`}
                       title="Filter column"
                     >
                       <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -488,25 +897,25 @@ export function TestPlanDataView() {
                     />
                   )}
                 </th>
-                {fields.map((f) => (
+                {visibleFields.map((f) => (
                   <th
                     key={f.id}
                     ref={(el) => { filterAnchorRefs.current[f.key] = el }}
-                    className="relative cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                    className="relative min-w-0 cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
                     {...getSortHandlers(f.key)}
                     title="Tap to sort. Long-press or Shift+click to add secondary sort."
                   >
-                    <span className="flex items-center gap-1">
-                      {f.label}
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="min-w-0 truncate">{f.label}</span>
                       {getSortIndex(f.key) >= 0 && (
-                        <span className="text-foreground/60">
+                        <span className="shrink-0 text-foreground/60">
                           {getSortIndex(f.key) + 1}{getSortDir(f.key) === 'asc' ? '↑' : '↓'}
                         </span>
                       )}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setOpenFilterColumn((c) => (c === f.key ? null : f.key)) }}
-                        className={`ml-1 rounded p-0.5 hover:bg-background ${columnFilters[f.key]?.size ? 'text-primary' : 'text-foreground/50'}`}
+                        className={`ml-1 shrink-0 rounded p-0.5 hover:bg-background ${columnFilters[f.key]?.size ? 'text-primary' : 'text-foreground/50'}`}
                         title="Filter column"
                       >
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -536,7 +945,7 @@ export function TestPlanDataView() {
               {sortedRecords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={fields.length + 2}
+                    colSpan={visibleFields.length + 2}
                     className="p-6 text-center text-foreground/60"
                   >
                     No data yet. Click &quot;+ Add row&quot; to add.
@@ -545,7 +954,7 @@ export function TestPlanDataView() {
               ) : filteredRecords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={fields.length + 2}
+                    colSpan={visibleFields.length + 2}
                     className="p-6 text-center text-foreground/60"
                   >
                     No rows match the current filters.
@@ -561,8 +970,12 @@ export function TestPlanDataView() {
                     <td className="px-4 py-3 text-sm text-foreground/70">
                       {format(new Date(record.recordedAt), 'MM/dd/yyyy HH:mm')}
                     </td>
-                    {fields.map((f) => (
-                      <td key={f.id} className="px-4 py-3 text-foreground">
+                    {visibleFields.map((f) => (
+                      <td
+                        key={f.id}
+                        className="px-4 py-3 text-foreground"
+                        onClick={f.type === 'status' ? (e) => e.stopPropagation() : undefined}
+                      >
                         {typeof record.data[f.key] === 'boolean'
                           ? record.data[f.key]
                             ? 'Yes'
@@ -579,8 +992,22 @@ export function TestPlanDataView() {
                                   {String(record.data[f.key] ?? '—')}
                                 </span>
                                 )
-                              : f.type === 'fraction'
-                                ? formatDecimalAsFraction(Number(record.data[f.key]) || 0)
+                              : f.type === 'status'
+                                ? (
+                                    <SelectInput
+                                      value={String(record.data[f.key] ?? '')}
+                                      onChange={(v) => updateRecordField(record, f.key, v)}
+                                      options={getStatusOptions(f)}
+                                      className="min-w-[120px] [&_button]:min-h-0 [&_button]:py-1.5"
+                                      valueColor={f.config?.statusColors?.[String(record.data[f.key] ?? '')]}
+                                      optionColors={f.config?.statusColors}
+                                    />
+                                  )
+                                : f.type === 'fraction'
+                                ? (() => {
+                                    const n = Number(record.data[f.key])
+                                    return n && Number.isFinite(n) ? formatDecimalAsFraction(n) : '—'
+                                  })()
                                 : f.type === 'atlas_location'
                                   ? String(record.data[f.key] ?? '—')
                                   : String(record.data[f.key] ?? '—')}
