@@ -313,24 +313,26 @@ export function PlanFieldsEditor({
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-4 lg:flex-row">
           <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border p-4">
-            <h3 className="mb-2 shrink-0 text-sm font-medium text-foreground">
-              Form layout
-            </h3>
-            <div className="mb-2 flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onChange([...order, createSeparatorId()])}
-                className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-              >
-                + New line
-              </button>
-              <button
-                type="button"
-                onClick={addSeparator}
-                className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-              >
-                + Separator
-              </button>
+            <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
+              <h3 className="text-sm font-medium text-foreground">
+                Form layout
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onChange([...order, createSeparatorId()])}
+                  className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                >
+                  + New line
+                </button>
+                <button
+                  type="button"
+                  onClick={addSeparator}
+                  className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                >
+                  + Separator
+                </button>
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
             {useTouchDnd ? (
