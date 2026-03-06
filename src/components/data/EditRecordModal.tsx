@@ -2,31 +2,34 @@ import { useCallback, useEffect, useState } from 'react'
 import { renderFormField } from '../fields/FormFieldRenderer'
 import { SelectInput } from '../fields/SelectInput'
 import { buildFormRowsFromOrder, isSeparatorId, isSeparatorLineId, normalizeFormLayoutOrder, parseFieldEntry, SPAN_TO_COLS } from '../../utils/formLayout'
-import type { DataField } from '../../types'
+import { getFieldValidationErrors } from '../../utils/fieldValidation'
+import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
 
 interface Record {
   id: string
   recordedAt: string
   status: string
-  data: Record<string, string | number | boolean>
+  data: Record<string, string | number | boolean | string[] | TimerValue>
 }
 
 interface EditRecordModalProps {
   record: Record
   fields: DataField[]
-  data: Record<string, string | number | boolean>
-  onDataChange: (key: string, value: string | number | boolean) => void
+  data: Record<string, string | number | boolean | string[] | TimerValue>
+  onDataChange: (key: string, value: string | number | boolean | string[] | TimerValue) => void
   onSave: () => void
   onCancel: () => void
   onDelete: () => void
   submitting: boolean
   formLayoutOrder?: string[]
+  /** Plan key field for naming uploaded images (key_field + image_tag + timestamp) */
+  plan?: { keyField?: string }
 }
 
 function dataChanged(
-  original: Record<string, string | number | boolean>,
-  current: Record<string, string | number | boolean>
+  original: Record<string, string | number | boolean | string[] | TimerValue>,
+  current: Record<string, string | number | boolean | string[] | TimerValue>
 ): boolean {
   const keys = new Set([...Object.keys(original), ...Object.keys(current)])
   for (const k of keys) {
@@ -35,6 +38,10 @@ function dataChanged(
     if (Array.isArray(a) && Array.isArray(b)) {
       if (a.length !== b.length) return true
       if (a.some((v, i) => v !== b[i])) return true
+    } else if (typeof a === 'object' && a !== null && 'totalElapsedMs' in a && typeof b === 'object' && b !== null && 'totalElapsedMs' in b) {
+      const ta = a as TimerValue
+      const tb = b as TimerValue
+      if (ta.totalElapsedMs !== tb.totalElapsedMs || ta.startedAt !== tb.startedAt) return true
     } else if (a !== b) {
       return true
     }
@@ -52,8 +59,18 @@ export function EditRecordModal({
   onDelete,
   submitting,
   formLayoutOrder = [],
+  plan,
 }: EditRecordModalProps) {
   const [showSavePrompt, setShowSavePrompt] = useState(false)
+  const [validationErrors, setValidationErrors] = useState<Array<{ fieldKey: string; message: string }>>([])
+
+  const handleDataChange = useCallback(
+    (key: string, value: string | number | boolean | string[] | TimerValue) => {
+      setValidationErrors((prev) => prev.filter((e) => e.fieldKey !== key))
+      onDataChange(key, value)
+    },
+    [onDataChange]
+  )
 
   const handleClose = useCallback(() => {
     if (dataChanged(record.data, data)) {
@@ -63,10 +80,26 @@ export function EditRecordModal({
     }
   }, [record.data, data, onCancel])
 
+  const handleSaveClick = useCallback(() => {
+    const errors = getFieldValidationErrors(fields, data)
+    if (errors.length > 0) {
+      setValidationErrors(errors)
+      return
+    }
+    setValidationErrors([])
+    onSave()
+  }, [fields, data, onSave])
+
   const handleSaveAndClose = useCallback(() => {
+    const errors = getFieldValidationErrors(fields, data)
+    if (errors.length > 0) {
+      setValidationErrors(errors)
+      return
+    }
+    setValidationErrors([])
     setShowSavePrompt(false)
     onSave()
-  }, [onSave])
+  }, [fields, data, onSave])
 
   const handleDiscardAndClose = useCallback(() => {
     setShowSavePrompt(false)
@@ -119,20 +152,35 @@ export function EditRecordModal({
                   className="grid w-full gap-4"
                   style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' }}
                 >
-                  {row.map(({ field, span }) => (
-                    <div
-                      key={field.id}
-                      className="min-w-0 w-full"
-                      style={{ gridColumn: `span ${SPAN_TO_COLS[span]}` }}
-                    >
-                      <label className="mb-1 block text-sm font-medium text-foreground">
-                        {field.label}
-                      </label>
-                      <div className="min-w-0 w-full">
-                        {renderFormField(field, data[field.key], onDataChange)}
+                  {row.map(({ field, span }) => {
+                    const fieldError = validationErrors.find((e) => e.fieldKey === field.key)
+                    const keyFieldVal = plan?.keyField ? String(data[plan.keyField] ?? '').trim() : ''
+                    const uploadNamePrefix =
+                      field.type === 'image'
+                        ? `${keyFieldVal || 'record'}_${field.config?.imageTag ?? 'image'}`
+                        : undefined
+                    return (
+                      <div
+                        key={field.id}
+                        className="min-w-0 w-full"
+                        style={{ gridColumn: `span ${SPAN_TO_COLS[span]}` }}
+                      >
+                        <label
+                          className={`mb-1 block text-sm font-medium ${fieldError ? 'text-red-500' : 'text-foreground'}`}
+                        >
+                          {field.label}
+                        </label>
+                        <div
+                          className={`min-w-0 w-full rounded border ${fieldError ? 'border-red-500 ring-1 ring-red-500/30' : 'border-transparent'}`}
+                        >
+                          {renderFormField(field, data[field.key], handleDataChange, { uploadNamePrefix })}
+                        </div>
+                        {fieldError && (
+                          <p className="mt-1 text-xs text-red-500">{fieldError.message}</p>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 <div key={ri} className="my-4 border-t-2 border-border" />
@@ -172,7 +220,7 @@ export function EditRecordModal({
             </button>
             <button
               type="button"
-              onClick={onSave}
+              onClick={handleSaveClick}
               disabled={submitting}
               className="min-h-[44px] min-w-[44px] rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
             >

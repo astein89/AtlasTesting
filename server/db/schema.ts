@@ -73,6 +73,11 @@ export function initSchema(db: SqlDb) {
   migratePlanFieldLayout(db)
   migratePlanFormLayout(db)
   migratePlanDefaultSortOrder(db)
+  migratePlanFieldDefaults(db)
+  migratePlanKeyField(db)
+  migratePlanStartEndDate(db)
+  migratePlanArchivedRuns(db)
+  migrateTestRunsRunId(db)
   migratePlanConstraints(db)
   migratePlanShortDescription(db)
   migrateRecordsToPlanDirect(db)
@@ -180,6 +185,77 @@ function migratePlanDefaultSortOrder(db: SqlDb) {
     const has = rows.some((r) => r[1] === 'default_sort_order')
     if (has) return
     db.run('ALTER TABLE test_plans ADD COLUMN default_sort_order TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanFieldDefaults(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'field_defaults')
+    if (has) return
+    db.run('ALTER TABLE test_plans ADD COLUMN field_defaults TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanKeyField(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'key_field')
+    if (has) return
+    db.run('ALTER TABLE test_plans ADD COLUMN key_field TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanStartEndDate(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const cols = rows.map((r) => r[1] as string)
+    if (!cols.includes('start_date')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN start_date TEXT')
+    }
+    if (!cols.includes('end_date')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN end_date TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanArchivedRuns(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const cols = rows.map((r) => r[1] as string)
+    if (!cols.includes('archived_runs')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN archived_runs TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateTestRunsRunId(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_runs)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const cols = rows.map((r) => r[1] as string)
+    if (!cols.includes('run_id')) {
+      db.run('ALTER TABLE test_runs ADD COLUMN run_id TEXT')
+    }
   } catch {
     // Ignore
   }

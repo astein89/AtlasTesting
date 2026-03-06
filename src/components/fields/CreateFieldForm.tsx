@@ -12,7 +12,7 @@ import { STATUS_OPTIONS } from '../../types'
 const schema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image']),
+  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image', 'timer']),
 })
 
 type FormData = z.infer<typeof schema>
@@ -22,7 +22,7 @@ interface CreateFieldFormProps {
   onCancel: () => void
 }
 
-const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image']
+const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image', 'timer']
 const TYPE_LABELS: Record<FieldType, string> = {
   number: 'Number',
   text: 'Text',
@@ -34,13 +34,21 @@ const TYPE_LABELS: Record<FieldType, string> = {
   fraction: 'Fraction (inches)',
   atlas_location: 'Atlas Location',
   image: 'Image',
+  timer: 'Timer',
 }
 
 export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   const [options, setOptions] = useState<string[]>([''])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
   const [imageMultiple, setImageMultiple] = useState(false)
+  const [imageTag, setImageTag] = useState('')
   const [statusColors, setStatusColors] = useState<Record<string, string>>({})
+  const [integerDigits, setIntegerDigits] = useState<number | ''>('')
+  const [decimalPlaces, setDecimalPlaces] = useState<number | ''>('')
+  const [numberMin, setNumberMin] = useState<number | ''>('')
+  const [numberMax, setNumberMax] = useState<number | ''>('')
+  const [minLength, setMinLength] = useState<number | ''>('')
+  const [maxLength, setMaxLength] = useState<number | ''>('')
   const [fieldType, setFieldType] = useState<FieldType>('text')
 
   const {
@@ -71,10 +79,21 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
     }
     if (fieldType === 'image') {
       config.imageMultiple = imageMultiple
+      if (imageTag.trim()) config.imageTag = imageTag.trim()
     }
     if (fieldType === 'status') {
       config.options = options.filter(Boolean)
       config.statusColors = statusColors
+    }
+    if (fieldType === 'number') {
+      if (numberMin !== '') config.min = numberMin
+      if (numberMax !== '') config.max = numberMax
+      if (integerDigits !== '') config.integerDigits = integerDigits
+      if (decimalPlaces !== '') config.decimalPlaces = decimalPlaces
+    }
+    if (fieldType === 'text' || fieldType === 'longtext') {
+      if (minLength !== '') config.minLength = minLength
+      if (maxLength !== '') config.maxLength = maxLength
     }
     try {
       const { data: created } = await api.post<{ id: string }>('/fields', {
@@ -126,6 +145,84 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
           />
         )}
       />
+      {fieldType === 'number' && (
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground">Minimum</label>
+              <input
+                type="number"
+                value={numberMin === '' ? '' : numberMin}
+                onChange={(e) => setNumberMin(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                placeholder="(none)"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Maximum</label>
+              <input
+                type="number"
+                value={numberMax === '' ? '' : numberMax}
+                onChange={(e) => setNumberMax(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                placeholder="(none)"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground">Integer digits (max)</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={integerDigits === '' ? '' : integerDigits}
+                onChange={(e) => setIntegerDigits(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Decimal places</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={decimalPlaces === '' ? '' : decimalPlaces}
+                onChange={(e) => setDecimalPlaces(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </div>
+          </div>
+        </>
+      )}
+      {(fieldType === 'text' || fieldType === 'longtext') && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-foreground">Min character length</label>
+            <input
+              type="number"
+              min={0}
+              value={minLength === '' ? '' : minLength}
+              onChange={(e) => setMinLength(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              placeholder="(none)"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground">Max character length</label>
+            <input
+              type="number"
+              min={1}
+              value={maxLength === '' ? '' : maxLength}
+              onChange={(e) => setMaxLength(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              placeholder="(none)"
+            />
+          </div>
+        </div>
+      )}
       {fieldType === 'status' && (
         <>
           <div>
@@ -205,7 +302,7 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
         </>
       )}
       {fieldType === 'image' && (
-        <div>
+        <div className="space-y-3">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -214,6 +311,17 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
             />
             <span className="text-sm text-foreground">Allow multiple photos</span>
           </label>
+          <div>
+            <label className="block text-sm font-medium text-foreground">Image tag</label>
+            <p className="mt-0.5 mb-1 text-xs text-foreground/60">Optional (e.g. Before, Defect photo)</p>
+            <input
+              type="text"
+              value={imageTag}
+              onChange={(e) => setImageTag(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              placeholder="(none)"
+            />
+          </div>
         </div>
       )}
       {fieldType === 'fraction' && (

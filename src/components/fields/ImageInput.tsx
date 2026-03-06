@@ -5,7 +5,27 @@ interface ImageInputProps {
   value: string | string[]
   onChange: (value: string | string[]) => void
   multiple?: boolean
+  /** Optional tag/label for this image field (e.g. "Before", "Defect photo") */
+  tag?: string
+  /** Prefix for uploaded filename: key_field + image_tag (client adds _MMDDYYHHMMSS) */
+  uploadNamePrefix?: string
   className?: string
+}
+
+/** MMDDYYHHMMSS for filenames */
+function formatTimestamp(): string {
+  const d = new Date()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const yy = String(d.getFullYear() % 100).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  return `${mm}${dd}${yy}${hh}${min}${ss}`
+}
+
+function sanitizePrefix(s: string): string {
+  return s.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 150) || 'image'
 }
 
 function toArray(v: string | string[]): string[] {
@@ -73,6 +93,8 @@ export function ImageInput({
   value,
   onChange,
   multiple = false,
+  tag,
+  uploadNamePrefix,
   className = '',
 }: ImageInputProps) {
   const [uploading, setUploading] = useState(false)
@@ -93,12 +115,17 @@ export function ImageInput({
     setUploading(true)
     try {
       const formData = new FormData()
+      const prefix = uploadNamePrefix ? sanitizePrefix(uploadNamePrefix) : 'image'
+      const timestamp = formatTimestamp()
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         const compressed = /^image\/(jpeg|jpg|png|webp)$/i.test(file.type)
           ? await compressImage(file)
           : file
-        formData.append('images', compressed)
+        const baseName = files.length > 1 ? `${prefix}_${timestamp}_${i}` : `${prefix}_${timestamp}`
+        const ext = file.name.match(/\.[^.]+$/i)?.[0]?.toLowerCase() || '.jpg'
+        const named = new File([compressed], `${baseName}${ext}`, { type: compressed.type })
+        formData.append('images', named)
       }
       const token = useAuthStore.getState().accessToken
       const { status, data } = await new Promise<{ status: number; data: { paths?: string[]; error?: string } }>(
@@ -197,6 +224,10 @@ export function ImageInput({
         </button>
       </div>
       <p className="mt-1 text-xs text-foreground/60">
+        {tag ? (
+          <span className="font-medium text-foreground/80">{tag}</span>
+        ) : null}
+        {tag ? ' · ' : null}
         {multiple ? 'Tap + to add photos' : 'Tap + to add photo'}
       </p>
 

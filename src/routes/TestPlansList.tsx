@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { format } from 'date-fns'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import { useUserPreference } from '../hooks/useUserPreference'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import type { TestPlan } from '../types'
+
+function planPeriodLabel(plan: TestPlan): string {
+  if (!plan.startDate && !plan.endDate) return '—'
+  const s = plan.startDate ? format(new Date(plan.startDate + 'T00:00:00'), 'MMM d, yyyy') : ''
+  const e = plan.endDate ? format(new Date(plan.endDate + 'T00:00:00'), 'MMM d, yyyy') : ''
+  if (s && e) return `${s} – ${e}`
+  if (s) return `From ${s}`
+  return `Through ${e}`
+}
 
 type SortKey = 'name' | 'shortDescription'
 type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
@@ -106,6 +116,9 @@ export function TestPlansList() {
                   <p className="mt-0.5 truncate text-sm text-foreground/70">
                     {plan.shortDescription?.trim() || '—'}
                   </p>
+                  <p className="mt-0.5 text-xs text-foreground/60">
+                    {planPeriodLabel(plan)}
+                  </p>
                   <p className="mt-0.5 text-sm text-foreground/60">
                     {plan.recordCount ?? 0} record{(plan.recordCount ?? 0) !== 1 ? 's' : ''}
                   </p>
@@ -166,6 +179,9 @@ export function TestPlansList() {
                     )}
                   </span>
                 </th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-foreground">
+                  Period
+                </th>
                 <th className="px-4 py-3 text-right text-sm font-medium text-foreground">
                   Records
                 </th>
@@ -177,7 +193,7 @@ export function TestPlansList() {
             <tbody className="divide-y divide-border">
               {sortedPlans.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="p-6 text-center text-foreground/60">
+                  <td colSpan={5} className="p-6 text-center text-foreground/60">
                     No test plans yet.
                   </td>
                 </tr>
@@ -193,6 +209,9 @@ export function TestPlansList() {
                   </td>
                   <td className="px-4 py-3 text-sm text-foreground/70">
                     {plan.shortDescription?.trim() || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-foreground/70">
+                    {planPeriodLabel(plan)}
                   </td>
                   <td className="px-4 py-3 text-right text-sm text-foreground/70">
                     {plan.recordCount ?? 0} record{(plan.recordCount ?? 0) !== 1 ? 's' : ''}
@@ -234,6 +253,7 @@ export function TestPlansList() {
             planId={plan.id}
             planName={plan.name}
             onClose={() => setExportPlanId(null)}
+            keyField={plan.keyField}
           />
         ) : null
       })()}

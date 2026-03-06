@@ -43,6 +43,7 @@ router.get('/', (req: AuthRequest, res) => {
     data: string | null
     plan_name: string
     entered_by_name: string | null
+    run_id?: string | null
   }>
 
   res.json(
@@ -55,6 +56,7 @@ router.get('/', (req: AuthRequest, res) => {
       enteredByName: r.entered_by_name || r.entered_by,
       status: r.status,
       data: r.data ? JSON.parse(r.data) : {},
+      runId: r.run_id ?? undefined,
     }))
   )
 })
@@ -79,6 +81,7 @@ router.get('/:id', (req: AuthRequest, res) => {
 
   if (!row) return res.status(404).json({ error: 'Record not found' })
 
+  const rowWithRunId = row as { run_id?: string | null }
   res.json({
     id: row.id,
     testPlanId: row.test_plan_id,
@@ -87,11 +90,12 @@ router.get('/:id', (req: AuthRequest, res) => {
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
+    runId: rowWithRunId.run_id ?? undefined,
   })
 })
 
 router.post('/', (req: AuthRequest, res) => {
-  const { testPlanId, data, status } = req.body
+  const { testPlanId, data, status, recordedAt: bodyRecordedAt } = req.body
   if (!testPlanId || !req.user) {
     return res.status(400).json({ error: 'testPlanId required' })
   }
@@ -103,17 +107,24 @@ router.post('/', (req: AuthRequest, res) => {
   if (!plan) return res.status(404).json({ error: 'Test plan not found' })
 
   const id = uuidv4()
-  const recordedAt = new Date().toISOString()
+  let recordedAt: string
+  if (typeof bodyRecordedAt === 'string' && bodyRecordedAt.trim()) {
+    const parsed = new Date(bodyRecordedAt.trim())
+    recordedAt = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString()
+  } else {
+    recordedAt = new Date().toISOString()
+  }
 
   db.prepare(
-    'INSERT INTO test_runs (id, test_plan_id, run_at, entered_by, status, data) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_runs (id, test_plan_id, run_at, entered_by, status, data, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     testPlanId,
     recordedAt,
     req.user.id,
     status,
-    data ? JSON.stringify(data) : null
+    data ? JSON.stringify(data) : null,
+    null
   )
 
   const row = db
@@ -129,6 +140,7 @@ router.post('/', (req: AuthRequest, res) => {
     status: string
     data: string | null
     plan_name: string
+    run_id?: string | null
   }
 
   res.status(201).json({
@@ -139,6 +151,7 @@ router.post('/', (req: AuthRequest, res) => {
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
+    runId: row.run_id ?? undefined,
   })
 })
 
@@ -168,6 +181,7 @@ router.put('/:id', (req: AuthRequest, res) => {
   }
   if (updates.length === 0) {
     const planRow = db.prepare('SELECT name FROM test_plans WHERE id = ?').get(existing.test_plan_id) as { name: string }
+    const existingWithRunId = existing as { run_id?: string | null }
     return res.json({
       id: existing.id,
       testPlanId: existing.test_plan_id,
@@ -176,6 +190,7 @@ router.put('/:id', (req: AuthRequest, res) => {
       enteredBy: existing.entered_by,
       status: existing.status,
       data: existing.data ? JSON.parse(existing.data) : {},
+      runId: existingWithRunId.run_id ?? undefined,
     })
   }
   values.push(id)
@@ -195,6 +210,7 @@ router.put('/:id', (req: AuthRequest, res) => {
     data: string | null
     plan_name: string
   }
+  const rowWithRunId = row as { run_id?: string | null }
   res.json({
     id: row.id,
     testPlanId: row.test_plan_id,
@@ -203,6 +219,7 @@ router.put('/:id', (req: AuthRequest, res) => {
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
+    runId: rowWithRunId.run_id ?? undefined,
   })
 })
 

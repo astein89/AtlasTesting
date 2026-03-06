@@ -13,8 +13,9 @@ interface AuthState {
   user: User | null
   accessToken: string | null
   refreshToken: string | null
+  rememberMe: boolean
   initializing: boolean
-  setAuth: (user: User, accessToken: string, refreshToken: string) => void
+  setAuth: (user: User, accessToken: string, refreshToken: string, rememberMe?: boolean) => void
   setAccessToken: (token: string) => void
   setInitializing: (v: boolean) => void
   logout: () => void
@@ -27,9 +28,10 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       refreshToken: null,
+      rememberMe: true,
       initializing: true,
-      setAuth: (user, accessToken, refreshToken) =>
-        set({ user, accessToken, refreshToken, initializing: false }),
+      setAuth: (user, accessToken, refreshToken, rememberMe = true) =>
+        set({ user, accessToken, refreshToken, rememberMe, initializing: false }),
       setAccessToken: (accessToken) => set({ accessToken }),
       setInitializing: (initializing) => set({ initializing }),
       logout: () => {
@@ -40,7 +42,10 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'atlas-auth',
-      partialize: (s) => ({ refreshToken: s.refreshToken }),
+      partialize: (s) => ({
+        rememberMe: s.rememberMe ?? true,
+        ...(s.rememberMe ? { refreshToken: s.refreshToken } : {}),
+      }),
       onRehydrateStorage: () => (state) => {
         const s = useAuthStore.getState()
         if (s.refreshToken && !s.user) {

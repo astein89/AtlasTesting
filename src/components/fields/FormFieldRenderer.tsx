@@ -3,25 +3,51 @@ import { AtlasLocationInput } from './AtlasLocationInput'
 import { FractionInput } from './FractionInput'
 import { ImageInput } from './ImageInput'
 import { SelectInput } from './SelectInput'
+import { TimerInput } from './TimerInput'
 import { parseFractionScale } from '../../utils/fraction'
+import { parseTimerValue } from '../../utils/timer'
 import { getStatusOptions } from '../../types'
 import type { DataField } from '../../types'
+import type { TimerValue } from '../../types'
 
 export function renderFormField(
   f: DataField,
-  value: string | number | boolean,
-  onChange: (key: string, val: string | number | boolean) => void,
-  options?: { disabled?: boolean }
+  value: string | number | boolean | string[] | TimerValue,
+  onChange: (key: string, val: string | number | boolean | string[] | TimerValue) => void,
+  options?: { disabled?: boolean; uploadNamePrefix?: string; compact?: boolean }
 ) {
   const disabled = options?.disabled ?? false
-  const inputClass = `w-full rounded border border-border bg-background px-3 py-2 text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
+  const compact = options?.compact ?? false
+  const inputClass = compact
+    ? `w-full min-w-0 rounded border border-border bg-background px-2 py-1 text-sm text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
+    : `w-full rounded border border-border bg-background px-3 py-2 text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
 
   if (f.type === 'number') {
+    const numVal = value === '' || value == null ? '' : Number(value)
+    const displayVal = numVal === '' || !Number.isFinite(numVal) ? '' : numVal
+    const decimals = typeof f.config?.decimalPlaces === 'number' && f.config.decimalPlaces >= 0 ? f.config.decimalPlaces : undefined
+    const step = decimals != null ? (decimals === 0 ? '1' : String(10 ** -decimals)) : 'any'
     return (
       <input
         type="number"
-        value={Number(value) || ''}
-        onChange={(e) => onChange(f.key, parseFloat(e.target.value) || 0)}
+        value={displayVal}
+        step={step}
+        min={typeof f.config?.min === 'number' ? f.config.min : undefined}
+        max={typeof f.config?.max === 'number' ? f.config.max : undefined}
+        onChange={(e) => {
+          const raw = e.target.value
+          if (raw === '') {
+            onChange(f.key, '')
+            return
+          }
+          let n = parseFloat(raw)
+          if (!Number.isFinite(n)) {
+            onChange(f.key, '')
+            return
+          }
+          if (decimals != null) n = Number(n.toFixed(decimals))
+          onChange(f.key, n)
+        }}
         className={inputClass}
         disabled={disabled}
       />
@@ -39,11 +65,15 @@ export function renderFormField(
     )
   }
   if (f.type === 'longtext') {
+    const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
+    const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
     return (
       <AutoExpandTextarea
         value={String(value ?? '')}
-        onChange={(e) => onChange(f.key, e.target.value)}
-        minRows={6}
+        onChange={(e) => onChange(f.key, maxLen ? e.target.value.slice(0, maxLen) : e.target.value)}
+        minRows={compact ? 2 : 6}
+        minLength={minLen}
+        maxLength={maxLen}
         className={inputClass}
         disabled={disabled}
       />
@@ -78,6 +108,8 @@ export function renderFormField(
           value={(value as string | string[]) ?? (f.config?.imageMultiple ? [] : '')}
           onChange={(v) => onChange(f.key, v)}
           multiple={f.config?.imageMultiple ?? false}
+          tag={f.config?.imageTag}
+          uploadNamePrefix={options?.uploadNamePrefix}
           className="w-full"
         />
       </div>
@@ -108,11 +140,51 @@ export function renderFormField(
     )
     return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
   }
+  if (f.type === 'timer') {
+    const timerVal = parseTimerValue(value)
+    const content = (
+      <TimerInput
+        value={timerVal}
+        onChange={(v) => onChange(f.key, v)}
+        disabled={disabled}
+        className="w-full"
+      />
+    )
+    return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
+  }
+  if (f.type === 'datetime') {
+    const raw = value == null || value === '' ? '' : String(value)
+    const parsed = raw ? new Date(raw) : null
+    const valueForInput = parsed && !Number.isNaN(parsed.getTime())
+      ? `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}T${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`
+      : ''
+    return (
+      <input
+        type="datetime-local"
+        value={valueForInput}
+        onChange={(e) => {
+          const v = e.target.value
+          if (!v) {
+            onChange(f.key, '')
+            return
+          }
+          const d = new Date(v)
+          onChange(f.key, Number.isNaN(d.getTime()) ? '' : d.toISOString())
+        }}
+        className={inputClass}
+        disabled={disabled}
+      />
+    )
+  }
+  const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
+  const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
   return (
     <input
       type="text"
       value={String(value ?? '')}
-      onChange={(e) => onChange(f.key, e.target.value)}
+      onChange={(e) => onChange(f.key, maxLen ? e.target.value.slice(0, maxLen) : e.target.value)}
+      minLength={minLen}
+      maxLength={maxLen}
       className={inputClass}
       disabled={disabled}
     />

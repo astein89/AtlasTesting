@@ -90,6 +90,10 @@ router.get('/', (_, res) => {
       fieldIds: r.field_ids ? JSON.parse(r.field_ids) : [],
       fieldLayout: r.field_layout ? JSON.parse(r.field_layout) : {},
       formLayoutOrder: parseFormLayoutOrder(r.form_layout),
+      keyField: (r as { key_field?: string | null }).key_field ?? undefined,
+      startDate: (r as { start_date?: string | null }).start_date ?? undefined,
+      endDate: (r as { end_date?: string | null }).end_date ?? undefined,
+      archivedRuns: parseArchivedRuns((r as { archived_runs?: string | null }).archived_runs),
       createdAt: r.created_at,
       recordCount: countByPlan.get(r.id) ?? 0,
     }))
@@ -109,6 +113,56 @@ function parseDefaultSortOrder(json: string | null): Array<{ key: string; dir: '
   }
 }
 
+function parseFieldDefaults(json: string | null): Record<string, string | number | boolean | string[]> {
+  try {
+    const parsed = json ? JSON.parse(json) : null
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, string | number | boolean | string[]> = {}
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof k !== 'string') continue
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v
+      else if (Array.isArray(v)) out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** Stop any running timers in record data (finalize totalElapsedMs, clear startedAt). */
+function stopTimersInData(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  const now = Date.now()
+  for (const [k, v] of Object.entries(data)) {
+    if (v != null && typeof v === 'object' && !Array.isArray(v) && 'totalElapsedMs' in v && 'startedAt' in v) {
+      const t = v as Record<string, unknown>
+      const total = typeof t.totalElapsedMs === 'number' && t.totalElapsedMs >= 0 ? t.totalElapsedMs : 0
+      const startedAt = typeof t.startedAt === 'string' ? t.startedAt : ''
+      const startMs = Date.parse(startedAt)
+      const added = Number.isNaN(startMs) ? 0 : Math.max(0, now - startMs)
+      const stopped: Record<string, unknown> = { ...t, totalElapsedMs: total + added }
+      delete stopped.startedAt
+      out[k] = stopped
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
+function parseArchivedRuns(json: string | null): Array<{ startDate: string; endDate: string; runId?: string }> {
+  try {
+    const parsed = json ? JSON.parse(json) : null
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (x): x is { startDate: string; endDate: string; runId?: string } =>
+        x && typeof x.startDate === 'string' && typeof x.endDate === 'string'
+    )
+  } catch {
+    return []
+  }
+}
+
 router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(req.params.id) as {
     id: string
@@ -120,6 +174,8 @@ router.get('/:id', (req, res) => {
     field_layout: string | null
     form_layout: string | null
     default_sort_order?: string | null
+    field_defaults?: string | null
+    key_field?: string | null
     created_at: string
   } | undefined
   if (!row) return res.status(404).json({ error: 'Test plan not found' })
@@ -133,12 +189,17 @@ router.get('/:id', (req, res) => {
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
     defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
+    fieldDefaults: parseFieldDefaults((row as { field_defaults?: string | null }).field_defaults),
+    keyField: (row as { key_field?: string | null }).key_field ?? undefined,
+    startDate: (row as { start_date?: string | null }).start_date ?? undefined,
+    endDate: (row as { end_date?: string | null }).end_date ?? undefined,
+    archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs),
     createdAt: row.created_at,
   })
 })
 
 router.post('/', requireAdmin, (req, res) => {
-  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder } =
+  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate } =
     req.body
   if (!name) {
     return res.status(400).json({ error: 'name required' })
@@ -158,8 +219,15 @@ router.post('/', requireAdmin, (req, res) => {
     Array.isArray(defaultSortOrder) && defaultSortOrder.length > 0
       ? JSON.stringify(defaultSortOrder)
       : null
+  const fieldDefaultsJson =
+    fieldDefaults && typeof fieldDefaults === 'object' && Object.keys(fieldDefaults).length > 0
+      ? JSON.stringify(fieldDefaults)
+      : null
+  const keyFieldVal = typeof keyField === 'string' && keyField.trim() ? keyField.trim() : null
+  const startDateVal = typeof startDate === 'string' && startDate.trim() ? startDate.trim() : null
+  const endDateVal = typeof endDate === 'string' && endDate.trim() ? endDate.trim() : null
   db.prepare(
-    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     name,
@@ -169,7 +237,12 @@ router.post('/', requireAdmin, (req, res) => {
     fieldIdsJson,
     fieldLayoutJson,
     formLayoutJson,
-    defaultSortJson
+    defaultSortJson,
+    fieldDefaultsJson,
+    keyFieldVal,
+    startDateVal,
+    endDateVal,
+    null
   )
 
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
@@ -182,6 +255,8 @@ router.post('/', requireAdmin, (req, res) => {
     field_layout: string | null
     form_layout: string | null
     default_sort_order?: string | null
+    field_defaults?: string | null
+    key_field?: string | null
     created_at: string
   }
   res.status(201).json({
@@ -194,12 +269,17 @@ router.post('/', requireAdmin, (req, res) => {
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
     defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
+    fieldDefaults: parseFieldDefaults((row as { field_defaults?: string | null }).field_defaults),
+    keyField: (row as { key_field?: string | null }).key_field ?? undefined,
+    startDate: (row as { start_date?: string | null }).start_date ?? undefined,
+    endDate: (row as { end_date?: string | null }).end_date ?? undefined,
+    archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs),
     createdAt: row.created_at,
   })
 })
 
 router.put('/:id', requireAdmin, (req, res) => {
-  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder } =
+  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate, archivedRuns } =
     req.body
   const { id } = req.params
 
@@ -256,6 +336,77 @@ router.put('/:id', requireAdmin, (req, res) => {
         : null
     )
   }
+  if (fieldDefaults !== undefined) {
+    updates.push('field_defaults = ?')
+    values.push(
+      fieldDefaults && typeof fieldDefaults === 'object' && Object.keys(fieldDefaults).length > 0
+        ? JSON.stringify(fieldDefaults)
+        : null
+    )
+  }
+  if (keyField !== undefined) {
+    updates.push('key_field = ?')
+    values.push(typeof keyField === 'string' && keyField.trim() ? keyField.trim() : null)
+  }
+  if (startDate !== undefined) {
+    updates.push('start_date = ?')
+    values.push(typeof startDate === 'string' && startDate.trim() ? startDate.trim() : null)
+  }
+  if (endDate !== undefined) {
+    updates.push('end_date = ?')
+    values.push(typeof endDate === 'string' && endDate.trim() ? endDate.trim() : null)
+  }
+  if (archivedRuns !== undefined && Array.isArray(archivedRuns)) {
+    const planRow = db.prepare('SELECT archived_runs FROM test_plans WHERE id = ?').get(id) as { archived_runs: string | null } | undefined
+    const oldRuns = parseArchivedRuns(planRow?.archived_runs ?? null)
+    const newRuns = archivedRuns.filter(
+      (x: unknown): x is { startDate: string; endDate: string; runId?: string } =>
+        x != null && typeof x === 'object' && 'startDate' in x && 'endDate' in x && typeof (x as { startDate: unknown }).startDate === 'string' && typeof (x as { endDate: unknown }).endDate === 'string'
+    )
+    const runByKey = (r: { startDate: string; endDate: string }) => `${r.startDate}\t${r.endDate}`
+    const oldByKey = new Map(oldRuns.map((r) => [runByKey(r), r]))
+    const newByKey = new Map(newRuns.map((r) => [runByKey(r), r]))
+
+    const finalRuns: Array<{ startDate: string; endDate: string; runId?: string }> = []
+    for (const run of newRuns) {
+      const key = runByKey(run)
+      const existing = oldByKey.get(key)
+      let runId = run.runId ?? existing?.runId
+      if (!runId) {
+        runId = uuidv4()
+        db.prepare(
+          'UPDATE test_runs SET run_id = ? WHERE test_plan_id = ? AND (run_id IS NULL OR run_id = ?)'
+        ).run(runId, id, '')
+        const rows = db.prepare('SELECT id, data FROM test_runs WHERE test_plan_id = ? AND run_id = ?').all(id, runId) as Array<{ id: string; data: string | null }>
+        for (const row of rows) {
+          if (!row.data) continue
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(row.data)
+          } catch {
+            continue
+          }
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue
+          const stopped = stopTimersInData(parsed as Record<string, unknown>)
+          db.prepare('UPDATE test_runs SET data = ? WHERE id = ?').run(JSON.stringify(stopped), row.id)
+        }
+      }
+      finalRuns.push({ startDate: run.startDate, endDate: run.endDate, runId })
+    }
+    for (const run of oldRuns) {
+      if (newByKey.has(runByKey(run))) continue
+      const rid = run.runId
+      if (rid) {
+        db.prepare('UPDATE test_runs SET run_id = NULL WHERE test_plan_id = ? AND run_id = ?').run(id, rid)
+      } else {
+        db.prepare(
+          'UPDATE test_runs SET run_id = NULL WHERE test_plan_id = ? AND substr(run_at, 1, 10) >= ? AND substr(run_at, 1, 10) <= ?'
+        ).run(id, run.startDate, run.endDate)
+      }
+    }
+    updates.push('archived_runs = ?')
+    values.push(finalRuns.length > 0 ? JSON.stringify(finalRuns) : null)
+  }
   if (updates.length === 0) {
     const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
       id: string
@@ -266,6 +417,8 @@ router.put('/:id', requireAdmin, (req, res) => {
       field_layout: string | null
       form_layout: string | null
       default_sort_order?: string | null
+      field_defaults?: string | null
+      key_field?: string | null
       created_at: string
     }
     return res.json({
@@ -278,6 +431,10 @@ router.put('/:id', requireAdmin, (req, res) => {
       fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
       formLayoutOrder: parseFormLayoutOrder(row.form_layout),
       defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
+      fieldDefaults: parseFieldDefaults((row as { field_defaults?: string | null }).field_defaults),
+      keyField: (row as { key_field?: string | null }).key_field ?? undefined,
+      startDate: (row as { start_date?: string | null }).start_date ?? undefined,
+      endDate: (row as { end_date?: string | null }).end_date ?? undefined,
       createdAt: row.created_at,
     })
   }
@@ -293,6 +450,8 @@ router.put('/:id', requireAdmin, (req, res) => {
     field_layout: string | null
     form_layout: string | null
     default_sort_order?: string | null
+    field_defaults?: string | null
+    key_field?: string | null
     created_at: string
   }
   res.json({
@@ -305,6 +464,11 @@ router.put('/:id', requireAdmin, (req, res) => {
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
     defaultSortOrder: parseDefaultSortOrder((row as { default_sort_order?: string | null }).default_sort_order),
+    fieldDefaults: parseFieldDefaults((row as { field_defaults?: string | null }).field_defaults),
+    keyField: (row as { key_field?: string | null }).key_field ?? undefined,
+    startDate: (row as { start_date?: string | null }).start_date ?? undefined,
+    endDate: (row as { end_date?: string | null }).end_date ?? undefined,
+    archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs),
     createdAt: row.created_at,
   })
 })

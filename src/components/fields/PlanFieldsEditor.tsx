@@ -29,12 +29,17 @@ import {
   isSeparatorLineId,
   parseFieldEntry,
 } from '../../utils/formLayout'
+import { getDefaultValueForField } from '../../utils/fieldDefaults'
 import type { DataField } from '../../types'
 
 interface PlanFieldsEditorProps {
   formLayoutOrder: string[]
   onChange: (order: string[]) => void
   onCreateNew?: () => void
+  /** Default values by field key (from test plan); shown in Live preview when set */
+  fieldDefaults?: Record<string, string | number | boolean | string[]>
+  /** Rendered just above the Live preview block */
+  renderAbovePreview?: React.ReactNode
 }
 
 function SortableLayoutItem({
@@ -181,6 +186,8 @@ export function PlanFieldsEditor({
   formLayoutOrder,
   onChange,
   onCreateNew,
+  fieldDefaults,
+  renderAbovePreview,
 }: PlanFieldsEditorProps) {
   const [allFields, setAllFields] = useState<DataField[]>([])
   const [search, setSearch] = useState('')
@@ -553,6 +560,7 @@ export function PlanFieldsEditor({
             </ul>
           </div>
         </div>
+        {renderAbovePreview}
         <div>
           <p className="mb-2 text-xs font-medium text-foreground/60">
             Live preview
@@ -571,13 +579,7 @@ export function PlanFieldsEditor({
                       </label>
                       {renderFormField(
                         field,
-                        (field.type === 'number' || field.type === 'fraction'
-                          ? 0
-                          : field.type === 'boolean'
-                            ? false
-                            : field.type === 'image' && field.config?.imageMultiple
-                              ? []
-                              : '') as string | number | boolean,
+                        getDefaultValueForField(field, fieldDefaults) as string | number | boolean,
                         () => {},
                         { disabled: true }
                       )}

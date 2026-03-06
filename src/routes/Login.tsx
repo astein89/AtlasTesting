@@ -18,6 +18,7 @@ export function Login() {
   const user = useAuthStore((s) => s.user)
   const setAuth = useAuthStore((s) => s.setAuth)
   const [error, setError] = useState('')
+  const [rememberMe, setRememberMe] = useState(true)
 
   useEffect(() => {
     if (user) navigate('/', { replace: true })
@@ -39,7 +40,7 @@ export function Login() {
         refreshToken: string
         user: { id: string; username: string; name?: string; role: string }
       }>('/auth/login', data)
-      setAuth(res.user, res.accessToken, res.refreshToken)
+      setAuth(res.user, res.accessToken, res.refreshToken, rememberMe)
       navigate('/')
     } catch (e: unknown) {
       setError(
@@ -84,6 +85,15 @@ export function Login() {
               <p className="mt-1 text-sm text-red-500">{errors.password.message}</p>
             )}
           </div>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="h-4 w-4 rounded border-neutral-600 bg-neutral-900 text-blue-600"
+            />
+            <span className="text-sm text-neutral-200">Remember me (stay signed in for 7 days)</span>
+          </label>
           {error && <p className="text-sm text-red-500">{error}</p>}
           <button
             type="submit"

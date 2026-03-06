@@ -6,6 +6,7 @@ import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
 import { getFieldIdsFromOrder } from '../utils/formLayout'
 import type { DataField, TestPlan } from '../types'
+import { getStatusOptions } from '../types'
 
 export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
@@ -21,6 +22,10 @@ export function TestPlanEditor() {
   const [defaultSortOrder, setDefaultSortOrder] = useState<Array<{ key: string; dir: 'asc' | 'desc' }>>([
     { key: 'date', dir: 'desc' },
   ])
+  const [fieldDefaults, setFieldDefaults] = useState<Record<string, string | number | boolean | string[]>>({})
+  const [keyField, setKeyField] = useState<string>('')
+  const [startDate, setStartDate] = useState<string>('')
+  const [endDate, setEndDate] = useState<string>('')
   const [planFields, setPlanFields] = useState<DataField[]>([])
   const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
@@ -44,6 +49,10 @@ export function TestPlanEditor() {
           setDefaultSortOrder(
             r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
           )
+          setFieldDefaults(r.data.fieldDefaults && typeof r.data.fieldDefaults === 'object' ? r.data.fieldDefaults : {})
+          setKeyField(r.data.keyField ?? '')
+          setStartDate(r.data.startDate ?? '')
+          setEndDate(r.data.endDate ?? '')
         })
         .catch(() => navigate('/test-plans'))
         .finally(() => setLoading(false))
@@ -89,6 +98,10 @@ export function TestPlanEditor() {
           fieldIds,
           formLayoutOrder: formLayoutOrder.length > 0 ? formLayoutOrder : undefined,
           defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
+          fieldDefaults: Object.keys(fieldDefaults).length > 0 ? fieldDefaults : undefined,
+          keyField: keyField.trim() || undefined,
+          startDate: startDate.trim() || undefined,
+          endDate: endDate.trim() || undefined,
         })
         navigate(`/test-plans/${data.id}/edit`)
       } else {
@@ -100,6 +113,10 @@ export function TestPlanEditor() {
           fieldIds,
           formLayoutOrder,
           defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
+          fieldDefaults: Object.keys(fieldDefaults).length > 0 ? fieldDefaults : undefined,
+          keyField: keyField.trim() || undefined,
+          startDate: startDate.trim() || undefined,
+          endDate: endDate.trim() || undefined,
         })
         navigate('/test-plans')
       }
@@ -171,6 +188,50 @@ export function TestPlanEditor() {
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
             rows={3}
           />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="block text-sm font-medium text-foreground">
+              Start date
+            </label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground">
+              End date
+            </label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
+            Key field (for file naming)
+          </label>
+          <p className="mt-1 mb-2 text-sm text-foreground/60">
+            Optional. When exporting a single record, this field&apos;s value can be used in the filename. Not unique.
+          </p>
+          <select
+            value={keyField}
+            onChange={(e) => setKeyField(e.target.value)}
+            className="mt-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+          >
+            <option value="">(none)</option>
+            {planFields.map((f) => (
+              <option key={f.id} value={f.key}>
+                {f.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
@@ -249,6 +310,108 @@ export function TestPlanEditor() {
               formLayoutOrder={formLayoutOrder}
               onChange={handleFormLayoutChange}
               onCreateNew={() => setShowCreateField(true)}
+              fieldDefaults={fieldDefaults}
+              renderAbovePreview={
+                planFields.length > 0 ? (
+                  <div>
+                    <label className="block text-sm font-medium text-foreground">
+                      Default values (by test plan)
+                    </label>
+                    <p className="mt-1 mb-2 text-sm text-foreground/60">
+                      Pre-fill when adding a new record. Leave blank to use the normal default.
+                    </p>
+                    <div className="mt-2 space-y-3 rounded-lg border border-border bg-card p-3 sm:space-y-2">
+                      {planFields.map((f) => {
+                        const key = f.key
+                        const val = fieldDefaults[key]
+                        const setVal = (v: string | number | boolean | string[]) =>
+                          setFieldDefaults((prev) => {
+                            if (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v))) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            return { ...prev, [key]: v }
+                          })
+                        return (
+                          <div key={f.id} className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                            <span className="min-w-0 shrink-0 text-sm font-medium text-foreground sm:min-w-[120px]">{f.label}</span>
+                            {f.type === 'number' && (
+                              <input
+                                type="number"
+                                value={val === undefined || val === '' ? '' : Number(val)}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setVal(v === '' ? '' : parseFloat(v))
+                                }}
+                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[120px]"
+                                placeholder="(none)"
+                              />
+                            )}
+                            {(f.type === 'text' || f.type === 'longtext') && (
+                              <input
+                                type="text"
+                                value={val === undefined ? '' : String(val)}
+                                onChange={(e) => setVal(e.target.value)}
+                                className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-xs"
+                                placeholder="(none)"
+                              />
+                            )}
+                            {f.type === 'boolean' && (
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={val === true}
+                                  onChange={(e) => setVal(e.target.checked)}
+                                  className="h-4 w-4"
+                                />
+                                <span className="text-sm text-foreground/70">Default checked</span>
+                              </label>
+                            )}
+                            {f.type === 'select' && (
+                              <select
+                                value={val === undefined ? '' : String(val)}
+                                onChange={(e) => setVal(e.target.value)}
+                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[180px]"
+                              >
+                                <option value="">(none)</option>
+                                {(f.config?.options || []).map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {f.type === 'status' && (
+                              <select
+                                value={val === undefined ? '' : String(val)}
+                                onChange={(e) => setVal(e.target.value)}
+                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[180px]"
+                              >
+                                <option value="">(none)</option>
+                                {getStatusOptions(f).map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {!['number', 'text', 'longtext', 'boolean', 'select', 'status'].includes(f.type) && (
+                              <input
+                                type="text"
+                                value={val === undefined ? '' : String(val)}
+                                onChange={(e) => setVal(e.target.value)}
+                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[120px]"
+                                placeholder="(none)"
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null
+              }
             />
           </div>
         </div>

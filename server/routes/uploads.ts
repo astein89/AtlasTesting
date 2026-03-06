@@ -8,6 +8,11 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
 const router = Router()
 router.use(authMiddleware)
 
+function sanitizeFilename(name: string): string {
+  const base = name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'image'
+  return base.slice(0, 200)
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     const dir = path.join(process.cwd(), 'uploads')
@@ -16,7 +21,19 @@ const storage = multer.diskStorage({
   },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname) || '.jpg'
-    cb(null, `${uuidv4()}${ext.toLowerCase()}`)
+    const safe = sanitizeFilename(path.basename(file.originalname, path.extname(file.originalname)))
+    if (safe && safe !== 'image') {
+      let final = safe + ext.toLowerCase()
+      let n = 0
+      const dir = path.join(process.cwd(), 'uploads')
+      while (fs.existsSync(path.join(dir, final))) {
+        n += 1
+        final = `${safe}_${n}${ext.toLowerCase()}`
+      }
+      cb(null, final)
+    } else {
+      cb(null, `${uuidv4()}${ext.toLowerCase()}`)
+    }
   },
 })
 
