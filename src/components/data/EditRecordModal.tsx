@@ -1,16 +1,32 @@
 import { useCallback, useEffect, useState } from 'react'
+import { api } from '../../api/client'
 import { renderFormField } from '../fields/FormFieldRenderer'
 import { SelectInput } from '../fields/SelectInput'
 import { buildFormRowsFromOrder, isSeparatorId, isSeparatorLineId, normalizeFormLayoutOrder, parseFieldEntry, SPAN_TO_COLS } from '../../utils/formLayout'
 import { getFieldValidationErrors } from '../../utils/fieldValidation'
 import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
+import { formatDateTime } from '../../lib/dateTimeConfig'
 
 interface Record {
   id: string
   recordedAt: string
   status: string
   data: Record<string, string | number | boolean | string[] | TimerValue>
+}
+
+interface HistoryChange {
+  field: string
+  oldVal: unknown
+  newVal: unknown
+}
+
+interface HistoryEntry {
+  at: string
+  by: string
+  byId: string
+  action: string
+  changes: HistoryChange[]
 }
 
 interface EditRecordModalProps {
@@ -25,6 +41,8 @@ interface EditRecordModalProps {
   formLayoutOrder?: string[]
   /** Plan key field for naming uploaded images (key_field + image_tag + timestamp) */
   plan?: { keyField?: string }
+  /** When true, show History button in footer (admin-only) */
+  isAdmin?: boolean
 }
 
 function dataChanged(
@@ -60,9 +78,14 @@ export function EditRecordModal({
   submitting,
   formLayoutOrder = [],
   plan,
+  isAdmin = false,
 }: EditRecordModalProps) {
   const [showSavePrompt, setShowSavePrompt] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Array<{ fieldKey: string; message: string }>>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[] | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
   const handleDataChange = useCallback(
     (key: string, value: string | number | boolean | string[] | TimerValue) => {
@@ -117,7 +140,8 @@ export function EditRecordModal({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showSavePrompt) setShowSavePrompt(false)
+        if (showHistory) setShowHistory(false)
+        else if (showSavePrompt) setShowSavePrompt(false)
         else handleClose()
       }
     }
@@ -128,7 +152,22 @@ export function EditRecordModal({
       window.removeEventListener('keydown', handler)
       document.body.style.overflow = prevOverflow
     }
-  }, [handleClose, showSavePrompt])
+  }, [handleClose, showSavePrompt, showHistory])
+
+  useEffect(() => {
+    if (!showHistory || !record.id) return
+    setHistoryLoading(true)
+    setHistoryError(null)
+    setHistoryEntries(null)
+    api
+      .get<HistoryEntry[]>(`/records/${record.id}/history`)
+      .then((res) => setHistoryEntries(res.data))
+      .catch((err) => {
+        const msg = err.response?.status === 403 ? 'Admin required' : err.response?.data?.error ?? 'Failed to load history'
+        setHistoryError(msg)
+      })
+      .finally(() => setHistoryLoading(false))
+  }, [showHistory, record.id])
 
   return (
     <>
@@ -140,10 +179,25 @@ export function EditRecordModal({
         className="flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
-          <h2 className="mb-4 text-lg font-semibold text-foreground">
-            Edit row — {new Date(record.recordedAt).toLocaleString()}
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
+          <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
+            Edit row — {formatDateTime(record.recordedAt)}
           </h2>
+          {statusField ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
+              <SelectInput
+                value={String(data[statusField.key] ?? '')}
+                onChange={(v) => onDataChange(statusField.key, v)}
+                options={getStatusOptions(statusField)}
+                className="min-w-[140px]"
+                valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
+                optionColors={statusField.config?.statusColors}
+              />
+            </div>
+          ) : null}
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
           <div className="w-full min-w-0 space-y-4">
             {buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
               Array.isArray(row) ? (
@@ -188,29 +242,27 @@ export function EditRecordModal({
             )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
-          {statusField ? (
-            <div className="flex w-full min-w-0 basis-full items-center gap-2 sm:basis-0 sm:w-auto">
-              <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
-              <SelectInput
-                value={String(data[statusField.key] ?? '')}
-                onChange={(v) => onDataChange(statusField.key, v)}
-                options={getStatusOptions(statusField)}
-                className="min-w-0 flex-1 shrink-0 sm:min-w-[140px] sm:flex-none"
-                valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
-                optionColors={statusField.config?.statusColors}
-              />
-            </div>
-          ) : null}
-          <div className="flex w-full shrink-0 justify-end gap-2 sm:ml-auto sm:w-auto">
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={submitting}
-            className="min-h-[44px] min-w-[44px] rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
-          >
-            Delete
-          </button>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+          <div className="flex shrink-0 gap-2">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setShowHistory(true)}
+                className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+              >
+                History
+              </button>
+            )}
+          </div>
+          <div className="flex w-full shrink-0 justify-end gap-2 sm:w-auto">
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={submitting}
+              className="min-h-[44px] min-w-[44px] rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+            >
+              Delete
+            </button>
             <button
               type="button"
               onClick={handleClose}
@@ -256,6 +308,60 @@ export function EditRecordModal({
             >
               Yes
             </button>
+          </div>
+        </div>
+      </div>
+    )}
+    {showHistory && (
+      <div
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+        onClick={() => setShowHistory(false)}
+      >
+        <div
+          className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+            <h3 className="text-lg font-semibold text-foreground">Record history</h3>
+            <button
+              type="button"
+              onClick={() => setShowHistory(false)}
+              className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-background"
+            >
+              Close
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {historyLoading && <p className="text-muted-foreground">Loading...</p>}
+            {historyError && <p className="text-red-500">{historyError}</p>}
+            {!historyLoading && !historyError && historyEntries && (
+              <ul className="space-y-4">
+                {historyEntries.length === 0 && <li className="text-muted-foreground">No history entries.</li>}
+                {historyEntries.map((entry, i) => (
+                  <li key={i} className="border-b border-border pb-3 last:border-0 last:pb-0">
+                    <div className="flex flex-wrap items-baseline gap-2 text-sm">
+                      <span className="font-medium text-foreground">
+                        {formatDateTime(entry.at)}
+                      </span>
+                      <span className="text-muted-foreground">{entry.by}</span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 font-medium capitalize text-foreground">
+                        {entry.action}
+                      </span>
+                    </div>
+                    {entry.changes.length > 0 && (
+                      <ul className="mt-2 space-y-1 pl-2 text-sm text-muted-foreground">
+                        {entry.changes.map((c, j) => (
+                          <li key={j}>
+                            {c.field}: {c.oldVal === undefined || c.oldVal === null ? '—' : String(c.oldVal)}{' '}
+                            → {c.newVal === undefined || c.newVal === null ? '—' : String(c.newVal)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       </div>

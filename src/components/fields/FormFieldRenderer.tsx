@@ -6,9 +6,11 @@ import { SelectInput } from './SelectInput'
 import { TimerInput } from './TimerInput'
 import { parseFractionScale } from '../../utils/fraction'
 import { parseTimerValue } from '../../utils/timer'
+import { formatFieldValue } from '../../utils/formatFieldValue'
 import { getStatusOptions } from '../../types'
-import type { DataField } from '../../types'
+import type { DataField, FieldConfig } from '../../types'
 import type { TimerValue } from '../../types'
+import type { DateTimeDisplayKind } from '../../lib/dateTimeConfig'
 
 export function renderFormField(
   f: DataField,
@@ -128,6 +130,19 @@ export function renderFormField(
   }
   if (f.type === 'status') {
     const statusVal = String(value ?? '')
+    if (f.config?.formula) {
+      const color = f.config?.statusColors?.[statusVal]
+      return (
+        <input
+          type="text"
+          value={statusVal || '—'}
+          readOnly
+          className={`${inputClass} cursor-default`}
+          disabled
+          style={color ? { borderLeftColor: color, borderLeftWidth: '3px' } : undefined}
+        />
+      )
+    }
     const content = (
       <SelectInput
         value={statusVal}
@@ -152,11 +167,90 @@ export function renderFormField(
     )
     return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
   }
+  if (f.type === 'formula') {
+    const display = formatFieldValue(f, value)
+    return (
+      <input
+        type="text"
+        value={display}
+        readOnly
+        className={`${inputClass} cursor-default`}
+        disabled
+      />
+    )
+  }
   if (f.type === 'datetime') {
     const raw = value == null || value === '' ? '' : String(value)
     const parsed = raw ? new Date(raw) : null
-    const valueForInput = parsed && !Number.isNaN(parsed.getTime())
-      ? `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}T${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`
+    const valid = parsed && !Number.isNaN(parsed.getTime())
+    const displayKind: DateTimeDisplayKind =
+      (f.config as FieldConfig | undefined)?.dateTimeDisplay ?? 'dateTime'
+
+    if (displayKind === 'shortDate' || displayKind === 'longDate') {
+      const valueForInput = valid
+        ? `${parsed!.getFullYear()}-${String(parsed!.getMonth() + 1).padStart(2, '0')}-${String(parsed!.getDate()).padStart(2, '0')}`
+        : ''
+      return (
+        <input
+          type="date"
+          value={valueForInput}
+          onChange={(e) => {
+            const v = e.target.value
+            if (!v) {
+              onChange(f.key, '')
+              return
+            }
+            const d = new Date(v + 'T00:00:00')
+            onChange(f.key, Number.isNaN(d.getTime()) ? '' : d.toISOString())
+          }}
+          className={inputClass}
+          disabled={disabled}
+        />
+      )
+    }
+    if (displayKind === 'shortTime' || displayKind === 'longTime') {
+      const valueForInput = valid
+        ? displayKind === 'longTime'
+          ? `${String(parsed!.getHours()).padStart(2, '0')}:${String(parsed!.getMinutes()).padStart(2, '0')}:${String(parsed!.getSeconds()).padStart(2, '0')}`
+          : `${String(parsed!.getHours()).padStart(2, '0')}:${String(parsed!.getMinutes()).padStart(2, '0')}`
+        : ''
+      const setNow = () => {
+        const now = new Date()
+        const ref = new Date(1970, 0, 1, now.getHours(), now.getMinutes(), now.getSeconds(), 0)
+        onChange(f.key, ref.toISOString())
+      }
+      return (
+        <div className="flex min-w-0 items-center gap-2">
+          <input
+            type="time"
+            value={valueForInput}
+            step={displayKind === 'longTime' ? 1 : 60}
+            onChange={(e) => {
+              const v = e.target.value
+              if (!v) {
+                onChange(f.key, '')
+                return
+              }
+              const [h, m, s] = v.split(':').map(Number)
+              const ref = new Date(1970, 0, 1, h ?? 0, m ?? 0, s ?? 0, 0)
+              onChange(f.key, ref.toISOString())
+            }}
+            className={inputClass}
+            disabled={disabled}
+          />
+          <button
+            type="button"
+            onClick={setNow}
+            disabled={disabled}
+            className="shrink-0 rounded border border-border px-2 py-1.5 text-sm text-foreground hover:bg-background disabled:opacity-50"
+          >
+            Now
+          </button>
+        </div>
+      )
+    }
+    const valueForInput = valid
+      ? `${parsed!.getFullYear()}-${String(parsed!.getMonth() + 1).padStart(2, '0')}-${String(parsed!.getDate()).padStart(2, '0')}T${String(parsed!.getHours()).padStart(2, '0')}:${String(parsed!.getMinutes()).padStart(2, '0')}`
       : ''
     return (
       <input

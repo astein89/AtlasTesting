@@ -1,6 +1,6 @@
 ---
 name: SQLite to PostgreSQL Migration
-overview: Migrate Atlas Testing from SQLite (sql.js) to PostgreSQL, add a one-time migration script, introduce a config file for connection info, and document PostgreSQL installation and setup for Raspberry Pi.
+overview: Migrate Automation Testing from SQLite (sql.js) to PostgreSQL, add a one-time migration script, introduce a config file for connection info, and document PostgreSQL installation and setup for Raspberry Pi.
 todos: []
 isProject: false
 ---
@@ -173,7 +173,7 @@ sudo -u postgres psql -c "CREATE DATABASE atlas OWNER atlas;"
 
 ### Config
 
-Create `~/atlas-testing/config.json`:
+Create `~/automation-testing/config.json`:
 
 ```json
 {
@@ -188,7 +188,7 @@ Or set `DATABASE_URL` in `ecosystem.config.cjs` env.
 ### Migrate Existing Data (if upgrading)
 
 ```bash
-cd ~/atlas-testing
+cd ~/automation-testing
 npm run db:migrate
 ```
 

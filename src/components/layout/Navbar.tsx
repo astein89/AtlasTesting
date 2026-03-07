@@ -30,7 +30,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
             </svg>
           </button>
           <Link to="/" className="truncate text-base font-semibold text-foreground sm:text-lg">
-            Atlas Testing
+            Automation Testing
           </Link>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">

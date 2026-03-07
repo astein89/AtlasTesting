@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useUserPreference } from '../hooks/useUserPreference'
 import { api } from '../api/client'
-import { format } from 'date-fns'
+import { formatDateTime } from '../lib/dateTimeConfig'
 import { PopupSelect } from '../components/ui/PopupSelect'
 import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
 
@@ -45,14 +45,14 @@ export function ResultsList() {
       const q = searchQuery.toLowerCase().trim()
       result = result.filter((r) => {
         const plan = r.planName?.toLowerCase() ?? ''
-        const date = format(new Date(r.recordedAt), 'PPp').toLowerCase()
+        const date = formatDateTime(r.recordedAt).toLowerCase()
         return plan.includes(q) || date.includes(q)
       })
     }
     for (const [colKey, allowed] of Object.entries(columnFilters)) {
       if (allowed.size === 0) continue
       result = result.filter((r) => {
-        const v = colKey === 'plan' ? r.planName : format(new Date(r.recordedAt), 'PPp')
+        const v = colKey === 'plan' ? r.planName : formatDateTime(r.recordedAt)
         return allowed.has(v)
       })
     }
@@ -69,7 +69,7 @@ export function ResultsList() {
 
   const getColumnValues = (key: string): string[] => {
     if (key === 'plan') return [...new Set(records.map((r) => r.planName))]
-    if (key === 'runAt') return records.map((r) => format(new Date(r.recordedAt), 'PPp'))
+    if (key === 'runAt') return records.map((r) => formatDateTime(r.recordedAt))
     return []
   }
 
@@ -135,7 +135,7 @@ export function ResultsList() {
                 >
                   <p className="truncate font-medium text-foreground">{r.planName}</p>
                   <p className="mt-0.5 truncate text-sm text-foreground/70">
-                    {format(new Date(r.recordedAt), 'PPp')}
+                    {formatDateTime(r.recordedAt)}
                   </p>
                   <span className="mt-2 inline-block text-sm text-primary">View →</span>
                 </Link>
@@ -222,7 +222,7 @@ export function ResultsList() {
                 <tr key={r.id} className="bg-background">
                   <td className="px-4 py-2 text-foreground">{r.planName}</td>
                   <td className="px-4 py-2 text-foreground">
-                    {format(new Date(r.recordedAt), 'PPp')}
+                    {formatDateTime(r.recordedAt)}
                   </td>
                   <td className="px-4 py-2 text-right">
                     <Link

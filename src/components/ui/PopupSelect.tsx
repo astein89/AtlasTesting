@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export interface PopupSelectOption {
   value: string
@@ -42,6 +42,15 @@ export function PopupSelect({
 
   const displayLabel =
     opts.find((o) => o.value === value)?.label ?? (value || placeholder)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open])
 
   return (
     <div className={className}>

@@ -1,6 +1,6 @@
-# Atlas Testing — Raspberry Pi Install & Setup Guide
+# Automation Testing — Raspberry Pi Install & Setup Guide
 
-This guide walks you through installing and running Atlas Testing on a Raspberry Pi (Raspberry Pi OS).
+This guide walks you through installing and running Automation Testing on a Raspberry Pi (Raspberry Pi OS).
 
 **Already installed?** See **[Upgrade Instructions](UPGRADE.md)** to update to a newer version.
 
@@ -61,8 +61,8 @@ sudo apt install -y build-essential python3
 
 ```bash
 cd ~
-git clone <your-repo-url> atlas-testing
-cd atlas-testing
+git clone <your-repo-url> automation-testing
+cd automation-testing
 ```
 
 ### From Another Machine (SCP/rsync)
@@ -70,7 +70,7 @@ cd atlas-testing
 On your development machine:
 
 ```bash
-rsync -avz --exclude node_modules --exclude atlas.db ./atlas-testing/ pi@<pi-ip>:~/atlas-testing/
+rsync -avz --exclude node_modules --exclude atlas.db ./automation-testing/ pi@<pi-ip>:~/automation-testing/
 ```
 
 Or use SCP, USB drive, or another transfer method.
@@ -84,7 +84,7 @@ Or use SCP, USB drive, or another transfer method.
 You need full dependencies (including Vite) to build:
 
 ```bash
-cd ~/atlas-testing
+cd ~/automation-testing
 npm install
 npm run build
 ```
@@ -101,7 +101,7 @@ npm run build
 Then copy the project to the Pi (including the `dist` folder). On the Pi:
 
 ```bash
-cd ~/atlas-testing
+cd ~/automation-testing
 npm install --omit=dev
 ```
 
@@ -131,7 +131,7 @@ PM2 keeps the app running, restarts it on crash, and can start it on boot.
 ## Step 8: Start the Application
 
 ```bash
-cd ~/atlas-testing
+cd ~/automation-testing
 pm2 start ecosystem.config.cjs
 ```
 
@@ -139,7 +139,7 @@ Check status:
 
 ```bash
 pm2 status
-pm2 logs atlas-testing
+pm2 logs automation-testing
 ```
 
 ---
@@ -181,10 +181,10 @@ env: {
 | Command | Description |
 |--------|-------------|
 | `pm2 status` | List running apps |
-| `pm2 logs atlas-testing` | View logs |
-| `pm2 restart atlas-testing` | Restart app |
-| `pm2 stop atlas-testing` | Stop app |
-| `pm2 delete atlas-testing` | Remove from PM2 |
+| `pm2 logs automation-testing` | View logs |
+| `pm2 restart automation-testing` | Restart app |
+| `pm2 stop automation-testing` | Stop app |
+| `pm2 delete automation-testing` | Remove from PM2 |
 
 ---
 
@@ -193,13 +193,13 @@ env: {
 The SQLite database is stored at:
 
 ```
-~/atlas-testing/atlas.db
+~/automation-testing/atlas.db
 ```
 
 Back it up regularly:
 
 ```bash
-cp ~/atlas-testing/atlas.db ~/atlas-testing/atlas.db.backup
+cp ~/automation-testing/atlas.db ~/automation-testing/atlas.db.backup
 ```
 
 ---
@@ -311,5 +311,5 @@ sudo setcap 'cap_net_bind_service=+ep' $(which node)
 Then set `PORT: 80` in `ecosystem.config.cjs` and restart:
 
 ```bash
-pm2 restart atlas-testing
+pm2 restart automation-testing
 ```

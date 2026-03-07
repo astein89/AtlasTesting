@@ -1,4 +1,4 @@
-export type FieldType = 'number' | 'text' | 'longtext' | 'boolean' | 'datetime' | 'select' | 'status' | 'fraction' | 'atlas_location' | 'image' | 'timer'
+export type FieldType = 'number' | 'text' | 'longtext' | 'boolean' | 'datetime' | 'select' | 'status' | 'fraction' | 'atlas_location' | 'image' | 'timer' | 'formula'
 
 /** Timer field value: elapsed time from timestamps so it can run for extended periods */
 export interface TimerValue {
@@ -35,14 +35,28 @@ export interface FieldConfig {
   imageTag?: string
   /** For status fields: optional hex color per option value, e.g. { 'Complete': '#22c55e' } */
   statusColors?: Record<string, string>
-  /** For number fields: max digits before decimal (integer part) */
+  /** For number/formula fields: max digits before decimal (integer part), optional display width */
   integerDigits?: number
-  /** For number fields: number of decimal places */
+  /** For number/formula fields: decimal places for display (rounds numeric values) */
   decimalPlaces?: number
+  /** Excel-style: 'number' | 'percent' | 'currency' */
+  numberFormat?: 'number' | 'percent' | 'currency'
+  /** Use thousands separator (e.g. 1,234.56) */
+  thousandsSeparator?: boolean
+  /** How to show negative: 'minus' = -1234, 'parentheses' = (1234) */
+  negativeStyle?: 'minus' | 'parentheses'
+  /** When numberFormat is 'currency', symbol to show (e.g. '$', '€') */
+  currencySymbol?: string
   /** For text/longtext fields: min character length */
   minLength?: number
   /** For text/longtext fields: max character length */
   maxLength?: number
+  /** For formula fields: the M-like expression (e.g. [Length] * [Width]). For status fields: when set, status is computed from this formula (read-only per record). */
+  formula?: string
+  /** For datetime fields: date-fns format string for display (e.g. 'MM/dd/yyyy HH:mm'). When set, overrides app default for this field. */
+  dateTimeFormat?: string
+  /** For datetime fields: what to show — short date, long date, date/time, long time, or short time. When set, used instead of dateTimeFormat. */
+  dateTimeDisplay?: 'shortDate' | 'longDate' | 'dateTime' | 'longTime' | 'shortTime'
 }
 
 /** Options for a status field: custom config.options or default STATUS_OPTIONS */
@@ -69,8 +83,10 @@ export interface DataField {
 export interface TestPlan {
   id: string
   name: string
+  /** Brief summary (for lists). Stored in DB as short_description. */
   description?: string
-  shortDescription?: string
+  /** Long text shown below plan title. Stored in DB as description. */
+  testPlan?: string
   constraints?: string
   fieldIds?: string[]
   /** Map of field id -> width (e.g. "80px", "120px", "auto") for data table */

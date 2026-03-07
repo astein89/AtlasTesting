@@ -83,11 +83,33 @@ export function initSchema(db: SqlDb) {
   migrateRecordsToPlanDirect(db)
   migrateUserPreferences(db)
   migrateFieldsAudit(db)
+  migrateRecordHistory(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
     CREATE INDEX IF NOT EXISTS idx_test_runs_run_at ON test_runs(run_at);
+    CREATE INDEX IF NOT EXISTS idx_record_history_record_id ON record_history(record_id);
   `)
+}
+
+function migrateRecordHistory(db: SqlDb) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS record_history (
+        id TEXT PRIMARY KEY,
+        record_id TEXT NOT NULL,
+        changed_at TEXT NOT NULL,
+        changed_by TEXT NOT NULL,
+        action TEXT NOT NULL,
+        old_data TEXT,
+        old_status TEXT,
+        new_data TEXT,
+        new_status TEXT
+      )
+    `)
+  } catch {
+    // Ignore
+  }
 }
 
 function migrateRecordsToPlanDirect(db: SqlDb) {

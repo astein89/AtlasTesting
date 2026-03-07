@@ -1,11 +1,11 @@
 ---
-name: Atlas Testing Web App
+name: Automation Testing Web App
 overview: Build a React (Vite) + Express web app for defining and running Pallet ASRS tests with a reusable data fields library (including select/DDL options), manual data collection, CSV export, and JWT authentication with admin capabilities. Deployed on Raspberry Pi (Raspberry Pi OS).
 todos: []
 isProject: false
 ---
 
-# Atlas Testing Web App - Frontend Plan
+# Automation Testing Web App - Frontend Plan
 
 ## Architecture Overview
 

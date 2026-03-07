@@ -30,6 +30,8 @@ import {
   parseFieldEntry,
 } from '../../utils/formLayout'
 import { getDefaultValueForField } from '../../utils/fieldDefaults'
+import { getFormulaReferencedFieldKeys } from '../../utils/formulaEvaluator'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import type { DataField } from '../../types'
 
 interface PlanFieldsEditorProps {
@@ -193,6 +195,7 @@ export function PlanFieldsEditor({
   const [search, setSearch] = useState('')
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const useTouchDnd = useIsTouchDevice()
+  const { showAlert } = useAlertConfirm()
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -264,7 +267,20 @@ export function PlanFieldsEditor({
   const handleNativeDragEnd = () => setDraggedIndex(null)
 
   const addField = (fieldId: string) => {
-    onChange([...order, formatFieldEntry(fieldId, 3)])
+    const field = allFields.find((f) => f.id === fieldId)
+    const refKeys =
+      field && (field.type === 'formula' || (field.type === 'status' && field.config?.formula))
+        ? getFormulaReferencedFieldKeys(field.config?.formula ?? '')
+        : []
+    const missingRefIds: string[] = []
+    for (const key of refKeys) {
+      const refField = allFields.find((f) => f.key === key)
+      if (refField && !fieldIdsInOrder.includes(refField.id)) missingRefIds.push(refField.id)
+    }
+    const newOrder = [...order]
+    for (const id of missingRefIds) newOrder.push(formatFieldEntry(id, 3))
+    newOrder.push(formatFieldEntry(fieldId, 3))
+    onChange(newOrder)
   }
 
   const addStatusField = async () => {
@@ -285,12 +301,32 @@ export function PlanFieldsEditor({
       addField(data.id)
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(err || 'Failed to add Status field')
+      showAlert(err || 'Failed to add Status field')
     }
   }
 
   const removeItem = (index: number) => {
     const next = order.filter((_, i) => i !== index)
+    const removedEntry = order[index]
+    if (!isSeparatorId(removedEntry) && !isSeparatorLineId(removedEntry)) {
+      const { fieldId: removedFieldId } = parseFieldEntry(removedEntry)
+      const removedField = allFields.find((f) => f.id === removedFieldId)
+      const removedKey = removedField?.key
+      if (removedKey) {
+        const remainingIds = getFieldIdsFromOrder(next)
+        const formulaFieldsUsing = allFields.filter(
+          (f) =>
+            remainingIds.includes(f.id) &&
+            (f.type === 'formula' || (f.type === 'status' && f.config?.formula)) &&
+            getFormulaReferencedFieldKeys(f.config?.formula ?? '').includes(removedKey)
+        )
+        if (formulaFieldsUsing.length > 0) {
+          const names = formulaFieldsUsing.map((f) => f.label || f.key).join(', ')
+          showAlert(`Cannot remove this field. It is used in a formula in: ${names}. Remove or update those formulas first.`)
+          return
+        }
+      }
+    }
     onChange(next)
   }
 

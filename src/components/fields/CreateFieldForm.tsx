@@ -8,6 +8,7 @@ import { PopupSelect } from '../ui/PopupSelect'
 import { FRACTION_SCALES, type FractionScale } from '../../utils/fraction'
 import type { FieldType } from '../../types'
 import { STATUS_OPTIONS } from '../../types'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
 const schema = z.object({
   key: z.string().min(1),
@@ -38,6 +39,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
 }
 
 export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
+  const { showAlert } = useAlertConfirm()
   const [options, setOptions] = useState<string[]>([''])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
   const [imageMultiple, setImageMultiple] = useState(false)
@@ -103,7 +105,7 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
       onSave(created.id)
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(err || 'Failed to create field')
+      showAlert(err || 'Failed to create field')
     }
   }
 

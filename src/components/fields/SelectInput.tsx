@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { getContrastTextColor } from '../../utils/colorContrast'
 
 interface SelectInputProps {
   value: string
@@ -22,6 +23,7 @@ export function SelectInput({
   optionColors,
 }: SelectInputProps) {
   const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const select = (opt: string) => {
     onChange(opt)
@@ -30,16 +32,38 @@ export function SelectInput({
 
   const hasColor = value && valueColor
   const triggerStyle = hasColor
-    ? { backgroundColor: valueColor, color: '#fff', borderColor: valueColor }
+    ? { backgroundColor: valueColor, color: getContrastTextColor(valueColor), borderColor: valueColor }
     : undefined
 
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
   return (
-    <div className={className}>
+    <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((o) => !o)}
         className="min-h-[44px] w-full rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
         style={triggerStyle}
+        aria-expanded={open}
+        aria-haspopup="listbox"
       >
         <span className={!value ? (hasColor ? '' : 'text-foreground/60') : ''}>
           {value ? value : placeholder}
@@ -48,66 +72,50 @@ export function SelectInput({
 
       {open && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setOpen(false)}
+          className="absolute left-0 right-0 top-full z-[60] mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg"
+          role="listbox"
         >
-          <div
-            className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <span className="text-lg font-medium text-foreground">
-                {value ? value : placeholder}
-              </span>
+          {options.length === 0 ? (
+            <p className="p-3 text-center text-sm text-foreground/60">No options</p>
+          ) : (
+            <div className="divide-y divide-border py-1">
               <button
                 type="button"
-                onClick={() => setOpen(false)}
-                className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                onClick={() => select('')}
+                className={`block w-full px-3 py-2 text-left text-sm text-foreground/70 hover:bg-background ${
+                  !value ? 'bg-primary/10 font-medium' : ''
+                }`}
+                role="option"
+                aria-selected={!value}
               >
-                Cancel
+                —
               </button>
-            </div>
-
-            <div className="max-h-64 overflow-y-auto rounded-lg border border-border bg-background">
-              {options.length === 0 ? (
-                <p className="p-4 text-center text-sm text-foreground/60">No options</p>
-              ) : (
-                <div className="divide-y divide-border">
+              {options.map((opt) => {
+                const optColor = optionColors?.[opt]
+                return (
                   <button
+                    key={opt}
                     type="button"
-                    onClick={() => select('')}
-                    className={`block w-full px-4 py-3 text-left text-foreground/70 hover:bg-card ${
-                      !value ? 'bg-primary/10 font-medium' : ''
+                    onClick={() => select(opt)}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-background ${
+                      value === opt ? 'bg-primary/10 font-medium' : ''
                     }`}
+                    role="option"
+                    aria-selected={value === opt}
                   >
-                    —
+                    {optColor ? (
+                      <span
+                        className="h-3 w-3 shrink-0 rounded-full border border-black/10"
+                        style={{ backgroundColor: optColor }}
+                        aria-hidden
+                      />
+                    ) : null}
+                    <span className="min-w-0 flex-1 truncate">{opt}</span>
                   </button>
-                  {options.map((opt) => {
-                    const optColor = optionColors?.[opt]
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => select(opt)}
-                        className={`flex w-full items-center gap-3 px-4 py-3 text-left text-foreground hover:bg-card ${
-                          value === opt ? 'bg-primary/10 font-medium' : ''
-                        }`}
-                      >
-                        {optColor ? (
-                          <span
-                            className="h-4 w-4 shrink-0 rounded-full border border-black/10"
-                            style={{ backgroundColor: optColor }}
-                            aria-hidden
-                          />
-                        ) : null}
-                        <span className="min-w-0 flex-1 truncate">{opt}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+                )
+              })}
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

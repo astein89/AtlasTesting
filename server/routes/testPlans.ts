@@ -84,9 +84,9 @@ router.get('/', (_, res) => {
     rows.map((r) => ({
       id: r.id,
       name: r.name,
-      description: r.description,
+      description: (r as { short_description?: string | null }).short_description ?? null,
+      testPlan: r.description,
       constraints: (r as { constraints?: string | null }).constraints ?? null,
-      shortDescription: (r as { short_description?: string | null }).short_description ?? null,
       fieldIds: r.field_ids ? JSON.parse(r.field_ids) : [],
       fieldLayout: r.field_layout ? JSON.parse(r.field_layout) : {},
       formLayoutOrder: parseFormLayoutOrder(r.form_layout),
@@ -182,9 +182,9 @@ router.get('/:id', (req, res) => {
   res.json({
     id: row.id,
     name: row.name,
-    description: row.description,
+    description: (row as { short_description?: string | null }).short_description ?? null,
+    testPlan: row.description,
     constraints: row.constraints ?? null,
-    shortDescription: (row as { short_description?: string | null }).short_description ?? null,
     fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
@@ -199,7 +199,7 @@ router.get('/:id', (req, res) => {
 })
 
 router.post('/', requireAdmin, (req, res) => {
-  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate } =
+  const { name, description, constraints, testPlan, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate } =
     req.body
   if (!name) {
     return res.status(400).json({ error: 'name required' })
@@ -231,9 +231,9 @@ router.post('/', requireAdmin, (req, res) => {
   ).run(
     id,
     name,
-    description || null,
+    testPlan || null,
     constraints || null,
-    shortDescription || null,
+    description || null,
     fieldIdsJson,
     fieldLayoutJson,
     formLayoutJson,
@@ -262,9 +262,9 @@ router.post('/', requireAdmin, (req, res) => {
   res.status(201).json({
     id: row.id,
     name: row.name,
-    description: row.description,
+    description: (row as { short_description?: string | null }).short_description ?? null,
+    testPlan: row.description,
     constraints: row.constraints ?? null,
-    shortDescription: (row as { short_description?: string | null }).short_description ?? null,
     fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),
@@ -279,7 +279,7 @@ router.post('/', requireAdmin, (req, res) => {
 })
 
 router.put('/:id', requireAdmin, (req, res) => {
-  const { name, description, constraints, shortDescription, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate, archivedRuns } =
+  const { name, description, constraints, testPlan, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate, archivedRuns } =
     req.body
   const { id } = req.params
 
@@ -296,17 +296,17 @@ router.put('/:id', requireAdmin, (req, res) => {
     updates.push('name = ?')
     values.push(typeof name === 'string' ? name.trim() : name)
   }
-  if (description !== undefined) {
+  if (testPlan !== undefined) {
     updates.push('description = ?')
-    values.push(description)
+    values.push(typeof testPlan === 'string' ? testPlan.trim() || null : testPlan)
   }
   if (constraints !== undefined) {
     updates.push('constraints = ?')
     values.push(constraints)
   }
-  if (shortDescription !== undefined) {
+  if (description !== undefined) {
     updates.push('short_description = ?')
-    values.push(typeof shortDescription === 'string' ? shortDescription.trim() || null : shortDescription)
+    values.push(typeof description === 'string' ? description.trim() || null : description)
   }
   if (fieldIds !== undefined) {
     updates.push('field_ids = ?')
@@ -424,9 +424,9 @@ router.put('/:id', requireAdmin, (req, res) => {
     return res.json({
       id: row.id,
       name: row.name,
-      description: row.description,
+      description: (row as { short_description?: string | null }).short_description ?? null,
+      testPlan: row.description,
       constraints: row.constraints ?? null,
-      shortDescription: (row as { short_description?: string | null }).short_description ?? null,
       fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
       fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
       formLayoutOrder: parseFormLayoutOrder(row.form_layout),
@@ -457,9 +457,9 @@ router.put('/:id', requireAdmin, (req, res) => {
   res.json({
     id: row.id,
     name: row.name,
-    description: row.description,
+    description: (row as { short_description?: string | null }).short_description ?? null,
+    testPlan: row.description,
     constraints: row.constraints ?? null,
-    shortDescription: (row as { short_description?: string | null }).short_description ?? null,
     fieldIds: row.field_ids ? JSON.parse(row.field_ids) : [],
     fieldLayout: row.field_layout ? JSON.parse(row.field_layout) : {},
     formLayoutOrder: parseFormLayoutOrder(row.form_layout),

@@ -1,6 +1,6 @@
-# Atlas Testing
+# Automation Testing
 
-Web app for testing Pallet ASRS (Atlas). Define tests with flexible data fields, collect data manually (mobile-friendly), export to CSV, and manage users with admin capabilities.
+Web app for test automation. Define tests with flexible data fields, collect data manually (mobile-friendly), export to CSV, and manage users with admin capabilities.
 
 ## Quick Start
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import JSZip from 'jszip'
 import { api } from '../../api/client'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { useAuthStore } from '../../store/authStore'
 import { recordsToCsv } from '../../utils/csvExport'
 import { getElapsedMs } from '../../utils/timer'
@@ -149,6 +150,7 @@ function uniqueZipPath(used: Set<string>, dir: string, filename: string): string
 }
 
 export function ExportPlanModal({ planId, planName, onClose, filteredRecords, defaultSortOrder, keyField, fields }: ExportPlanModalProps) {
+  const { showAlert } = useAlertConfirm()
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [includeCsv, setIncludeCsv] = useState(true)
@@ -232,6 +234,7 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
           a.download = `${exportBaseName}-export-${dateStr}.csv`
           a.click()
           URL.revokeObjectURL(url)
+          onClose()
         } else {
           const zip = new JSZip()
           const usedPaths = new Set<string>()
@@ -257,6 +260,7 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
           a.download = `${exportBaseName}-photos-${dateStr}.zip`
           a.click()
           URL.revokeObjectURL(url)
+          onClose()
         }
       } else {
         const zip = new JSZip()
@@ -288,10 +292,11 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
         a.download = `${exportBaseName}-export-${dateStr}.zip`
         a.click()
         URL.revokeObjectURL(url)
+        onClose()
       }
     } catch (err) {
       console.error('Export failed:', err)
-      alert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      showAlert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
     } finally {
       setExporting(false)
     }

@@ -1,11 +1,28 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
-import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 
 router.use(authMiddleware)
+
+function insertRecordHistory(
+  recordId: string,
+  action: 'created' | 'updated' | 'deleted',
+  oldData: string | null,
+  oldStatus: string | null,
+  newData: string | null,
+  newStatus: string | null,
+  userId: string
+) {
+  const id = uuidv4()
+  const changedAt = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO record_history (id, record_id, changed_at, changed_by, action, old_data, old_status, new_data, new_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, recordId, changedAt, userId, action, oldData, oldStatus, newData, newStatus)
+}
 
 router.get('/', (req: AuthRequest, res) => {
   const { testPlanId, from, to, limit = 50 } = req.query
@@ -94,6 +111,76 @@ router.get('/:id', (req: AuthRequest, res) => {
   })
 })
 
+router.get('/:id/history', requireAdmin, (req: AuthRequest, res) => {
+  const { id } = req.params
+  const record = db.prepare('SELECT id FROM test_runs WHERE id = ?').get(id)
+  if (!record) return res.status(404).json({ error: 'Record not found' })
+
+  const rows = db
+    .prepare(
+      `SELECT rh.id, rh.record_id, rh.changed_at, rh.changed_by, rh.action, rh.old_data, rh.old_status, rh.new_data, rh.new_status,
+       COALESCE(u.name, u.username) as changed_by_name
+       FROM record_history rh
+       LEFT JOIN users u ON rh.changed_by = u.id
+       WHERE rh.record_id = ?
+       ORDER BY rh.changed_at DESC`
+    )
+    .all(id) as Array<{
+    changed_at: string
+    changed_by: string
+    changed_by_name: string | null
+    action: string
+    old_data: string | null
+    old_status: string | null
+    new_data: string | null
+    new_status: string | null
+  }>
+
+  const entries = rows.map((r) => {
+    const changes: Array<{ field: string; oldVal: unknown; newVal: unknown }> = []
+    if (r.action === 'updated') {
+      if (r.old_status !== r.new_status) {
+        changes.push({ field: 'status', oldVal: r.old_status ?? undefined, newVal: r.new_status ?? undefined })
+      }
+      const oldData = r.old_data ? (JSON.parse(r.old_data) as Record<string, unknown>) : {}
+      const newData = r.new_data ? (JSON.parse(r.new_data) as Record<string, unknown>) : {}
+      const allKeys = new Set([...Object.keys(oldData), ...Object.keys(newData)])
+      for (const key of allKeys) {
+        const ov = oldData[key]
+        const nv = newData[key]
+        if (JSON.stringify(ov) !== JSON.stringify(nv)) {
+          changes.push({ field: key, oldVal: ov, newVal: nv })
+        }
+      }
+    } else if (r.action === 'created' && r.new_status != null) {
+      changes.push({ field: 'status', oldVal: undefined, newVal: r.new_status })
+      if (r.new_data) {
+        const newData = JSON.parse(r.new_data) as Record<string, unknown>
+        for (const key of Object.keys(newData)) {
+          changes.push({ field: key, oldVal: undefined, newVal: newData[key] })
+        }
+      }
+    } else if (r.action === 'deleted' && r.old_status != null) {
+      changes.push({ field: 'status', oldVal: r.old_status, newVal: undefined })
+      if (r.old_data) {
+        const oldData = JSON.parse(r.old_data) as Record<string, unknown>
+        for (const key of Object.keys(oldData)) {
+          changes.push({ field: key, oldVal: oldData[key], newVal: undefined })
+        }
+      }
+    }
+    return {
+      at: r.changed_at,
+      by: r.changed_by_name || r.changed_by,
+      byId: r.changed_by,
+      action: r.action,
+      changes,
+    }
+  })
+
+  res.json(entries)
+})
+
 router.post('/', (req: AuthRequest, res) => {
   const { testPlanId, data, status, recordedAt: bodyRecordedAt } = req.body
   if (!testPlanId || !req.user) {
@@ -115,17 +202,12 @@ router.post('/', (req: AuthRequest, res) => {
     recordedAt = new Date().toISOString()
   }
 
+  const newData = data ? JSON.stringify(data) : null
   db.prepare(
     'INSERT INTO test_runs (id, test_plan_id, run_at, entered_by, status, data, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(
-    id,
-    testPlanId,
-    recordedAt,
-    req.user.id,
-    status,
-    data ? JSON.stringify(data) : null,
-    null
-  )
+  ).run(id, testPlanId, recordedAt, req.user.id, status, newData, null)
+
+  insertRecordHistory(id, 'created', null, null, newData, status, req.user.id)
 
   const row = db
     .prepare(
@@ -196,6 +278,18 @@ router.put('/:id', (req: AuthRequest, res) => {
   values.push(id)
   db.prepare(`UPDATE test_runs SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
+  const newData = data !== undefined ? JSON.stringify(data) : existing.data
+  const newStatus = status !== undefined ? status : existing.status
+  insertRecordHistory(
+    id,
+    'updated',
+    existing.data,
+    existing.status,
+    newData,
+    newStatus,
+    req.user!.id
+  )
+
   const row = db
     .prepare(
       `SELECT tr.*, tp.name as plan_name FROM test_runs tr
@@ -224,8 +318,15 @@ router.put('/:id', (req: AuthRequest, res) => {
 })
 
 router.delete('/:id', (req: AuthRequest, res) => {
-  const result = db.prepare('DELETE FROM test_runs WHERE id = ?').run(req.params.id)
-  if (result.changes === 0) return res.status(404).json({ error: 'Record not found' })
+  const id = req.params.id
+  const row = db.prepare('SELECT * FROM test_runs WHERE id = ?').get(id) as {
+    id: string
+    data: string | null
+    status: string
+  } | undefined
+  if (!row) return res.status(404).json({ error: 'Record not found' })
+  insertRecordHistory(id, 'deleted', row.data, row.status, null, null, req.user!.id)
+  db.prepare('DELETE FROM test_runs WHERE id = ?').run(id)
   res.status(204).send()
 })
 

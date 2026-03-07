@@ -28,9 +28,9 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       refreshToken: null,
-      rememberMe: true,
+      rememberMe: false,
       initializing: true,
-      setAuth: (user, accessToken, refreshToken, rememberMe = true) =>
+      setAuth: (user, accessToken, refreshToken, rememberMe = false) =>
         set({ user, accessToken, refreshToken, rememberMe, initializing: false }),
       setAccessToken: (accessToken) => set({ accessToken }),
       setInitializing: (initializing) => set({ initializing }),
@@ -43,7 +43,7 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'atlas-auth',
       partialize: (s) => ({
-        rememberMe: s.rememberMe ?? true,
+        rememberMe: s.rememberMe ?? false,
         ...(s.rememberMe ? { refreshToken: s.refreshToken } : {}),
       }),
       onRehydrateStorage: () => (state) => {

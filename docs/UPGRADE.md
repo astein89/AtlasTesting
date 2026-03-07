@@ -1,6 +1,6 @@
-# Atlas Testing — Upgrade Instructions
+# Automation Testing — Upgrade Instructions
 
-Use this guide to upgrade an existing Atlas Testing installation to a newer version.
+Use this guide to upgrade an existing Automation Testing installation to a newer version.
 
 ---
 
@@ -16,14 +16,14 @@ Use this guide to upgrade an existing Atlas Testing installation to a newer vers
 ### Step 1: Back up the database
 
 ```bash
-cd ~/atlas-testing
-cp atlas.db atlas.db.backup.$(date +%Y%m%d)
+cd ~/automation-testing
+cp atlas.db atlas.db.backup.$(date +%Y%m%d-%H%M%S)
 ```
 
 ### Step 2: Stop the app
 
 ```bash
-pm2 stop atlas-testing
+pm2 stop automation-testing
 ```
 
 ### Step 3: Get the new code
@@ -39,7 +39,7 @@ git pull origin main
 On your development machine:
 
 ```bash
-rsync -avz --exclude node_modules --exclude atlas.db ./atlas-testing/ pi@<pi-ip>:~/atlas-testing/
+rsync -avz --exclude node_modules --exclude atlas.db ./automation-testing/ pi@<pi-ip>:~/automation-testing/
 ```
 
 **From USB or other transfer:**
@@ -51,14 +51,14 @@ Copy the new project files over the existing folder, but **do not overwrite** `a
 **If building on the Pi:**
 
 ```bash
-cd ~/atlas-testing
+cd ~/automation-testing
 npm install
 ```
 
 **If you built on your dev machine and copied `dist`:**
 
 ```bash
-cd ~/atlas-testing
+cd ~/automation-testing
 npm install --omit=dev
 ```
 
@@ -73,7 +73,7 @@ Skip this step if you copied a pre-built `dist` folder.
 ### Step 6: Start the app
 
 ```bash
-pm2 start atlas-testing
+pm2 start automation-testing
 # or, if it was deleted from PM2:
 pm2 start ecosystem.config.cjs
 ```
@@ -82,7 +82,7 @@ pm2 start ecosystem.config.cjs
 
 ```bash
 pm2 status
-pm2 logs atlas-testing
+pm2 logs automation-testing
 ```
 
 Open the app in a browser and confirm it works.
@@ -94,13 +94,13 @@ Open the app in a browser and confirm it works.
 If you use Git and build on the Pi:
 
 ```bash
-cd ~/atlas-testing
-cp atlas.db atlas.db.backup.$(date +%Y%m%d)
-pm2 stop atlas-testing
+cd ~/automation-testing
+cp atlas.db atlas.db.backup.$(date +%Y%m%d-%H%M%S)
+pm2 stop automation-testing
 git pull origin main
 npm install
 npm run build
-pm2 start atlas-testing
+pm2 start automation-testing
 ```
 
 ---
@@ -111,8 +111,8 @@ If the upgrade fails:
 
 ```bash
 # 1. Restore the database backup
-cd ~/atlas-testing
-cp atlas.db.backup.YYYYMMDD atlas.db
+cd ~/automation-testing
+cp atlas.db.backup.YYYYMMDD-HHMMSS atlas.db
 
 # 2. Revert code (if using Git)
 git checkout <previous-commit-or-tag>
@@ -120,14 +120,14 @@ git checkout <previous-commit-or-tag>
 # 3. Rebuild and restart
 npm install
 npm run build
-pm2 restart atlas-testing
+pm2 restart automation-testing
 ```
 
 ---
 
 ## Database Location
 
-The database file `atlas.db` is stored in the **project root** (e.g. `~/atlas-testing/atlas.db`), not inside `dist/`. This ensures it survives `npm run build`, which recreates the `dist/` folder.
+The database file `atlas.db` is stored in the **project root** (e.g. `~/automation-testing/atlas.db`), not inside `dist/`. This ensures it survives `npm run build`, which recreates the `dist/` folder.
 
 If you previously lost data on upgrade, the database may have been stored in `dist/` by an older version. Restore from your backup (see Rollback above).
 

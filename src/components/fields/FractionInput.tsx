@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   formatDecimalAsFraction,
   fractionToDecimal,
@@ -34,6 +34,15 @@ export function FractionInput({ value, onChange, className = '', defaultScale = 
   const [wholePart, setWholePart] = useState('')
   const [fracPart, setFracPart] = useState<{ num: number; denom: number } | null>(null)
   const [scale, setScale] = useState<FractionScale>(defaultScale)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open])
 
   const openKeypad = () => {
     const whole = Math.floor(value)

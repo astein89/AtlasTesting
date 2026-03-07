@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import { format } from 'date-fns'
+import { formatDateTime } from '../lib/dateTimeConfig'
 
 interface PlanStats {
   id: string
@@ -101,7 +101,7 @@ export function Dashboard() {
                       to={`/results/${r.id}`}
                       className="text-foreground hover:underline"
                     >
-                      {r.planName} - {format(new Date(r.recordedAt), 'PPp')}
+                      {r.planName} - {formatDateTime(r.recordedAt)}
                     </Link>
                   </li>
                 ))}

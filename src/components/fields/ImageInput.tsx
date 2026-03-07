@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useAuthStore } from '../../store/authStore'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
 interface ImageInputProps {
   value: string | string[]
@@ -97,6 +98,7 @@ export function ImageInput({
   uploadNamePrefix,
   className = '',
 }: ImageInputProps) {
+  const { showAlert } = useAlertConfirm()
   const [uploading, setUploading] = useState(false)
   const [fullScreenPath, setFullScreenPath] = useState<string | null>(null)
   const [removeIdx, setRemoveIdx] = useState<number | null>(null)
@@ -154,7 +156,7 @@ export function ImageInput({
       onChange(next)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed'
-      alert(msg)
+      showAlert(msg)
     } finally {
       setUploading(false)
       e.target.value = ''

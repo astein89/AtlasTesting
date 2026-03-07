@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   parseAtlasLocation,
   formatAtlasLocation,
@@ -60,6 +60,15 @@ export function AtlasLocationInput({ value, onChange, className = '' }: AtlasLoc
     setOpen(false)
     setBuilding({})
   }
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancel()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open])
 
   const goBack = () => {
     if (stepIndex === 2 && laneTens != null) {

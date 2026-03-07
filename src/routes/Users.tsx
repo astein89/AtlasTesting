@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { AdminChangePasswordModal } from '../components/auth/AdminChangePasswordModal'
 import { PopupSelect } from '../components/ui/PopupSelect'
+import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import type { User } from '../types'
 
 export function Users() {
@@ -11,6 +12,7 @@ export function Users() {
   const [form, setForm] = useState({ username: '', name: '', password: '', role: 'user' })
   const [showNew, setShowNew] = useState(false)
   const [changePasswordFor, setChangePasswordFor] = useState<User | null>(null)
+  const { showAlert, showConfirm } = useAlertConfirm()
 
   useEffect(() => {
     load()
@@ -37,18 +39,19 @@ export function Users() {
       setEditing(null)
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(err || 'Failed to save')
+      showAlert(err || 'Failed to save')
     }
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this user?')) return
+    const ok = await showConfirm('Delete this user?', { title: 'Delete user', variant: 'danger', confirmLabel: 'Delete' })
+    if (!ok) return
     try {
       await api.delete(`/users/${id}`)
       load()
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(err || 'Failed to delete')
+      showAlert(err || 'Failed to delete')
     }
   }
 

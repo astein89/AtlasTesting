@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useSortableHeader } from '../hooks/useSortableHeader'
-import type { DataField } from '../types'
+import { getFieldsReferencingKey } from '../utils/formulaEvaluator'
+import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import type { DataField, TestPlan } from '../types'
 
 type SortKey = 'key' | 'label' | 'type' | 'updatedAt'
 type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
@@ -12,6 +14,7 @@ export function FieldsList() {
   const [loading, setLoading] = useState(true)
   const [sortOrder, setSortOrder] = useState<SortLevel[]>([{ key: 'key', dir: 'asc' }])
   const navigate = useNavigate()
+  const { showAlert, showConfirm } = useAlertConfirm()
 
   const getVal = (f: DataField, key: SortKey) =>
     key === 'key'
@@ -96,13 +99,30 @@ export function FieldsList() {
   }, [loadFields])
 
   const handleDelete = async (id: string, key: string) => {
-    if (!confirm(`Delete field "${key}"? This may affect test plans using it.`)) return
+    const usedBy = getFieldsReferencingKey(key, fields.filter((f) => f.id !== id))
+    if (usedBy.length > 0) {
+      const names = usedBy.map((f) => f.label || f.key).join(', ')
+      showAlert(
+        `This field is used in the formula field(s): ${names}. Remove or update those formulas before deleting.`,
+        'Cannot delete field'
+      )
+      return
+    }
+    const plansRes = await api.get<TestPlan[]>('/test-plans').catch(() => ({ data: [] as TestPlan[] }))
+    const plansUsingField = (plansRes.data ?? []).filter((p) => p.fieldIds?.includes(id))
+    if (plansUsingField.length > 0) {
+      const names = plansUsingField.map((p) => p.name).join(', ')
+      showAlert(`Cannot delete this field. It is used in the test plan(s): ${names}. Remove it from the plan(s) first.`)
+      return
+    }
+    const ok = await showConfirm(`Delete field "${key}"?`, { title: 'Delete field' })
+    if (!ok) return
     try {
       await api.delete(`/fields/${id}`)
       loadFields()
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(err || 'Failed to delete field')
+      showAlert(err || 'Failed to delete field')
       loadFields()
     }
   }

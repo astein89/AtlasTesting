@@ -1,5 +1,6 @@
 import type { DataField, TimerValue } from '../types'
 import { getStatusOptions } from '../types'
+import { evaluateFormula } from './formulaEvaluator'
 
 /**
  * Returns the default value for a single field, using plan fieldDefaults when present and valid.
@@ -32,6 +33,17 @@ export function getDefaultValueForField(
     }
     return typeof planDefault === 'string' ? planDefault : String(planDefault)
   }
+  if (field.type === 'formula') {
+    const expr = field.config?.formula
+    if (!expr || typeof expr !== 'string') return ''
+    try {
+      const data = (fieldDefaults && typeof fieldDefaults === 'object') ? { ...fieldDefaults } : {}
+      const result = evaluateFormula(expr, data)
+      return result !== null && result !== undefined ? result : ''
+    } catch {
+      return ''
+    }
+  }
   // No plan default: use type fallbacks
   if (field.type === 'number') return ''
   if (field.type === 'fraction') return 0
@@ -45,5 +57,6 @@ export function getDefaultValueForField(
   if (field.type === 'atlas_location') return ''
   if (field.type === 'image') return field.config?.imageMultiple ? [] : ''
   if (field.type === 'timer') return { totalElapsedMs: 0 }
+  if (field.type === 'formula') return ''
   return ''
 }

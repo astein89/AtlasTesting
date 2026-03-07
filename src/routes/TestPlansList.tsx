@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { format } from 'date-fns'
+import { formatDate } from '../lib/dateTimeConfig'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import { useUserPreference } from '../hooks/useUserPreference'
 import { api } from '../api/client'
@@ -10,14 +10,14 @@ import type { TestPlan } from '../types'
 
 function planPeriodLabel(plan: TestPlan): string {
   if (!plan.startDate && !plan.endDate) return '—'
-  const s = plan.startDate ? format(new Date(plan.startDate + 'T00:00:00'), 'MMM d, yyyy') : ''
-  const e = plan.endDate ? format(new Date(plan.endDate + 'T00:00:00'), 'MMM d, yyyy') : ''
+  const s = plan.startDate ? formatDate(plan.startDate + 'T00:00:00') : ''
+  const e = plan.endDate ? formatDate(plan.endDate + 'T00:00:00') : ''
   if (s && e) return `${s} – ${e}`
   if (s) return `From ${s}`
   return `Through ${e}`
 }
 
-type SortKey = 'name' | 'shortDescription'
+type SortKey = 'name' | 'description'
 type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
 
 export function TestPlansList() {
@@ -32,7 +32,7 @@ export function TestPlansList() {
   const navigate = useNavigate()
 
   const getVal = (plan: TestPlan, key: SortKey) =>
-    key === 'name' ? (plan.name ?? '') : (plan.shortDescription ?? '')
+    key === 'name' ? (plan.name ?? '') : (plan.description ?? '')
 
   const sortedPlans = useMemo(() => {
     const copy = [...plans]
@@ -89,6 +89,7 @@ export function TestPlansList() {
         {isAdmin && (
           <Link
             to="/test-plans/new"
+            state={{ returnTo: '/test-plans' }}
             className="min-h-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
           >
             New Test Plan
@@ -114,7 +115,7 @@ export function TestPlansList() {
                 >
                   <p className="truncate font-medium text-foreground">{plan.name}</p>
                   <p className="mt-0.5 truncate text-sm text-foreground/70">
-                    {plan.shortDescription?.trim() || '—'}
+                    {plan.description?.trim() || '—'}
                   </p>
                   <p className="mt-0.5 text-xs text-foreground/60">
                     {planPeriodLabel(plan)}
@@ -136,6 +137,7 @@ export function TestPlansList() {
                     {isAdmin && (
                       <Link
                         to={`/test-plans/${plan.id}/edit`}
+                        state={{ returnTo: '/test-plans' }}
                         className="min-h-[44px] flex items-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
                       >
                         Edit
@@ -167,14 +169,14 @@ export function TestPlansList() {
                 </th>
                 <th
                   className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
-                  {...getSortHandlers('shortDescription')}
+                  {...getSortHandlers('description')}
                   title="Tap to sort. Long-press or Shift+click to add secondary sort."
                 >
                   <span className="flex items-center gap-1">
                     Description
-                    {getSortIndex('shortDescription') >= 0 && (
+                    {getSortIndex('description') >= 0 && (
                       <span className="text-foreground/60">
-                        {getSortIndex('shortDescription') + 1}{getSortDir('shortDescription') === 'asc' ? '↑' : '↓'}
+                        {getSortIndex('description') + 1}{getSortDir('description') === 'asc' ? '↑' : '↓'}
                       </span>
                     )}
                   </span>
@@ -208,7 +210,7 @@ export function TestPlansList() {
                     {plan.name}
                   </td>
                   <td className="px-4 py-3 text-sm text-foreground/70">
-                    {plan.shortDescription?.trim() || '—'}
+                    {plan.description?.trim() || '—'}
                   </td>
                   <td className="px-4 py-3 text-sm text-foreground/70">
                     {planPeriodLabel(plan)}
@@ -231,6 +233,7 @@ export function TestPlansList() {
                       {isAdmin && (
                         <Link
                           to={`/test-plans/${plan.id}/edit`}
+                          state={{ returnTo: '/test-plans' }}
                           className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background sm:min-h-0 sm:min-w-0 sm:py-1"
                         >
                           Edit

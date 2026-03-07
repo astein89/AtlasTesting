@@ -18,7 +18,7 @@ export function Login() {
   const user = useAuthStore((s) => s.user)
   const setAuth = useAuthStore((s) => s.setAuth)
   const [error, setError] = useState('')
-  const [rememberMe, setRememberMe] = useState(true)
+  const [rememberMe, setRememberMe] = useState(false)
 
   useEffect(() => {
     if (user) navigate('/', { replace: true })
@@ -53,7 +53,7 @@ export function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-neutral-900">
       <div className="w-full max-w-sm rounded-lg border border-neutral-700 bg-neutral-800 p-6 shadow">
-        <h1 className="mb-6 text-xl font-semibold text-white">Atlas Testing</h1>
+        <h1 className="mb-6 text-xl font-semibold text-white">Automation Testing</h1>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-neutral-200">

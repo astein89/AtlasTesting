@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'atlas-testing',
+      name: 'automation-testing',
       script: 'dist/server/index.js',
       cwd: __dirname,
       env: {

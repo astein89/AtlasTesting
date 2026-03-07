@@ -14,8 +14,10 @@ import { ResultsList } from './routes/ResultsList'
 import { ResultDetail } from './routes/ResultDetail'
 import { Users } from './routes/Users'
 import { DbTablesViewer } from './routes/DbTablesViewer'
+import { Settings } from './routes/Settings'
 import { useAuthStore } from './store/authStore'
 import { api } from './api/client'
+import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
 
 function AuthInit() {
   const setAuth = useAuthStore((s) => s.setAuth)
@@ -26,9 +28,16 @@ function AuthInit() {
 
   useEffect(() => {
     if (user) return
-    if (!refreshToken) return
+    if (!refreshToken) {
+      setInitializing(false)
+      return
+    }
 
     setInitializing(true)
+    const timeout = setTimeout(() => {
+      useAuthStore.getState().setInitializing(false)
+    }, 15000)
+
     api
       .post<{ accessToken: string }>('/auth/refresh', { refreshToken })
       .then((r) => {
@@ -43,8 +52,11 @@ function AuthInit() {
         useAuthStore.getState().logout()
       })
       .finally(() => {
+        clearTimeout(timeout)
         useAuthStore.getState().setInitializing(false)
       })
+
+    return () => clearTimeout(timeout)
   }, [refreshToken, user, setAuth, setAccessToken, setInitializing])
 
   return null
@@ -52,7 +64,7 @@ function AuthInit() {
 
 function App() {
   return (
-    <>
+    <AlertConfirmProvider>
       <AuthInit />
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -88,6 +100,7 @@ function App() {
           <Route path="test-plans/:planId/edit" element={<AdminGuard><TestPlanEditor /></AdminGuard>} />
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
+          <Route path="settings" element={<Settings />} />
           <Route path="export" element={<Navigate to="/test-plans" replace />} />
           <Route
             path="users"
@@ -109,7 +122,7 @@ function App() {
         <Route path="tests" element={<Navigate to="/test-plans" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </>
+    </AlertConfirmProvider>
   )
 }
 

@@ -1,4 +1,4 @@
-import { format } from 'date-fns'
+import { formatDateTime } from '../lib/dateTimeConfig'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from './timer'
 import type { TimerValue } from '../types'
 
@@ -24,12 +24,12 @@ export function recordsToCsv(records: Record[]): string {
     headers.forEach((h) => {
       if (h === 'recordId') row.push(r.id)
       else if (h === 'planName') row.push(escapeCsv(r.planName))
-      else if (h === 'recordedAt') row.push(escapeCsv(format(new Date(r.recordedAt), 'yyyy-MM-dd HH:mm:ss')))
+      else if (h === 'recordedAt') row.push(escapeCsv(formatDateTime(r.recordedAt)))
       else if (h === 'User') row.push(escapeCsv(r.enteredByName ?? r.enteredBy ?? ''))
       else {
         const val = r.data[h]
         if (isBlank(val)) {
-          row.push('null')
+          row.push('')
           return
         }
         if (typeof val === 'object' && val !== null && 'totalElapsedMs' in val) {
@@ -44,7 +44,7 @@ export function recordsToCsv(records: Record[]): string {
             return s.includes('/api/uploads/') ? s.replace(/^.*\/api\/uploads\//, '') : s
           })
           .join('; ')
-        row.push(escapeCsv(str.trim() === '' ? 'null' : str))
+        row.push(escapeCsv(str.trim()))
       }
     })
     return row.join(',')

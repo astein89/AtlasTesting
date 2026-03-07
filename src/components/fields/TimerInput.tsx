@@ -7,6 +7,7 @@ import {
   formatTimerDateTime,
   DEFAULT_TIMER,
 } from '../../utils/timer'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
 interface TimerInputProps {
   value: TimerValue | unknown
@@ -31,6 +32,7 @@ export function TimerInput({
   const timer = parseTimerValue(value)
   const [displayMs, setDisplayMs] = useState(() => getElapsedMs(timer))
   const isRunning = !!timer.startedAt
+  const { showConfirm } = useAlertConfirm()
 
   useEffect(() => {
     if (!isRunning) {
@@ -56,9 +58,10 @@ export function TimerInput({
     setDisplayMs(elapsed)
   }
 
-  const handleClear = () => {
+  const handleClear = async () => {
     if (disabled) return
-    if (!window.confirm('Clear timer and reset to 0:00.000?')) return
+    const ok = await showConfirm('Clear timer and reset to 0:00.000?', { title: 'Clear timer' })
+    if (!ok) return
     onChange(DEFAULT_TIMER)
     setDisplayMs(0)
   }

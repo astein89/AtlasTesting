@@ -15,6 +15,7 @@ export function getFieldValidationErrors(
 ): FieldValidationError[] {
   const errors: FieldValidationError[] = []
   for (const f of fields) {
+    if (f.type === 'formula') continue
     if (f.type !== 'text' && f.type !== 'longtext') continue
     const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
     const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined

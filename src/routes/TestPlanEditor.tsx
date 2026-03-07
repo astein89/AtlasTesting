@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
-import { getFieldIdsFromOrder } from '../utils/formLayout'
+import { formatFieldEntry, getFieldIdsFromOrder } from '../utils/formLayout'
+import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
+import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import type { DataField, TestPlan } from '../types'
 import { getStatusOptions } from '../types'
 
 export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const isNew = !planId
   const [name, setName] = useState('')
-  const [shortDescription, setShortDescription] = useState('')
   const [description, setDescription] = useState('')
+  const [testPlan, setTestPlan] = useState('')
   const [constraints, setConstraints] = useState('')
   const [fieldIds, setFieldIds] = useState<string[]>([])
   const [formLayoutOrder, setFormLayoutOrder] = useState<string[]>([])
@@ -30,6 +34,7 @@ export function TestPlanEditor() {
   const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
+  const { showAlert, showConfirm } = useAlertConfirm()
 
   useEffect(() => {
     if (!isNew && planId) {
@@ -37,8 +42,8 @@ export function TestPlanEditor() {
         .get<TestPlan>(`/test-plans/${planId}`)
         .then((r) => {
           setName(r.data.name)
-          setShortDescription(r.data.shortDescription || '')
           setDescription(r.data.description || '')
+          setTestPlan(r.data.testPlan || '')
           setConstraints(r.data.constraints || '')
           setFieldIds(r.data.fieldIds || [])
           setFormLayoutOrder(
@@ -60,14 +65,70 @@ export function TestPlanEditor() {
   }, [planId, isNew, navigate])
 
   const handleCreateField = (newFieldId: string) => {
-    setFieldIds((ids) => [...ids, newFieldId])
-    setFormLayoutOrder((order) => [...order, newFieldId])
-    setShowCreateField(false)
+    api
+      .get<DataField>(`/fields/${newFieldId}`)
+      .then((fieldResp) => {
+        const field = fieldResp.data
+        const refKeys =
+          field.type === 'formula' || (field.type === 'status' && field.config?.formula)
+            ? getFormulaReferencedFieldKeys(field.config?.formula ?? '')
+            : []
+        if (refKeys.length === 0) {
+          setFieldIds((ids) => [...ids, newFieldId])
+          setFormLayoutOrder((order) => [...order, formatFieldEntry(newFieldId, 3)])
+          setShowCreateField(false)
+          return
+        }
+        return api.get<DataField[]>('/fields').then((allResp) => {
+          const all = allResp.data
+          const missingRefIds = refKeys
+            .map((key) => all.find((f) => f.key === key)?.id)
+            .filter(Boolean) as string[]
+          setFieldIds((ids) => {
+            const missing = missingRefIds.filter((id) => !ids.includes(id))
+            return [...ids, ...missing, newFieldId]
+          })
+          setFormLayoutOrder((order) => {
+            const currentIds = getFieldIdsFromOrder(order)
+            const missing = missingRefIds.filter((id) => !currentIds.includes(id))
+            return [
+              ...order,
+              ...missing.map((id) => formatFieldEntry(id, 3)),
+              formatFieldEntry(newFieldId, 3),
+            ]
+          })
+          setShowCreateField(false)
+        })
+      })
+      .catch(() => {
+        setFieldIds((ids) => [...ids, newFieldId])
+        setFormLayoutOrder((order) => [...order, formatFieldEntry(newFieldId, 3)])
+        setShowCreateField(false)
+      })
   }
 
   const handleFormLayoutChange = (order: string[]) => {
+    const newIds = getFieldIdsFromOrder(order)
+    const removedIds = fieldIds.filter((id) => !newIds.includes(id))
+    if (removedIds.length > 0) {
+      for (const removedId of removedIds) {
+        const removedField = planFields.find((f) => f.id === removedId)
+        const removedKey = removedField?.key
+        if (!removedKey) continue
+        const formulaFieldsUsing = planFields.filter(
+          (f) =>
+            (f.type === 'formula' || (f.type === 'status' && f.config?.formula)) &&
+            (f.config?.formula && getFormulaReferencedFieldKeys(f.config.formula).includes(removedKey))
+        )
+        if (formulaFieldsUsing.length > 0) {
+          const names = formulaFieldsUsing.map((f) => f.label || f.key).join(', ')
+          showAlert(`Cannot remove field "${removedField?.label ?? removedKey}": it is used in formula or status formula in: ${names}.`)
+          return
+        }
+      }
+    }
     setFormLayoutOrder(order)
-    setFieldIds(getFieldIdsFromOrder(order))
+    setFieldIds(newIds)
   }
 
   useEffect(() => {
@@ -92,8 +153,8 @@ export function TestPlanEditor() {
       if (isNew) {
         const { data } = await api.post<{ id: string }>('/test-plans', {
           name: name.trim(),
-          shortDescription: shortDescription.trim() || undefined,
           description: description.trim() || undefined,
+          testPlan: testPlan.trim() || undefined,
           constraints: constraints.trim() || undefined,
           fieldIds,
           formLayoutOrder: formLayoutOrder.length > 0 ? formLayoutOrder : undefined,
@@ -103,12 +164,12 @@ export function TestPlanEditor() {
           startDate: startDate.trim() || undefined,
           endDate: endDate.trim() || undefined,
         })
-        navigate(`/test-plans/${data.id}/edit`)
+        navigate(returnTo ?? `/test-plans/${data.id}/edit`, { replace: true })
       } else {
         await api.put(`/test-plans/${planId}`, {
           name: name.trim(),
-          shortDescription: shortDescription.trim() || undefined,
           description: description.trim() || undefined,
+          testPlan: testPlan.trim() || undefined,
           constraints: constraints.trim() || undefined,
           fieldIds,
           formLayoutOrder,
@@ -118,11 +179,11 @@ export function TestPlanEditor() {
           startDate: startDate.trim() || undefined,
           endDate: endDate.trim() || undefined,
         })
-        navigate('/test-plans')
+        navigate(returnTo ?? '/test-plans', { replace: true })
       }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(msg || 'Failed to save')
+      showAlert(msg || 'Failed to save')
     } finally {
       setSubmitting(false)
     }
@@ -162,32 +223,35 @@ export function TestPlanEditor() {
             Description
           </label>
           <input
-            value={shortDescription}
-            onChange={(e) => setShortDescription(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground">
-            Test plan
-          </label>
-          <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            rows={3}
+            placeholder="Brief summary for lists"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground">
-            Constraints
-          </label>
-          <textarea
-            value={constraints}
-            onChange={(e) => setConstraints(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            rows={3}
-          />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="block text-sm font-medium text-foreground">
+              Test plan
+            </label>
+            <textarea
+              value={testPlan}
+              onChange={(e) => setTestPlan(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              rows={3}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground">
+              Constraints
+            </label>
+            <textarea
+              value={constraints}
+              onChange={(e) => setConstraints(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              rows={3}
+            />
+          </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -425,7 +489,7 @@ export function TestPlanEditor() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/test-plans')}
+            onClick={() => navigate(returnTo ?? '/test-plans')}
             className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
           >
             Cancel
@@ -434,13 +498,14 @@ export function TestPlanEditor() {
             <button
               type="button"
               onClick={async () => {
-                if (!confirm(`Delete plan "${name}"? This will also delete all data in this plan.`)) return
+                const ok = await showConfirm(`Delete plan "${name}"? This will also delete all data in this plan.`, { title: 'Delete plan', variant: 'danger', confirmLabel: 'Delete' })
+                if (!ok) return
                 try {
                   await api.delete(`/test-plans/${planId}`)
-                  navigate('/test-plans', { replace: true })
+                  navigate(returnTo ?? '/test-plans', { replace: true })
                 } catch (e: unknown) {
                   const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-                  alert(err || 'Failed to delete plan')
+                  showAlert(err || 'Failed to delete plan')
                 }
               }}
               className="rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10"
