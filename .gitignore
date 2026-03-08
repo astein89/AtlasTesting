@@ -5,3 +5,6 @@ uploads
 .env
 *.log
 .DS_Store
+
+# Vite temp config (transpiled from vite.config.ts)
+vite.config.ts.timestamp-*.mjs
