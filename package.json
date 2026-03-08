@@ -12,7 +12,8 @@
     "build:server": "tsc -p server/tsconfig.json",
     "preview": "vite preview",
     "start": "NODE_ENV=production node dist/server/index.js",
-    "db:seed": "tsx server/db/seed.ts"
+    "db:seed": "tsx server/db/seed.ts",
+    "ctl": "bash scripts/ctl.sh"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

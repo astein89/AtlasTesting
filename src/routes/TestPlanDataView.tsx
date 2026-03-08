@@ -1060,7 +1060,7 @@ export function TestPlanDataView() {
             {plan.constraints && (
               <div className="min-w-0">
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                  Constraints
+                  TEST CRITERIA
                 </h3>
                 <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
                   {plan.constraints}

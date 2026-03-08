@@ -1,0 +1,70 @@
+# System commands — app control (start, stop, status, update)
+
+A single script controls the Automation Testing app: **start**, **stop**, **status**, **restart**, and **update** (run the upgrade flow).
+
+## How to run it (from repo)
+
+From the project root:
+
+```bash
+./scripts/ctl.sh <command>
+```
+
+Or via npm (pass the command after `--`):
+
+```bash
+npm run ctl -- <command>
+```
+
+**Commands:**
+
+| Command   | Action |
+|----------|--------|
+| `start`  | Start the app with PM2 (or add it from `ecosystem.config.cjs` if not already in PM2). |
+| `stop`   | Stop the app. |
+| `status` | Show PM2 status and a hint to view logs (`pm2 logs automation-testing`). |
+| `restart`| Restart the app. |
+| `update` | Run the full upgrade: backup DB → stop → git pull → npm install → build → start. Same as [scripts/pi-update.sh](../scripts/pi-update.sh). |
+
+Examples:
+
+```bash
+./scripts/ctl.sh status
+./scripts/ctl.sh update
+npm run ctl -- restart
+```
+
+## Add a system-wide command (optional)
+
+You can call the script from anywhere by linking it into a directory on your `PATH` (e.g. `/usr/local/bin`).
+
+**On Linux / Raspberry Pi:**
+
+```bash
+sudo ln -s /home/pi/automation-testing/scripts/ctl.sh /usr/local/bin/atlas-ctl
+```
+
+Use your actual repo path instead of `/home/pi/automation-testing` if different. Then run:
+
+```bash
+atlas-ctl status
+atlas-ctl update
+```
+
+The script changes into the repo directory before running PM2 or the update script, so the symlink can live anywhere.
+
+**Make the script executable** (if needed):
+
+```bash
+chmod +x scripts/ctl.sh
+```
+
+## Prerequisites
+
+- **PM2** — Install with `npm install -g pm2`. Used for start, stop, status, restart.
+- **Update command** — Requires git, npm, and the project’s [scripts/pi-update.sh](../scripts/pi-update.sh). The app is expected to be managed by PM2 (see [Raspberry Pi Setup](RASPBERRY_PI_SETUP.md) and [Upgrade Instructions](UPGRADE.md)).
+
+## See also
+
+- [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md)
+- [Upgrade Instructions](UPGRADE.md)

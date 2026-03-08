@@ -19,6 +19,7 @@ npm run dev
 - `npm run build` - Build for production
 - `npm start` - Run production server (after build)
 - `npm run db:seed` - Run DB seed manually (optional)
+- App control (start/stop/status/update): see **[System commands](docs/SYSTEM_COMMANDS.md)**.
 
 ## Deployment (Raspberry Pi)
 

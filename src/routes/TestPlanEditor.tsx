@@ -282,7 +282,7 @@ export function TestPlanEditor() {
           </div>
           <div>
             <label className="block text-sm font-medium text-foreground">
-              Constraints
+              Test criteria
             </label>
             <textarea
               value={constraints}

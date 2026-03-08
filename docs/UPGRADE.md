@@ -91,7 +91,14 @@ Open the app in a browser and confirm it works.
 
 ## Quick Upgrade (single command)
 
-If you use Git and build on the Pi:
+If you use Git and build on the Pi, you can run the control script:
+
+```bash
+cd ~/automation-testing
+./scripts/ctl.sh update
+```
+
+Or the same steps manually:
 
 ```bash
 cd ~/automation-testing
@@ -102,6 +109,8 @@ npm install
 npm run build
 pm2 start automation-testing
 ```
+
+If you installed a [system-wide command](SYSTEM_COMMANDS.md), you can run `atlas-ctl update` from anywhere.
 
 ---
 
