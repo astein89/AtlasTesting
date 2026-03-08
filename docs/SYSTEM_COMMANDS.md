@@ -24,13 +24,16 @@ npm run ctl -- <command>
 | `stop`   | Stop the app. |
 | `status` | Show PM2 status and a hint to view logs (`pm2 logs automation-testing`). |
 | `restart`| Restart the app. |
-| `update` | Run the full upgrade: backup DB → stop → git pull → npm install → build → start. Same as [scripts/pi-update.sh](../scripts/pi-update.sh). |
+| `update` | Check for new commits; if any, prompt then run full upgrade (backup → stop → pull → install → build → start). Same as [scripts/pi-update.sh](../scripts/pi-update.sh). |
+
+**Update options** (after `update`): `--yes` to skip the confirmation prompt; `--force` to run the upgrade even when there are no new commits (e.g. to reinstall deps or rebuild).
 
 Examples:
 
 ```bash
 ./scripts/ctl.sh status
 ./scripts/ctl.sh update
+./scripts/ctl.sh update --force --yes
 npm run ctl -- restart
 ```
 

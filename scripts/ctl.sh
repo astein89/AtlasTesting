@@ -2,7 +2,7 @@
 # Control Automation Testing app: start, stop, status, restart, update.
 # Usage: ./scripts/ctl.sh <command> [options]
 # Commands: start | stop | status | restart | update
-# For update: use --yes to skip confirmation (e.g. in scripts).
+# For update: --yes to skip confirmation; --force to run even when already up to date.
 
 set -e
 
@@ -12,7 +12,7 @@ cd "$REPO_DIR"
 usage() {
   echo "Usage: $0 <command> [options]"
   echo "Commands: start | stop | status | restart | update"
-  echo "  update: check for new code, then prompt before upgrading (use --yes to skip confirmation)"
+  echo "  update: check for new code, then prompt (--yes skip confirm, --force run even if up to date)"
   exit 1
 }
 
@@ -34,18 +34,26 @@ case "$CMD" in
     ;;
   update)
     SKIP_CONFIRM=false
-    [ "${2:-}" = "-y" ] || [ "${2:-}" = "--yes" ] && SKIP_CONFIRM=true
+    FORCE_UPDATE=false
+    for arg in "${2:-}" "${3:-}"; do
+      [ "$arg" = "-y" ] || [ "$arg" = "--yes" ] && SKIP_CONFIRM=true
+      [ "$arg" = "-f" ] || [ "$arg" = "--force" ] && FORCE_UPDATE=true
+    done
 
     git fetch origin 2>/dev/null || true
     UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)" || UPSTREAM="origin/main"
     BEHIND="$(git rev-list HEAD.."$UPSTREAM" --count 2>/dev/null || echo "0")"
 
-    if [ "${BEHIND:-0}" -eq 0 ]; then
+    if [ "${BEHIND:-0}" -eq 0 ] && [ "$FORCE_UPDATE" = false ]; then
       echo "Already up to date."
       exit 0
     fi
 
-    echo "Updates available ($BEHIND commit(s) behind $UPSTREAM)."
+    if [ "${BEHIND:-0}" -gt 0 ]; then
+      echo "Updates available ($BEHIND commit(s) behind $UPSTREAM)."
+    else
+      echo "Force update (no new commits)."
+    fi
     if [ "$SKIP_CONFIRM" = true ]; then
       :
     elif [ -t 0 ]; then
