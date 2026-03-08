@@ -100,7 +100,7 @@ function App() {
           <Route path="test-plans/:planId/edit" element={<AdminGuard><TestPlanEditor /></AdminGuard>} />
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="settings" element={<AdminGuard><Settings /></AdminGuard>} />
           <Route path="export" element={<Navigate to="/test-plans" replace />} />
           <Route
             path="users"

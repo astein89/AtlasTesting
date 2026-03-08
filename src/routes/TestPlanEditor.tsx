@@ -204,11 +204,50 @@ export function TestPlanEditor() {
   }
 
   return (
-    <div>
-      <h1 className="mb-6 text-2xl font-semibold text-foreground">
-        {isNew ? 'New Test Plan' : 'Edit Test Plan'}
-      </h1>
-      <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
+    <div className="flex h-full flex-col min-h-0">
+      <div className="shrink-0 border-b border-border bg-background pb-4">
+        <h1 className="mb-2 text-2xl font-semibold text-foreground">
+          {isNew ? 'New Test Plan' : 'Edit Test Plan'}
+        </h1>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="submit"
+            form="test-plan-form"
+            disabled={submitting}
+            className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          >
+            {submitting ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(returnTo ?? '/test-plans')}
+            className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
+          >
+            Cancel
+          </button>
+          {isAdmin && !isNew && (
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await showConfirm(`Delete plan "${name}"? This will also delete all data in this plan.`, { title: 'Delete plan', variant: 'danger', confirmLabel: 'Delete' })
+                if (!ok) return
+                try {
+                  await api.delete(`/test-plans/${planId}`)
+                  navigate(returnTo ?? '/test-plans', { replace: true })
+                } catch (e: unknown) {
+                  const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                  showAlert(err || 'Failed to delete plan')
+                }
+              }}
+              className="rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10"
+            >
+              Delete plan
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <form id="test-plan-form" onSubmit={handleSubmit} className="max-w-4xl space-y-6 py-4">
         <div>
           <label className="block text-sm font-medium text-foreground">Name</label>
           <input
@@ -479,42 +518,8 @@ export function TestPlanEditor() {
             />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
-          >
-            {submitting ? 'Saving...' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate(returnTo ?? '/test-plans')}
-            className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
-          >
-            Cancel
-          </button>
-          {isAdmin && !isNew && (
-            <button
-              type="button"
-              onClick={async () => {
-                const ok = await showConfirm(`Delete plan "${name}"? This will also delete all data in this plan.`, { title: 'Delete plan', variant: 'danger', confirmLabel: 'Delete' })
-                if (!ok) return
-                try {
-                  await api.delete(`/test-plans/${planId}`)
-                  navigate(returnTo ?? '/test-plans', { replace: true })
-                } catch (e: unknown) {
-                  const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-                  showAlert(err || 'Failed to delete plan')
-                }
-              }}
-              className="rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10"
-            >
-              Delete plan
-            </button>
-          )}
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   )
 }

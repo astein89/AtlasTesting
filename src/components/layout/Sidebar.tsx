@@ -46,15 +46,6 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
         >
           Results
         </NavLink>
-        <NavLink
-          to="/settings"
-          onClick={onClose}
-          className={({ isActive }) =>
-            `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
-          }
-        >
-          Settings
-        </NavLink>
         {isAdmin && (
           <>
             <div className="my-2 border-t border-border" />
@@ -84,6 +75,15 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               }
             >
               DB Tables
+            </NavLink>
+            <NavLink
+              to="/settings"
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
+              }
+            >
+              Settings
             </NavLink>
           </>
         )}

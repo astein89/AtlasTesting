@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { formatDateTime } from '../lib/dateTimeConfig'
 import { PopupSelect } from '../components/ui/PopupSelect'
 import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
+import type { TestPlan } from '../types'
 
 interface Record {
   id: string
@@ -13,21 +14,39 @@ interface Record {
   recordedAt: string
   enteredBy: string
   status: string
+  data?: Record<string, unknown>
 }
 
 export function ResultsList() {
   const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
   const [testPlanId, setTestPlanId] = useUserPreference('atlas-results-filter', '')
-  const [plans, setPlans] = useState<{ id: string; name: string }[]>([])
+  const [plans, setPlans] = useState<TestPlan[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({})
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
   const filterAnchorRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
 
   useEffect(() => {
-    api.get('/test-plans').then((r) => setPlans(r.data))
+    api.get<TestPlan[]>('/test-plans').then((r) => setPlans(r.data ?? []))
   }, [])
+
+  const planKeyFieldByPlanId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const p of plans) {
+      if (p.keyField) map.set(p.id, p.keyField)
+    }
+    return map
+  }, [plans])
+
+  const getRecordKeyDisplay = (r: Record): string => {
+    const keyField = planKeyFieldByPlanId.get(r.testPlanId)
+    if (!keyField || !r.data) return '—'
+    const val = r.data[keyField]
+    if (val == null) return '—'
+    if (Array.isArray(val)) return val.length ? String(val[0]) : '—'
+    return String(val)
+  }
 
   useEffect(() => {
     const params: Record<string, string> = { limit: '100' }
@@ -46,7 +65,8 @@ export function ResultsList() {
       result = result.filter((r) => {
         const plan = r.planName?.toLowerCase() ?? ''
         const date = formatDateTime(r.recordedAt).toLowerCase()
-        return plan.includes(q) || date.includes(q)
+        const keyVal = getRecordKeyDisplay(r).toLowerCase()
+        return plan.includes(q) || date.includes(q) || keyVal.includes(q)
       })
     }
     for (const [colKey, allowed] of Object.entries(columnFilters)) {
@@ -57,7 +77,7 @@ export function ResultsList() {
       })
     }
     return result
-  }, [records, searchQuery, columnFilters])
+  }, [records, searchQuery, columnFilters, planKeyFieldByPlanId])
 
   const hasActiveFilters = searchQuery.trim() !== '' || Object.values(columnFilters).some((s) => s.size > 0)
 
@@ -134,6 +154,11 @@ export function ResultsList() {
                   className="block w-full min-w-0 overflow-hidden rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-background/50"
                 >
                   <p className="truncate font-medium text-foreground">{r.planName}</p>
+                  {getRecordKeyDisplay(r) !== '—' && (
+                    <p className="mt-0.5 truncate text-sm text-foreground/80">
+                      {getRecordKeyDisplay(r)}
+                    </p>
+                  )}
                   <p className="mt-0.5 truncate text-sm text-foreground/70">
                     {formatDateTime(r.recordedAt)}
                   </p>
@@ -176,6 +201,9 @@ export function ResultsList() {
                     />
                   )}
                 </th>
+                <th className="min-w-0 px-4 py-2 text-left text-sm font-medium text-foreground">
+                  Key
+                </th>
                 <th
                   ref={(el) => { filterAnchorRefs.current['runAt'] = el }}
                   className="relative min-w-0 px-4 py-2 text-left text-sm font-medium text-foreground"
@@ -213,7 +241,7 @@ export function ResultsList() {
             <tbody className="divide-y divide-border">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="p-6 text-center text-foreground/60">
+                  <td colSpan={4} className="p-6 text-center text-foreground/60">
                     {records.length === 0 ? 'No results.' : 'No rows match the current filters.'}
                   </td>
                 </tr>
@@ -221,6 +249,7 @@ export function ResultsList() {
               filteredRecords.map((r) => (
                 <tr key={r.id} className="bg-background">
                   <td className="px-4 py-2 text-foreground">{r.planName}</td>
+                  <td className="px-4 py-2 text-foreground">{getRecordKeyDisplay(r)}</td>
                   <td className="px-4 py-2 text-foreground">
                     {formatDateTime(r.recordedAt)}
                   </td>
