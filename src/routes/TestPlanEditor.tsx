@@ -277,7 +277,7 @@ export function TestPlanEditor() {
               value={testPlan}
               onChange={(e) => setTestPlan(e.target.value)}
               className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              rows={3}
+              rows={5}
             />
           </div>
           <div>
@@ -288,7 +288,7 @@ export function TestPlanEditor() {
               value={constraints}
               onChange={(e) => setConstraints(e.target.value)}
               className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              rows={3}
+              rows={5}
             />
           </div>
         </div>

@@ -29,8 +29,9 @@ export function Navbar({ onMenuClick }: NavbarProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <Link to="/" className="truncate text-base font-semibold text-foreground sm:text-lg">
-            Automation Testing
+          <Link to="/" className="flex min-w-0 items-center gap-2 truncate text-base font-semibold text-foreground sm:text-lg">
+            <img src="/icon.png" alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
+            <span className="truncate">Automation Testing</span>
           </Link>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
