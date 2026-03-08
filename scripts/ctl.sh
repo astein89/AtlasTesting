@@ -6,7 +6,21 @@
 
 set -e
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve script path so REPO_DIR is correct when this script is run via a symlink (e.g. /usr/local/bin/autotest)
+SCRIPT_PATH="$0"
+if [ -L "$SCRIPT_PATH" ]; then
+  SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null)" || SCRIPT_PATH="$(realpath "$SCRIPT_PATH" 2>/dev/null)" || {
+    while [ -L "$SCRIPT_PATH" ]; do
+      target="$(readlink "$SCRIPT_PATH")"
+      if [ "${target:0:1}" = "/" ]; then
+        SCRIPT_PATH="$target"
+      else
+        SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/$target"
+      fi
+    done
+  }
+fi
+REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 cd "$REPO_DIR"
 
 usage() {
