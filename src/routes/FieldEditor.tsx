@@ -178,7 +178,9 @@ export function FieldEditor() {
     }
     if (fieldType === 'text' || fieldType === 'longtext') {
       if (minLength !== '') config.minLength = minLength
+      else if ('minLength' in config) delete config.minLength
       if (maxLength !== '') config.maxLength = maxLength
+      else if ('maxLength' in config) delete config.maxLength
       if (textDisallowSpaces) config.textDisallowSpaces = true
       if (textUnallowedChars.trim()) config.textUnallowedChars = textUnallowedChars.trim()
       if (fieldType === 'text' && textPatternMask.trim()) config.textPatternMask = textPatternMask.trim()
