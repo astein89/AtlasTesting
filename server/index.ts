@@ -11,6 +11,7 @@ import { recordsRouter } from './routes/records.js'
 import { usersRouter } from './routes/users.js'
 import { preferencesRouter } from './routes/preferences.js'
 import { uploadsRouter } from './routes/uploads.js'
+import { sanitizeForLog } from './utils/sanitizeLog.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -29,6 +30,13 @@ app.use('/api/users', usersRouter)
 app.use('/api/preferences', preferencesRouter)
 app.use('/api/upload', uploadsRouter)
 app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')))
+
+// Log errors with upload paths redacted
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(sanitizeForLog(err.message))
+  if (err.stack) console.error(sanitizeForLog(err.stack))
+  res.status(500).json({ error: 'Internal server error' })
+})
 
 runSeed()
 

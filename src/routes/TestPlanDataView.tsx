@@ -120,7 +120,21 @@ export function TestPlanDataView() {
   const [viewingArchivedRun, setViewingArchivedRun] = useState<{ startDate: string; endDate: string } | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [compactCards, setCompactCards] = useUserPreference('atlas-compact-data-cards', false)
+  type ViewMode = 'table' | 'card' | 'compact-card' | 'responsive'
+  const [viewMode, setViewMode] = useUserPreference<ViewMode>('atlas-data-view-mode', 'responsive')
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    setIsMobile(mq.matches)
+    const handler = () => setIsMobile(mq.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  const effectiveViewMode: 'table' | 'card' | 'compact-card' =
+    viewMode === 'responsive' ? (isMobile ? 'compact-card' : 'table') : viewMode
+  const showTableView = effectiveViewMode === 'table'
+  const showCardView = effectiveViewMode === 'card' || effectiveViewMode === 'compact-card'
+  const compactCards = effectiveViewMode === 'compact-card'
   const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({})
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
   const [showMobileFilterPanel, setShowMobileFilterPanel] = useState(false)
@@ -1631,18 +1645,43 @@ export function TestPlanDataView() {
               </svg>
               <span className="text-xs">Filters</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setCompactCards((c) => !c)}
-              className={`flex min-h-[44px] items-center gap-2 rounded-lg border px-3 py-2 text-sm sm:min-h-0 md:hidden ${
-                compactCards
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border text-foreground hover:bg-background'
-              }`}
-              title={compactCards ? 'Show full cards' : 'Show compact cards (first 3 lines or until separator)'}
+            <div
+              role="radiogroup"
+              aria-label="View mode"
+              className="flex min-h-[44px] shrink-0 overflow-hidden rounded-lg border border-border bg-card shadow-sm sm:min-h-0"
             >
-              <span className="text-xs">Compact</span>
-            </button>
+              {(['table', 'card', 'compact-card'] as const).map((mode, i) => {
+                const isSelected = effectiveViewMode === mode
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    onClick={() => setViewMode(mode)}
+                    title={mode === 'table' ? 'Table view' : mode === 'card' ? 'Full cards' : 'Compact cards'}
+                    className={`flex min-h-[44px] min-w-0 flex-1 items-center justify-center border-border px-2 py-2 transition-colors sm:min-h-0 sm:px-3 ${
+                      i > 0 ? 'border-l' : ''
+                    } ${isSelected ? 'bg-primary text-primary-foreground shadow-inner' : 'bg-background text-foreground/80 hover:bg-background/80 hover:text-foreground'}`}
+                  >
+                    {mode === 'table' ? (
+                      <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                      </svg>
+                    ) : mode === 'card' ? (
+                      <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9h8M8 13h8M8 17h5" />
+                      </svg>
+                    ) : (
+                      <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h6v6H3V3z M15 3h6v6h-6V3z M3 15h6v6H3v-6z M15 15h6v6h-6v-6z" />
+                      </svg>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
             <div className="ml-auto flex shrink-0 items-center gap-2">
               <button
                 type="button"
@@ -1688,7 +1727,8 @@ export function TestPlanDataView() {
                 )}
               </button>
             </div>
-            <div className="relative hidden md:block">
+            {showTableView && (
+            <div className="relative">
               <button
                 ref={columnPickerAnchorRef}
                 type="button"
@@ -1743,6 +1783,7 @@ export function TestPlanDataView() {
                 </>
               )}
             </div>
+            )}
           </div>
           {viewingArchivedRun && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
@@ -1936,8 +1977,9 @@ export function TestPlanDataView() {
               </div>
             </div>
           )}
-          {/* Mobile: card layout (same structure as editor) */}
-          <div className="w-full min-w-0 space-y-2 md:hidden">
+          {/* Card layout (table, card, or compact card) */}
+          {showCardView && (
+          <div className="w-full min-w-0 space-y-2">
             {sortedRecords.length === 0 ? (
               <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
                 No data yet. Click &quot;+ Add row&quot; to add.
@@ -2088,8 +2130,10 @@ export function TestPlanDataView() {
               })
             )}
           </div>
-          {/* Desktop: table */}
-          <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
+          )}
+          {/* Table view */}
+          {showTableView && (
+          <div className="w-full min-w-0 overflow-x-auto rounded-lg border border-border">
           <table
             className="w-full"
             style={{ tableLayout: 'fixed' }}
@@ -2347,6 +2391,7 @@ export function TestPlanDataView() {
             </tbody>
           </table>
           </div>
+          )}
         </div>
       )}
     </div>

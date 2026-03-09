@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { useAuthStore } from '../../store/authStore'
 import { recordsToCsv } from '../../utils/csvExport'
+import { sanitizeForLog } from '../../utils/sanitizeLog'
 import { getElapsedMs } from '../../utils/timer'
 import type { DataField, TimerValue } from '../../types'
 
@@ -295,8 +296,9 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
         onClose()
       }
     } catch (err) {
-      console.error('Export failed:', err)
-      showAlert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('Export failed:', sanitizeForLog(msg))
+      showAlert(`Export failed: ${sanitizeForLog(msg)}`)
     } finally {
       setExporting(false)
     }

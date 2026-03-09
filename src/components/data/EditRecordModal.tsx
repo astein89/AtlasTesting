@@ -176,7 +176,7 @@ export function EditRecordModal({
       onClick={handleClose}
     >
       <div
-        className="flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
+        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:h-auto sm:min-h-[88vh] sm:max-h-[95vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
@@ -242,31 +242,31 @@ export function EditRecordModal({
             )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+        <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 overflow-x-auto border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
           <div className="flex shrink-0 gap-2">
             {isAdmin && (
               <button
                 type="button"
                 onClick={() => setShowHistory(true)}
-                className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+                className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
               >
                 History
               </button>
             )}
           </div>
-          <div className="flex w-full shrink-0 justify-end gap-2 sm:w-auto">
+          <div className="flex shrink-0 justify-end gap-2">
             <button
               type="button"
               onClick={onDelete}
               disabled={submitting}
-              className="min-h-[44px] min-w-[44px] rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
             >
               Delete
             </button>
             <button
               type="button"
               onClick={handleClose}
-              className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
             >
               Cancel
             </button>
@@ -274,7 +274,7 @@ export function EditRecordModal({
               type="button"
               onClick={handleSaveClick}
               disabled={submitting}
-              className="min-h-[44px] min-w-[44px] rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
             >
               {submitting ? 'Saving...' : 'Save'}
             </button>
