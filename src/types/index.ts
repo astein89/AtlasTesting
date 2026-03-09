@@ -51,6 +51,12 @@ export interface FieldConfig {
   minLength?: number
   /** For text/longtext fields: max character length */
   maxLength?: number
+  /** For text/longtext fields: disallow spaces in input */
+  textDisallowSpaces?: boolean
+  /** For text/longtext fields: characters not allowed (e.g. "@#$"); any listed char is stripped */
+  textUnallowedChars?: string
+  /** For text fields only: imask pattern (e.g. "000-000" for digits, see https://imask.js.org/guide.html#masked-pattern) */
+  textPatternMask?: string
   /** For formula fields: the M-like expression (e.g. [Length] * [Width]). For status fields: when set, status is computed from this formula (read-only per record). */
   formula?: string
   /** For datetime fields: date-fns format string for display (e.g. 'MM/dd/yyyy HH:mm'). When set, overrides app default for this field. */
@@ -105,6 +111,10 @@ export interface TestPlan {
   endDate?: string
   /** Saved archived runs (start/end date ranges, runId set when archived). */
   archivedRuns?: Array<{ startDate: string; endDate: string; runId?: string }>
+  /** Field ids to hide from data table, edit/add forms, and result detail (variables still stored with record). */
+  hiddenFieldIds?: string[]
+  /** Field ids that are required when entering records for this plan. */
+  requiredFieldIds?: string[]
   createdAt?: string
   /** Number of records in this plan (from list endpoint) */
   recordCount?: number

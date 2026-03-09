@@ -40,7 +40,7 @@ interface EditRecordModalProps {
   submitting: boolean
   formLayoutOrder?: string[]
   /** Plan key field for naming uploaded images (key_field + image_tag + timestamp) */
-  plan?: { keyField?: string }
+  plan?: { keyField?: string; hiddenFieldIds?: string[]; requiredFieldIds?: string[] }
   /** When true, show History button in footer (admin-only) */
   isAdmin?: boolean
 }
@@ -104,17 +104,17 @@ export function EditRecordModal({
   }, [record.data, data, onCancel])
 
   const handleSaveClick = useCallback(() => {
-    const errors = getFieldValidationErrors(fields, data)
+    const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
     if (errors.length > 0) {
       setValidationErrors(errors)
       return
     }
     setValidationErrors([])
     onSave()
-  }, [fields, data, onSave])
+  }, [fields, data, plan?.requiredFieldIds, onSave])
 
   const handleSaveAndClose = useCallback(() => {
-    const errors = getFieldValidationErrors(fields, data)
+    const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
     if (errors.length > 0) {
       setValidationErrors(errors)
       return
@@ -122,7 +122,7 @@ export function EditRecordModal({
     setValidationErrors([])
     setShowSavePrompt(false)
     onSave()
-  }, [fields, data, onSave])
+  }, [fields, data, plan?.requiredFieldIds, onSave])
 
   const handleDiscardAndClose = useCallback(() => {
     setShowSavePrompt(false)
@@ -130,12 +130,17 @@ export function EditRecordModal({
   }, [onCancel])
 
   const statusField = fields.find((f) => f.type === 'status')
-  const formOrderWithoutStatus = statusField
+  const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
+  const formOrderWithoutStatus = (statusField
     ? normalizeFormLayoutOrder(formLayoutOrder, fields).filter((entry) => {
         if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
         return parseFieldEntry(entry).fieldId !== statusField.id
       })
     : normalizeFormLayoutOrder(formLayoutOrder, fields)
+  ).filter((entry) => {
+    if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
+    return !hiddenSet.has(parseFieldEntry(entry).fieldId)
+  })
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -183,7 +188,7 @@ export function EditRecordModal({
           <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
             Edit row — {formatDateTime(record.recordedAt)}
           </h2>
-          {statusField ? (
+          {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
             <div className="flex shrink-0 items-center gap-2">
               <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
               <SelectInput
@@ -223,6 +228,9 @@ export function EditRecordModal({
                           className={`mb-1 block text-sm font-medium ${fieldError ? 'text-red-500' : 'text-foreground'}`}
                         >
                           {field.label}
+                          {(plan?.requiredFieldIds?.includes(field.id) || field.config?.required) && (
+                            <span className="text-red-500" aria-label="required"> *</span>
+                          )}
                         </label>
                         <div
                           className={`min-w-0 w-full rounded border ${fieldError ? 'border-red-500 ring-1 ring-red-500/30' : 'border-transparent'}`}

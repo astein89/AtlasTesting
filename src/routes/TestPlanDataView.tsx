@@ -156,8 +156,11 @@ export function TestPlanDataView() {
   const [bulkEditFieldKey, setBulkEditFieldKey] = useState<string | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState<string | number | boolean | string[] | TimerValue | null>(null)
   const visibleFields = useMemo(
-    () => fields.filter((f) => !hiddenColumnKeys.includes(f.key)),
-    [fields, hiddenColumnKeys]
+    () =>
+      fields.filter(
+        (f) => !(plan?.hiddenFieldIds ?? []).includes(f.id) && !hiddenColumnKeys.includes(f.key)
+      ),
+    [fields, hiddenColumnKeys, plan?.hiddenFieldIds]
   )
   const toggleColumnVisibility = (fieldKey: string) => {
     setHiddenColumnKeys((prev) =>
@@ -1764,7 +1767,7 @@ export function TestPlanDataView() {
                         <input type="checkbox" checked disabled className="h-4 w-4" />
                         <span className="text-sm text-foreground">Date</span>
                       </label>
-                      {fields.map((f) => (
+                      {fields.filter((f) => !(plan?.hiddenFieldIds ?? []).includes(f.id)).map((f) => (
                         <label
                           key={f.id}
                           className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background"

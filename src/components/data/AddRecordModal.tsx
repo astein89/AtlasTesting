@@ -15,7 +15,7 @@ interface AddRecordModalProps {
   submitting: boolean
   formLayoutOrder?: string[]
   /** Plan key field for naming uploaded images (key_field + image_tag + timestamp) */
-  plan?: { keyField?: string }
+  plan?: { keyField?: string; hiddenFieldIds?: string[]; requiredFieldIds?: string[] }
 }
 
 function hasData(data: Record<string, string | number | boolean | string[] | TimerValue>): boolean {
@@ -66,22 +66,27 @@ export function AddRecordModal({
   }, [onCancel])
 
   const handleSave = useCallback(() => {
-    const errors = getFieldValidationErrors(fields, data)
+    const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
     if (errors.length > 0) {
       setValidationErrors(errors)
       return
     }
     setValidationErrors([])
     onSave()
-  }, [fields, data, onSave])
+  }, [fields, data, plan?.requiredFieldIds, onSave])
 
   const statusField = fields.find((f) => f.type === 'status')
-  const formOrderWithoutStatus = statusField
+  const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
+  const formOrderWithoutStatus = (statusField
     ? normalizeFormLayoutOrder(formLayoutOrder, fields).filter((entry) => {
         if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
         return parseFieldEntry(entry).fieldId !== statusField.id
       })
     : normalizeFormLayoutOrder(formLayoutOrder, fields)
+  ).filter((entry) => {
+    if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
+    return !hiddenSet.has(parseFieldEntry(entry).fieldId)
+  })
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -136,6 +141,9 @@ export function AddRecordModal({
                             className={`mb-1 block text-sm font-medium ${fieldError ? 'text-red-500' : 'text-foreground'}`}
                           >
                             {field.label}
+                            {(plan?.requiredFieldIds?.includes(field.id) || field.config?.required) && (
+                              <span className="text-red-500" aria-label="required"> *</span>
+                            )}
                           </label>
                           <div
                             className={`min-w-0 w-full rounded border ${fieldError ? 'border-red-500 ring-1 ring-red-500/30' : 'border-transparent'}`}
@@ -156,7 +164,7 @@ export function AddRecordModal({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
-            {statusField ? (
+            {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
               <div className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
                 <SelectInput

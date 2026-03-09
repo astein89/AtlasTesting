@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -37,6 +37,12 @@ import type { DataField } from '../../types'
 interface PlanFieldsEditorProps {
   formLayoutOrder: string[]
   onChange: (order: string[]) => void
+  /** Field ids marked hidden (not shown in data table / edit / result) */
+  hiddenFieldIds?: string[]
+  onHiddenFieldIdsChange?: (ids: string[]) => void
+  /** Field ids that are required when entering records for this plan */
+  requiredFieldIds?: string[]
+  onRequiredFieldIdsChange?: (ids: string[]) => void
   onCreateNew?: () => void
   /** Default values by field key (from test plan); shown in Live preview when set */
   fieldDefaults?: Record<string, string | number | boolean | string[]>
@@ -52,6 +58,8 @@ function SortableLayoutItem({
   removeItem,
   insertSeparatorBefore,
   removeSeparator,
+  hiddenFieldIds,
+  onHiddenFieldIdsChange,
 }: {
   id: string
   index: number
@@ -60,8 +68,19 @@ function SortableLayoutItem({
   removeItem: (index: number) => void
   insertSeparatorBefore: (index: number) => void
   removeSeparator: (id: string) => void
+  hiddenFieldIds: string[]
+  onHiddenFieldIdsChange?: (ids: string[]) => void
+  requiredFieldIds: string[]
+  onRequiredFieldIdsChange?: (ids: string[]) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const { fieldId } = parseFieldEntry(id)
+  const isHidden = hiddenFieldIds.includes(fieldId)
+  const isRequired = requiredFieldIds.includes(fieldId)
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: isHidden,
+  })
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -125,18 +144,58 @@ function SortableLayoutItem({
     )
   }
 
-  const { fieldId, span } = parseFieldEntry(id)
+  const { span } = parseFieldEntry(id)
   const field = fieldMap.get(fieldId)
   if (!field) return null
 
+  const toggleHidden = () => {
+    if (!onHiddenFieldIdsChange) return
+    if (isHidden) {
+      onHiddenFieldIdsChange(hiddenFieldIds.filter((x) => x !== fieldId))
+    } else {
+      onHiddenFieldIdsChange([...hiddenFieldIds, fieldId])
+    }
+  }
+
   return (
-    <li ref={setNodeRef} style={style} className={`${baseClass} pointer-events-none border border-transparent`}>
-      <span {...attributes} {...listeners} className="pointer-events-auto shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`${baseClass} pointer-events-none border border-transparent ${
+        isHidden ? 'opacity-75' : ''
+      }`}
+    >
+      <span
+        {...attributes}
+        {...listeners}
+        className={`pointer-events-auto shrink-0 ${
+          isHidden ? 'cursor-default text-foreground/30' : 'cursor-grab text-foreground/40'
+        }`}
+        title={isHidden ? 'Hidden fields are fixed at the bottom' : 'Drag to reorder'}
+      >
         ⋮⋮
       </span>
-      <span className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base" title={field.label}>
+      <span
+        className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base"
+        title={field.label}
+      >
         {field.label}
       </span>
+      {isRequired && (
+        <span className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground/70 sm:px-2 sm:py-0.5" title="Required when entering data">
+          Required
+        </span>
+      )}
+      {onHiddenFieldIdsChange != null && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); toggleHidden() }}
+          className={`pointer-events-auto shrink-0 rounded px-1.5 py-0.5 text-xs sm:px-2 sm:py-0.5 ${isHidden ? 'bg-amber-200 text-amber-900 dark:bg-amber-800/60 dark:text-amber-100' : 'text-foreground/60 hover:bg-background'}`}
+          title={isHidden ? 'Show in data table and forms' : 'Hide from data table and forms'}
+        >
+          {isHidden ? 'Hidden' : 'Hide'}
+        </button>
+      )}
       <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
         <span className="text-xs text-foreground/60 sm:text-sm">
           {span === 1 ? '⅓' : span === 4 ? '½' : span === 2 ? '⅔' : 'Full'}
@@ -187,6 +246,10 @@ function useIsTouchDevice() {
 export function PlanFieldsEditor({
   formLayoutOrder,
   onChange,
+  hiddenFieldIds = [],
+  onHiddenFieldIdsChange,
+  requiredFieldIds = [],
+  onRequiredFieldIdsChange,
   onCreateNew,
   fieldDefaults,
   renderAbovePreview,
@@ -222,6 +285,20 @@ export function PlanFieldsEditor({
     .map((id) => fieldMap.get(id))
     .filter(Boolean) as DataField[]
   const order = formLayoutOrder.length > 0 ? formLayoutOrder : fieldIdsInOrder
+
+  function partitionOrderByHidden(o: string[], hiddenIds: string[]) {
+    const set = new Set(hiddenIds)
+    const visible: string[] = []
+    const hidden: string[] = []
+    for (const entry of o) {
+      if (isSeparatorId(entry) || isSeparatorLineId(entry)) visible.push(entry)
+      else {
+        if (set.has(parseFieldEntry(entry).fieldId)) hidden.push(entry)
+        else visible.push(entry)
+      }
+    }
+    return { visible, hidden }
+  }
 
   const availableFields = allFields.filter(
     (f) =>
@@ -277,10 +354,12 @@ export function PlanFieldsEditor({
       const refField = allFields.find((f) => f.key === key)
       if (refField && !fieldIdsInOrder.includes(refField.id)) missingRefIds.push(refField.id)
     }
-    const newOrder = [...order]
-    for (const id of missingRefIds) newOrder.push(formatFieldEntry(id, 3))
-    newOrder.push(formatFieldEntry(fieldId, 3))
-    onChange(newOrder)
+    const newEntries = [
+      ...missingRefIds.map((id) => formatFieldEntry(id, 3)),
+      formatFieldEntry(fieldId, 3),
+    ]
+    const { visible, hidden } = partitionOrderByHidden(order, hiddenFieldIds)
+    onChange([...visible, ...newEntries, ...hidden])
   }
 
   const addStatusField = async () => {
@@ -337,7 +416,8 @@ export function PlanFieldsEditor({
   }
 
   const addSeparator = () => {
-    onChange([...order, createSeparatorLineId()])
+    const { visible, hidden } = partitionOrderByHidden(order, hiddenFieldIds)
+    onChange([...visible, createSeparatorLineId(), ...hidden])
   }
 
   const removeSeparator = (id: string) => {
@@ -353,7 +433,28 @@ export function PlanFieldsEditor({
     onChange(next)
   }
 
-  const rows = buildFormRowsFromOrder(planFields, order)
+  const hiddenSet = new Set(hiddenFieldIds)
+  const previewOrder = order.filter((entry) => {
+    if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
+    const { fieldId } = parseFieldEntry(entry)
+    return !hiddenSet.has(fieldId)
+  })
+
+  const rows = buildFormRowsFromOrder(planFields, previewOrder)
+
+  /** True if this order entry is a hidden field (not separator). */
+  function isEntryHidden(entry: string): boolean {
+    if (isSeparatorId(entry) || isSeparatorLineId(entry)) return false
+    return hiddenSet.has(parseFieldEntry(entry).fieldId)
+  }
+
+  /** True if this index is the first hidden field in the list (so we show "Hidden fields" divider before it). */
+  function isFirstHiddenIndex(idx: number): boolean {
+    if (idx >= order.length) return false
+    if (!isEntryHidden(order[idx])) return false
+    if (idx === 0) return true
+    return !isEntryHidden(order[idx - 1])
+  }
 
   return (
     <div className="space-y-4">
@@ -392,7 +493,10 @@ export function PlanFieldsEditor({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onChange([...order, createSeparatorId()])}
+                  onClick={() => {
+                    const { visible, hidden } = partitionOrderByHidden(order, hiddenFieldIds)
+                    onChange([...visible, createSeparatorId(), ...hidden])
+                  }}
                   className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
                 >
                   + New line
@@ -416,16 +520,26 @@ export function PlanFieldsEditor({
                 <SortableContext items={order} strategy={verticalListSortingStrategy}>
                   <ul className="h-[25rem] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
                     {order.map((id, i) => (
-                      <SortableLayoutItem
-                        key={id}
-                        id={id}
-                        index={i}
-                        fieldMap={fieldMap}
-                        setFieldSpan={setFieldSpan}
-                        removeItem={removeItem}
-                        insertSeparatorBefore={insertSeparatorBefore}
-                        removeSeparator={removeSeparator}
+                      <Fragment key={id}>
+                        {isFirstHiddenIndex(i) && (
+                          <li className="border-t border-border pt-2 mt-2 first:border-t-0 first:pt-0 first:mt-0">
+                            <span className="text-xs font-medium text-foreground/60">Hidden fields</span>
+                          </li>
+                        )}
+                        <SortableLayoutItem
+                          id={id}
+                          index={i}
+                          fieldMap={fieldMap}
+                          setFieldSpan={setFieldSpan}
+                          removeItem={removeItem}
+                          insertSeparatorBefore={insertSeparatorBefore}
+                          removeSeparator={removeSeparator}
+                        hiddenFieldIds={hiddenFieldIds ?? []}
+                        onHiddenFieldIdsChange={onHiddenFieldIdsChange}
+                        requiredFieldIds={requiredFieldIds ?? []}
+                        onRequiredFieldIdsChange={onRequiredFieldIdsChange}
                       />
+                      </Fragment>
                     ))}
                   </ul>
                 </SortableContext>
@@ -433,98 +547,127 @@ export function PlanFieldsEditor({
             ) : (
               <ul className="h-[25rem] space-y-1 overflow-y-auto overflow-x-hidden rounded border border-border bg-card p-2 [-webkit-overflow-scrolling:touch]">
                 {order.map((id, i) => {
+                  const showHiddenDivider = isFirstHiddenIndex(i)
                   if (isSeparatorId(id)) {
                     return (
-                      <li
-                        key={id}
-                        draggable
-                        onDragStart={(e) => handleNativeDragStart(e, i)}
-                        onDragOver={(e) => handleNativeDragOver(e, i)}
-                        onDrop={handleNativeDrop}
-                        onDragEnd={handleNativeDragEnd}
-                        className={`flex cursor-grab items-center gap-1 rounded border border-dashed border-foreground/30 px-2 py-1.5 active:cursor-grabbing sm:gap-2 ${
-                          draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
-                        }`}
-                      >
-                        <span className="shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
-                          ⋮⋮
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70 sm:text-sm">— New line —</span>
-                        <button
-                          type="button"
-                          onClick={() => insertSeparatorBefore(i)}
-                          className="rounded px-1.5 py-0.5 text-xs text-foreground/60 hover:bg-background"
-                          title="Add separator before"
+                      <Fragment key={id}>
+                        {showHiddenDivider && (
+                          <li className="border-t border-border pt-2 mt-2 first:border-t-0 first:pt-0 first:mt-0">
+                            <span className="text-xs font-medium text-foreground/60">Hidden fields</span>
+                          </li>
+                        )}
+                        <li
+                          draggable
+                          onDragStart={(e) => handleNativeDragStart(e, i)}
+                          onDragOver={(e) => handleNativeDragOver(e, i)}
+                          onDrop={handleNativeDrop}
+                          onDragEnd={handleNativeDragEnd}
+                          className={`flex cursor-grab items-center gap-1 rounded border border-dashed border-foreground/30 px-2 py-1.5 active:cursor-grabbing sm:gap-2 ${
+                            draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
+                          }`}
                         >
-                          —
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeSeparator(id)}
-                          className="text-red-500 hover:underline"
-                        >
-                          Remove
-                        </button>
-                      </li>
+                          <span className="shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
+                            ⋮⋮
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-foreground/70 sm:text-sm">— New line —</span>
+                          <button
+                            type="button"
+                            onClick={() => insertSeparatorBefore(i)}
+                            className="rounded px-1.5 py-0.5 text-xs text-foreground/60 hover:bg-background"
+                            title="Add separator before"
+                          >
+                            —
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeSeparator(id)}
+                            className="text-red-500 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      </Fragment>
                     )
                   }
                   if (isSeparatorLineId(id)) {
                     return (
-                      <li
-                        key={id}
-                        draggable
-                        onDragStart={(e) => handleNativeDragStart(e, i)}
-                        onDragOver={(e) => handleNativeDragOver(e, i)}
-                        onDrop={handleNativeDrop}
-                        onDragEnd={handleNativeDragEnd}
-                        className={`flex cursor-grab items-center gap-1 rounded border border-dashed border-foreground/30 px-2 py-1.5 active:cursor-grabbing sm:gap-2 ${
-                          draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
-                        }`}
-                      >
-                        <span className="shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
-                          ⋮⋮
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70 sm:text-sm">— Separator —</span>
-                        <button
-                          type="button"
-                          onClick={() => insertSeparatorBefore(i)}
-                          className="rounded px-1.5 py-0.5 text-xs text-foreground/60 hover:bg-background"
-                          title="Add separator before"
+                      <Fragment key={id}>
+                        {showHiddenDivider && (
+                          <li className="border-t border-border pt-2 mt-2 first:border-t-0 first:pt-0 first:mt-0">
+                            <span className="text-xs font-medium text-foreground/60">Hidden fields</span>
+                          </li>
+                        )}
+                        <li
+                          draggable
+                          onDragStart={(e) => handleNativeDragStart(e, i)}
+                          onDragOver={(e) => handleNativeDragOver(e, i)}
+                          onDrop={handleNativeDrop}
+                          onDragEnd={handleNativeDragEnd}
+                          className={`flex cursor-grab items-center gap-1 rounded border border-dashed border-foreground/30 px-2 py-1.5 active:cursor-grabbing sm:gap-2 ${
+                            draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
+                          }`}
                         >
-                          —
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeSeparator(id)}
-                          className="text-red-500 hover:underline"
-                        >
-                          Remove
-                        </button>
-                      </li>
+                          <span className="shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
+                            ⋮⋮
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-foreground/70 sm:text-sm">— Separator —</span>
+                          <button
+                            type="button"
+                            onClick={() => insertSeparatorBefore(i)}
+                            className="rounded px-1.5 py-0.5 text-xs text-foreground/60 hover:bg-background"
+                            title="Add separator before"
+                          >
+                            —
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeSeparator(id)}
+                            className="text-red-500 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      </Fragment>
                     )
                   }
                   const { fieldId, span } = parseFieldEntry(id)
                   const field = fieldMap.get(fieldId)
                   if (!field) return null
+                  const itemHidden = (hiddenFieldIds ?? []).includes(fieldId)
                   return (
-                    <li
-                      key={id}
-                      draggable
-                      onDragStart={(e) => handleNativeDragStart(e, i)}
-                      onDragOver={(e) => handleNativeDragOver(e, i)}
-                      onDrop={handleNativeDrop}
-                      onDragEnd={handleNativeDragEnd}
-                      className={`flex cursor-grab items-center gap-1 rounded border border-transparent px-2 py-1.5 active:cursor-grabbing sm:gap-2 ${
-                        draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
-                      }`}
-                    >
-                      <span className="shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
-                        ⋮⋮
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base" title={field.label}>
-                        {field.label}
-                      </span>
-                      <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
+                    <Fragment key={id}>
+                      {showHiddenDivider && (
+                        <li className="border-t border-border pt-2 mt-2 first:border-t-0 first:pt-0 first:mt-0">
+                          <span className="text-xs font-medium text-foreground/60">Hidden fields</span>
+                        </li>
+                      )}
+                      <li
+                        draggable={!itemHidden}
+                        onDragStart={itemHidden ? undefined : (e) => handleNativeDragStart(e, i)}
+                        onDragOver={itemHidden ? undefined : (e) => handleNativeDragOver(e, i)}
+                        onDrop={handleNativeDrop}
+                        onDragEnd={handleNativeDragEnd}
+                        className={`flex items-center gap-1 rounded border border-transparent px-2 py-1.5 sm:gap-2 ${
+                          itemHidden ? 'cursor-default opacity-75' : `cursor-grab active:cursor-grabbing ${draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'}`
+                        }`}
+                      >
+                        <span className={`shrink-0 ${itemHidden ? 'cursor-default text-foreground/30' : 'cursor-grab text-foreground/40'}`} title={itemHidden ? 'Hidden (fixed at bottom)' : 'Drag to reorder'}>
+                          ⋮⋮
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base" title={field.label}>
+                          {field.label}
+                        </span>
+                        {!itemHidden && (requiredFieldIds ?? []).includes(fieldId) && (
+                          <span className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground/70 sm:px-2 sm:py-0.5">
+                            Required
+                          </span>
+                        )}
+                        {itemHidden && (
+                          <span className="shrink-0 rounded px-1.5 py-0.5 text-xs bg-amber-200 text-amber-900 dark:bg-amber-800/60 dark:text-amber-100 sm:px-2 sm:py-0.5">
+                            Hidden
+                          </span>
+                        )}
+                        <div className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded border border-border bg-background/50 p-0.5 sm:gap-1 sm:p-1">
                         <span className="text-xs text-foreground/60 sm:text-sm">
                           {span === 1 ? '⅓' : span === 4 ? '½' : span === 2 ? '⅔' : 'Full'}
                         </span>
@@ -565,6 +708,7 @@ export function PlanFieldsEditor({
                         Remove
                       </button>
                     </li>
+                    </Fragment>
                   )
                 })}
               </ul>

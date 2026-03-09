@@ -70,6 +70,9 @@ export function FieldEditor() {
   const [numberMax, setNumberMax] = useState<number | ''>('')
   const [minLength, setMinLength] = useState<number | ''>('')
   const [maxLength, setMaxLength] = useState<number | ''>('')
+  const [textDisallowSpaces, setTextDisallowSpaces] = useState(false)
+  const [textUnallowedChars, setTextUnallowedChars] = useState('')
+  const [textPatternMask, setTextPatternMask] = useState('')
   const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplayKind>('dateTime')
   const [fieldType, setFieldType] = useState<FieldType>('text')
   const [statusUseFormula, setStatusUseFormula] = useState(false)
@@ -176,6 +179,9 @@ export function FieldEditor() {
     if (fieldType === 'text' || fieldType === 'longtext') {
       if (minLength !== '') config.minLength = minLength
       if (maxLength !== '') config.maxLength = maxLength
+      if (textDisallowSpaces) config.textDisallowSpaces = true
+      if (textUnallowedChars.trim()) config.textUnallowedChars = textUnallowedChars.trim()
+      if (fieldType === 'text' && textPatternMask.trim()) config.textPatternMask = textPatternMask.trim()
     }
     if (fieldType === 'datetime') {
       config.dateTimeDisplay = dateTimeDisplay
@@ -256,6 +262,9 @@ export function FieldEditor() {
           if (r.data.config?.max != null) setNumberMax(r.data.config.max as number)
           if (r.data.config?.minLength != null) setMinLength(r.data.config.minLength as number)
           if (r.data.config?.maxLength != null) setMaxLength(r.data.config.maxLength as number)
+          if (r.data.config?.textDisallowSpaces === true) setTextDisallowSpaces(true)
+          if (typeof r.data.config?.textUnallowedChars === 'string') setTextUnallowedChars(r.data.config.textUnallowedChars)
+          if (typeof r.data.config?.textPatternMask === 'string') setTextPatternMask(r.data.config.textPatternMask)
           if (r.data.type === 'datetime') {
             const kind = r.data.config?.dateTimeDisplay
             setDateTimeDisplay(
@@ -471,29 +480,65 @@ export function FieldEditor() {
           </div>
         )}
         {(fieldType === 'text' || fieldType === 'longtext') && (
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground">Min character length</label>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground">Min character length</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={minLength === '' ? '' : minLength}
+                  onChange={(e) => setMinLength(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  placeholder="(none)"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground">Max character length</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxLength === '' ? '' : maxLength}
+                  onChange={(e) => setMaxLength(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  placeholder="(none)"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2">
               <input
-                type="number"
-                min={0}
-                value={minLength === '' ? '' : minLength}
-                onChange={(e) => setMinLength(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                type="checkbox"
+                checked={textDisallowSpaces}
+                onChange={(e) => setTextDisallowSpaces(e.target.checked)}
+              />
+              <span className="text-sm text-foreground">Disallow spaces</span>
+            </label>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Unallowed characters</label>
+              <p className="mt-0.5 mb-1 text-xs text-foreground/60">List characters that must not appear (e.g. @#$)</p>
+              <input
+                type="text"
+                value={textUnallowedChars}
+                onChange={(e) => setTextUnallowedChars(e.target.value)}
+                className="mt-1 w-full max-w-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground font-mono"
                 placeholder="(none)"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground">Max character length</label>
-              <input
-                type="number"
-                min={1}
-                value={maxLength === '' ? '' : maxLength}
-                onChange={(e) => setMaxLength(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                placeholder="(none)"
-              />
-            </div>
+            {fieldType === 'text' && (
+              <div>
+                <label className="block text-sm font-medium text-foreground">Pattern mask</label>
+                <p className="mt-0.5 mb-1 text-xs text-foreground/60">
+                  <a href="https://imask.js.org/guide.html#masked-pattern" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">imask</a> pattern: 0=digit, a=letter, *=any; [] optional, {} fixed in value
+                </p>
+                <input
+                  type="text"
+                  value={textPatternMask}
+                  onChange={(e) => setTextPatternMask(e.target.value)}
+                  className="mt-1 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-foreground font-mono"
+                  placeholder="e.g. 000-000 or +{7}(000)000-00-00"
+                />
+              </div>
+            )}
           </div>
         )}
         {fieldType === 'image' && (

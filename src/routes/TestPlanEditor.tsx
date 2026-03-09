@@ -1,10 +1,16 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
-import { formatFieldEntry, getFieldIdsFromOrder } from '../utils/formLayout'
+import {
+  formatFieldEntry,
+  getFieldIdsFromOrder,
+  isSeparatorId,
+  isSeparatorLineId,
+  parseFieldEntry,
+} from '../utils/formLayout'
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import type { DataField, TestPlan } from '../types'
@@ -24,17 +30,42 @@ export function TestPlanEditor() {
   const [fieldIds, setFieldIds] = useState<string[]>([])
   const [formLayoutOrder, setFormLayoutOrder] = useState<string[]>([])
   const [defaultSortOrder, setDefaultSortOrder] = useState<Array<{ key: string; dir: 'asc' | 'desc' }>>([
-    { key: 'date', dir: 'desc' },
+    { key: 'date', dir: 'asc' },
   ])
   const [fieldDefaults, setFieldDefaults] = useState<Record<string, string | number | boolean | string[]>>({})
   const [keyField, setKeyField] = useState<string>('')
   const [startDate, setStartDate] = useState<string>('')
   const [endDate, setEndDate] = useState<string>('')
+  const [hiddenFieldIds, setHiddenFieldIds] = useState<string[]>([])
+  const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
   const [planFields, setPlanFields] = useState<DataField[]>([])
   const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
   const { showAlert, showConfirm } = useAlertConfirm()
+
+  /** Move entries for hidden fields to the end of the form layout order. */
+  function moveHiddenFieldsToEnd(order: string[], hiddenIds: string[]): string[] {
+    if (hiddenIds.length === 0) return order
+    const hiddenSet = new Set(hiddenIds)
+    const visible: string[] = []
+    const hidden: string[] = []
+    for (const entry of order) {
+      if (isSeparatorId(entry) || isSeparatorLineId(entry)) {
+        visible.push(entry)
+      } else {
+        const { fieldId } = parseFieldEntry(entry)
+        if (hiddenSet.has(fieldId)) hidden.push(entry)
+        else visible.push(entry)
+      }
+    }
+    return [...visible, ...hidden]
+  }
+
+  const setHiddenFieldIdsAndReorder = (ids: string[]) => {
+    setHiddenFieldIds(ids)
+    setFormLayoutOrder((prev) => moveHiddenFieldsToEnd(prev, ids))
+  }
 
   useEffect(() => {
     if (!isNew && planId) {
@@ -46,11 +77,12 @@ export function TestPlanEditor() {
           setTestPlan(r.data.testPlan || '')
           setConstraints(r.data.constraints || '')
           setFieldIds(r.data.fieldIds || [])
-          setFormLayoutOrder(
+          const order =
             Array.isArray(r.data.formLayoutOrder) && r.data.formLayoutOrder.length > 0
               ? r.data.formLayoutOrder
               : r.data.fieldIds || []
-          )
+          const hiddenIds = r.data.hiddenFieldIds ?? []
+          setFormLayoutOrder(moveHiddenFieldsToEnd(order, hiddenIds))
           setDefaultSortOrder(
             r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
           )
@@ -58,6 +90,8 @@ export function TestPlanEditor() {
           setKeyField(r.data.keyField ?? '')
           setStartDate(r.data.startDate ?? '')
           setEndDate(r.data.endDate ?? '')
+          setHiddenFieldIds(hiddenIds)
+          setRequiredFieldIds(r.data.requiredFieldIds ?? [])
         })
         .catch(() => navigate('/test-plans'))
         .finally(() => setLoading(false))
@@ -148,6 +182,14 @@ export function TestPlanEditor() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
+    if (fieldIds.length < 1) {
+      showAlert('Add at least one field to the plan before saving.')
+      return
+    }
+    if (!keyField.trim()) {
+      showAlert('Set a key field before saving.')
+      return
+    }
     setSubmitting(true)
     try {
       if (isNew) {
@@ -163,6 +205,8 @@ export function TestPlanEditor() {
           keyField: keyField.trim() || undefined,
           startDate: startDate.trim() || undefined,
           endDate: endDate.trim() || undefined,
+          hiddenFieldIds: hiddenFieldIds.length > 0 ? hiddenFieldIds : undefined,
+          requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
         })
         navigate(returnTo ?? `/test-plans/${data.id}/edit`, { replace: true })
       } else {
@@ -178,6 +222,8 @@ export function TestPlanEditor() {
           keyField: keyField.trim() || undefined,
           startDate: startDate.trim() || undefined,
           endDate: endDate.trim() || undefined,
+          hiddenFieldIds,
+          requiredFieldIds,
         })
         navigate(returnTo ?? '/test-plans', { replace: true })
       }
@@ -265,7 +311,7 @@ export function TestPlanEditor() {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            placeholder="Brief summary for lists"
+            placeholder="Brief summary of test plan"
           />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -371,9 +417,10 @@ export function TestPlanEditor() {
                     )
                   }
                   className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  title={level.dir === 'asc' ? 'Ascending' : 'Descending'}
                 >
-                  <option value="desc">Descending</option>
-                  <option value="asc">Ascending</option>
+                  <option value="asc">↓ Ascending</option>
+                  <option value="desc">↑ Descending</option>
                 </select>
                 <button
                   type="button"
@@ -392,7 +439,7 @@ export function TestPlanEditor() {
             <button
               type="button"
               onClick={() =>
-                setDefaultSortOrder((prev) => [...prev, { key: 'date', dir: 'desc' }])
+                setDefaultSortOrder((prev) => [...prev, { key: 'date', dir: 'asc' }])
               }
               className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
             >
@@ -412,6 +459,10 @@ export function TestPlanEditor() {
             <PlanFieldsEditor
               formLayoutOrder={formLayoutOrder}
               onChange={handleFormLayoutChange}
+              hiddenFieldIds={hiddenFieldIds}
+              onHiddenFieldIdsChange={setHiddenFieldIdsAndReorder}
+              requiredFieldIds={requiredFieldIds}
+              onRequiredFieldIdsChange={setRequiredFieldIds}
               onCreateNew={() => setShowCreateField(true)}
               fieldDefaults={fieldDefaults}
               renderAbovePreview={
@@ -423,7 +474,10 @@ export function TestPlanEditor() {
                     <p className="mt-1 mb-2 text-sm text-foreground/60">
                       Pre-fill when adding a new record. Leave blank to use the normal default.
                     </p>
-                    <div className="mt-2 space-y-3 rounded-lg border border-border bg-card p-3 sm:space-y-2">
+                    <div
+                      className="mt-2 grid gap-y-3 gap-x-4 rounded-lg border border-border bg-card p-3 sm:gap-y-2"
+                      style={{ gridTemplateColumns: 'auto 180px auto' }}
+                    >
                       {planFields.map((f) => {
                         const key = f.key
                         const val = fieldDefaults[key]
@@ -437,78 +491,120 @@ export function TestPlanEditor() {
                             return { ...prev, [key]: v }
                           })
                         return (
-                          <div key={f.id} className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-                            <span className="min-w-0 shrink-0 text-sm font-medium text-foreground sm:min-w-[120px]">{f.label}</span>
-                            {f.type === 'number' && (
-                              <input
-                                type="number"
-                                value={val === undefined || val === '' ? '' : Number(val)}
-                                onChange={(e) => {
-                                  const v = e.target.value
-                                  setVal(v === '' ? '' : parseFloat(v))
-                                }}
-                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[120px]"
-                                placeholder="(none)"
-                              />
-                            )}
-                            {(f.type === 'text' || f.type === 'longtext') && (
-                              <input
-                                type="text"
-                                value={val === undefined ? '' : String(val)}
-                                onChange={(e) => setVal(e.target.value)}
-                                className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-xs"
-                                placeholder="(none)"
-                              />
-                            )}
-                            {f.type === 'boolean' && (
+                          <Fragment key={f.id}>
+                            <span className="truncate text-sm font-medium text-foreground">{f.label}</span>
+                            <div className="min-w-0">
+                              {f.type === 'number' && (
+                                <input
+                                  type="number"
+                                  value={val === undefined || val === '' ? '' : Number(val)}
+                                  onChange={(e) => {
+                                    const v = e.target.value
+                                    setVal(v === '' ? '' : parseFloat(v))
+                                  }}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                  placeholder="(none)"
+                                />
+                              )}
+                              {(f.type === 'text' || f.type === 'longtext') && (
+                                <input
+                                  type="text"
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(e) => setVal(e.target.value)}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                  placeholder="(none)"
+                                />
+                              )}
+                              {f.type === 'boolean' && (
+                                <label className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={val === true}
+                                    onChange={(e) => setVal(e.target.checked)}
+                                    className="h-4 w-4"
+                                  />
+                                  <span className="text-sm text-foreground/70">Default checked</span>
+                                </label>
+                              )}
+                              {f.type === 'select' && (
+                                <select
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(e) => setVal(e.target.value)}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                >
+                                  <option value="">(none)</option>
+                                  {(f.config?.options || []).map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {f.type === 'status' && (
+                                <select
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(e) => setVal(e.target.value)}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                >
+                                  <option value="">(none)</option>
+                                  {getStatusOptions(f).map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {!['number', 'text', 'longtext', 'boolean', 'select', 'status'].includes(f.type) && (
+                                <input
+                                  type="text"
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(e) => setVal(e.target.value)}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                  placeholder="(none)"
+                                />
+                              )}
+                            </div>
+                            <div className="flex items-center justify-end gap-4">
                               <label className="flex items-center gap-2">
                                 <input
                                   type="checkbox"
-                                  checked={val === true}
-                                  onChange={(e) => setVal(e.target.checked)}
+                                  checked={requiredFieldIds.includes(f.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setRequiredFieldIds((prev) =>
+                                        prev.includes(f.id) ? prev : [...prev, f.id]
+                                      )
+                                    } else {
+                                      setRequiredFieldIds((prev) => prev.filter((id) => id !== f.id))
+                                    }
+                                  }}
                                   className="h-4 w-4"
                                 />
-                                <span className="text-sm text-foreground/70">Default checked</span>
+                                <span className="text-sm text-foreground/70">Required</span>
                               </label>
-                            )}
-                            {f.type === 'select' && (
-                              <select
-                                value={val === undefined ? '' : String(val)}
-                                onChange={(e) => setVal(e.target.value)}
-                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[180px]"
-                              >
-                                <option value="">(none)</option>
-                                {(f.config?.options || []).map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                            {f.type === 'status' && (
-                              <select
-                                value={val === undefined ? '' : String(val)}
-                                onChange={(e) => setVal(e.target.value)}
-                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[180px]"
-                              >
-                                <option value="">(none)</option>
-                                {getStatusOptions(f).map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                            {!['number', 'text', 'longtext', 'boolean', 'select', 'status'].includes(f.type) && (
-                              <input
-                                type="text"
-                                value={val === undefined ? '' : String(val)}
-                                onChange={(e) => setVal(e.target.value)}
-                                className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground sm:max-w-[120px]"
-                                placeholder="(none)"
-                              />
-                            )}
-                          </div>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={hiddenFieldIds.includes(f.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setHiddenFieldIdsAndReorder(
+                                        hiddenFieldIds.includes(f.id)
+                                          ? hiddenFieldIds
+                                          : [...hiddenFieldIds, f.id]
+                                      )
+                                    } else {
+                                      setHiddenFieldIdsAndReorder(
+                                        hiddenFieldIds.filter((id) => id !== f.id)
+                                      )
+                                    }
+                                  }}
+                                  className="h-4 w-4"
+                                />
+                                <span className="text-sm text-foreground/70">Hidden</span>
+                              </label>
+                            </div>
+                          </Fragment>
                         )
                       })}
                     </div>

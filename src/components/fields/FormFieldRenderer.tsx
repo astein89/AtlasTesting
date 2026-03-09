@@ -2,6 +2,7 @@ import { AutoExpandTextarea } from './AutoExpandTextarea'
 import { AtlasLocationInput } from './AtlasLocationInput'
 import { FractionInput } from './FractionInput'
 import { ImageInput } from './ImageInput'
+import { MaskedTextInput, filterTextValue } from './MaskedTextInput'
 import { SelectInput } from './SelectInput'
 import { TimerInput } from './TimerInput'
 import { parseFractionScale } from '../../utils/fraction'
@@ -69,10 +70,14 @@ export function renderFormField(
   if (f.type === 'longtext') {
     const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
     const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
+    const filter = (raw: string) => {
+      const filtered = filterTextValue(raw, f.config)
+      return maxLen ? filtered.slice(0, maxLen) : filtered
+    }
     return (
       <AutoExpandTextarea
         value={String(value ?? '')}
-        onChange={(e) => onChange(f.key, maxLen ? e.target.value.slice(0, maxLen) : e.target.value)}
+        onChange={(e) => onChange(f.key, filter(e.target.value))}
         minRows={compact ? 2 : 6}
         minLength={minLen}
         maxLength={maxLen}
@@ -273,10 +278,10 @@ export function renderFormField(
   const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
   const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
   return (
-    <input
-      type="text"
+    <MaskedTextInput
       value={String(value ?? '')}
-      onChange={(e) => onChange(f.key, maxLen ? e.target.value.slice(0, maxLen) : e.target.value)}
+      onChange={(v) => onChange(f.key, v)}
+      config={f.config}
       minLength={minLen}
       maxLength={maxLen}
       className={inputClass}

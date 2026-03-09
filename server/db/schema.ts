@@ -75,6 +75,8 @@ export function initSchema(db: SqlDb) {
   migratePlanDefaultSortOrder(db)
   migratePlanFieldDefaults(db)
   migratePlanKeyField(db)
+  migratePlanHiddenFieldIds(db)
+  migratePlanRequiredFieldIds(db)
   migratePlanStartEndDate(db)
   migratePlanArchivedRuns(db)
   migrateTestRunsRunId(db)
@@ -233,6 +235,32 @@ function migratePlanKeyField(db: SqlDb) {
     const has = rows.some((r) => r[1] === 'key_field')
     if (has) return
     db.run('ALTER TABLE test_plans ADD COLUMN key_field TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanHiddenFieldIds(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'hidden_field_ids')
+    if (has) return
+    db.run('ALTER TABLE test_plans ADD COLUMN hidden_field_ids TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanRequiredFieldIds(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'required_field_ids')
+    if (has) return
+    db.run('ALTER TABLE test_plans ADD COLUMN required_field_ids TEXT')
   } catch {
     // Ignore
   }

@@ -4,7 +4,10 @@ import { api } from '../api/client'
 import { formatDateTime } from '../lib/dateTimeConfig'
 import {
   buildFormRowsFromOrder,
+  isSeparatorId,
+  isSeparatorLineId,
   normalizeFormLayoutOrder,
+  parseFieldEntry,
   SPAN_TO_COLS,
   type LayoutRow,
 } from '../utils/formLayout'
@@ -94,7 +97,12 @@ export function ResultDetail() {
   if (loading || !record) return <p className="text-foreground/60">Loading...</p>
 
   const formLayoutOrder = normalizeFormLayoutOrder(plan?.formLayoutOrder, fields)
-  const formRows: LayoutRow[] = buildFormRowsFromOrder(fields, formLayoutOrder)
+  const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
+  const filteredOrder = formLayoutOrder.filter((entry) => {
+    if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
+    return !hiddenSet.has(parseFieldEntry(entry).fieldId)
+  })
+  const formRows: LayoutRow[] = buildFormRowsFromOrder(fields, filteredOrder)
 
   return (
     <div>
