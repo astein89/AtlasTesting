@@ -12,6 +12,7 @@ export default {
         foreground: 'var(--foreground)',
         card: 'var(--card)',
         'card-foreground': 'var(--card-foreground)',
+        'dropdown-list': 'var(--dropdown-list)',
         border: 'var(--border)',
         primary: 'var(--primary)',
         'primary-foreground': 'var(--primary-foreground)',

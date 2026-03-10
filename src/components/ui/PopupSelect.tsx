@@ -17,6 +17,7 @@ interface PopupSelectProps {
   id?: string
   /** Render dropdown in a portal so it is not clipped by overflow (e.g. inside tables). */
   usePortal?: boolean
+  disabled?: boolean
 }
 
 function toOptions(opts: PopupSelectOption[] | string[]): PopupSelectOption[] {
@@ -35,6 +36,7 @@ export function PopupSelect({
   className = '',
   id,
   usePortal = false,
+  disabled = false,
 }: PopupSelectProps) {
   const DROPDOWN_MAX_HEIGHT = 256
   const GAP = 8
@@ -93,6 +95,10 @@ export function PopupSelect({
     opts.find((o) => o.value === value)?.label ?? (value || placeholder)
 
   useEffect(() => {
+    if (disabled && open) setOpen(false)
+  }, [disabled, open])
+
+  useEffect(() => {
     if (!open) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
@@ -148,8 +154,9 @@ export function PopupSelect({
         ref={buttonRef}
         type="button"
         id={id}
-        onClick={() => setOpen((o) => !o)}
-        className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        onClick={() => !disabled && setOpen((o) => !o)}
+        disabled={disabled}
+        className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card disabled:cursor-not-allowed disabled:opacity-70"
         aria-expanded={open}
         aria-haspopup="listbox"
       >
@@ -160,9 +167,10 @@ export function PopupSelect({
 
       {open && !usePortal && (
         <div
-          className={`absolute left-0 right-0 z-[60] max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg ${
+          className={`absolute left-0 right-0 z-[60] max-h-64 overflow-y-auto rounded-lg border border-border shadow-lg ${
             openUpward ? 'bottom-full mb-1' : 'top-full mt-1'
           }`}
+          style={{ backgroundColor: 'var(--dropdown-list)' }}
           role="listbox"
         >
           {opts.length === 0 ? (
@@ -207,7 +215,8 @@ export function PopupSelect({
         <div
           id="popup-select-portal-list"
           role="listbox"
-          className="fixed z-[100] mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg"
+          className="fixed z-[100] mt-1 max-h-64 overflow-y-auto rounded-lg border border-border shadow-lg"
+          style={{ backgroundColor: 'var(--dropdown-list)' }}
           style={{
             top: portalRect.top + 4,
             left: portalRect.left,

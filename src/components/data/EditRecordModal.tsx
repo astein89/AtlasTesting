@@ -92,6 +92,7 @@ export function EditRecordModal({
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [fullScreenImagePath, setFullScreenImagePath] = useState<string | null>(null)
+  const [overrideValidation, setOverrideValidation] = useState(false)
 
   const imageUrl = useCallback((p: string) => {
     if (p.startsWith('http')) return p
@@ -120,25 +121,33 @@ export function EditRecordModal({
   }, [readOnly, record.data, data, onCancel])
 
   const handleSaveClick = useCallback(() => {
-    const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
-    if (errors.length > 0) {
-      setValidationErrors(errors)
-      return
+    if (!overrideValidation) {
+      const errors = getFieldValidationErrors(fields, data, {
+        requiredFieldIds: plan?.requiredFieldIds,
+      })
+      if (errors.length > 0) {
+        setValidationErrors(errors)
+        return
+      }
     }
     setValidationErrors([])
     onSave()
-  }, [fields, data, plan?.requiredFieldIds, onSave])
+  }, [fields, data, plan?.requiredFieldIds, onSave, overrideValidation])
 
   const handleSaveAndClose = useCallback(() => {
-    const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
-    if (errors.length > 0) {
-      setValidationErrors(errors)
-      return
+    if (!overrideValidation) {
+      const errors = getFieldValidationErrors(fields, data, {
+        requiredFieldIds: plan?.requiredFieldIds,
+      })
+      if (errors.length > 0) {
+        setValidationErrors(errors)
+        return
+      }
     }
     setValidationErrors([])
     setShowSavePrompt(false)
     onSave()
-  }, [fields, data, plan?.requiredFieldIds, onSave])
+  }, [fields, data, plan?.requiredFieldIds, onSave, overrideValidation])
 
   const handleDiscardAndClose = useCallback(() => {
     setShowSavePrompt(false)
@@ -204,9 +213,21 @@ export function EditRecordModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
-          <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
-            {readOnly ? 'View row' : 'Edit row'} — {formatDateTime(record.recordedAt)}
-          </h2>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+            <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
+              {readOnly ? 'View row' : 'Edit row'} — {formatDateTime(record.recordedAt)}
+            </h2>
+            {isAdmin && !readOnly && (
+              <label className="flex items-center gap-2 text-xs text-foreground/60">
+                <input
+                  type="checkbox"
+                  checked={overrideValidation}
+                  onChange={(e) => setOverrideValidation(e.target.checked)}
+                />
+                <span>Override validation</span>
+              </label>
+            )}
+          </div>
             {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
             <div className="flex shrink-0 items-center gap-2">
               <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
@@ -324,7 +345,10 @@ export function EditRecordModal({
                         <div
                           className={`min-w-0 w-full rounded border ${fieldError ? 'border-red-500 ring-1 ring-red-500/30' : 'border-transparent'}`}
                         >
-                          {renderFormField(field, data[field.key], handleDataChange, { uploadNamePrefix })}
+                          {renderFormField(field, data[field.key], handleDataChange, {
+                            uploadNamePrefix,
+                            overrideValidation,
+                          })}
                         </div>
                         {fieldError && (
                           <p className="mt-1 text-xs text-red-500">{fieldError.message}</p>

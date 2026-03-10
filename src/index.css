@@ -7,6 +7,7 @@
   --foreground: #0a0a0a;
   --card: #fafafa;
   --card-foreground: #0a0a0a;
+  --dropdown-list: #f0f0f0;
   --border: #e5e5e5;
   --primary: #171717;
   --primary-foreground: #fafafa;
@@ -18,6 +19,7 @@ html.dark,
   --foreground: #fafafa;
   --card: #171717;
   --card-foreground: #fafafa;
+  --dropdown-list: #0f0f0f;
   --border: #262626;
   --primary: #fafafa;
   --primary-foreground: #171717;

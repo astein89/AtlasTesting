@@ -9,6 +9,7 @@ import { formatDecimalAsFraction } from '../utils/fraction'
 import { useAuthStore } from '../store/authStore'
 import { EditRecordModal } from '../components/data/EditRecordModal'
 import { AddRecordModal } from '../components/data/AddRecordModal'
+import { BulkAddRowsModal } from '../components/data/BulkAddRowsModal'
 import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { renderFormField } from '../components/fields/FormFieldRenderer'
@@ -155,6 +156,7 @@ export function TestPlanDataView() {
   const [bulkSelectMode, setBulkSelectMode] = useUserPreference('atlas-bulk-select-mode', false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
+  const [showBulkAddRowsModal, setShowBulkAddRowsModal] = useState(false)
   const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditFieldKey, setBulkEditFieldKey] = useState<string | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState<string | number | boolean | string[] | TimerValue | null>(null)
@@ -440,7 +442,8 @@ export function TestPlanDataView() {
     !!editingId ||
     isAdding ||
     showBulkEditModal ||
-    bulkDeletePending
+    bulkDeletePending ||
+    showBulkAddRowsModal
 
   const closeTopmostModal = useCallback(() => {
     if (reinstateChoicePending) {
@@ -975,7 +978,8 @@ export function TestPlanDataView() {
       if (idx >= 0 && prev.length === 1) {
         return [{ key, dir: prev[0].dir === 'asc' ? 'desc' : 'asc' }]
       }
-      return [{ key, dir: 'desc' }]
+      // First click on a column sorts ascending.
+      return [{ key, dir: 'asc' }]
     })
   }
 
@@ -1053,13 +1057,23 @@ export function TestPlanDataView() {
               </>
             )}
             {hasFields && canEditData && (
-              <button
-                type="button"
-                onClick={startAdd}
-                className="min-h-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-background sm:min-h-0"
-              >
-                + Add row
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkAddRowsModal(true)}
+                  className="min-h-[44px] shrink-0 rounded-lg border border-primary/60 px-4 py-2 text-sm text-primary hover:bg-primary/5 sm:min-h-0"
+                  title="Bulk add rows by entering a value and optional shared fields"
+                >
+                  Bulk add
+                </button>
+                <button
+                  type="button"
+                  onClick={startAdd}
+                  className="min-h-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-background sm:min-h-0"
+                >
+                  + Add row
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1145,6 +1159,17 @@ export function TestPlanDataView() {
           submitting={submitting}
           formLayoutOrder={plan?.formLayoutOrder}
           plan={plan ?? undefined}
+        />
+      )}
+      {showBulkAddRowsModal && plan && (
+        <BulkAddRowsModal
+          fields={fields}
+          plan={plan}
+          onClose={() => setShowBulkAddRowsModal(false)}
+          onCreated={() => {
+            setShowBulkAddRowsModal(false)
+            loadRecords()
+          }}
         />
       )}
       {showExportModal && (

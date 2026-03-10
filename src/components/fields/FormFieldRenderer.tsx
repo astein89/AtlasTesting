@@ -17,10 +17,11 @@ export function renderFormField(
   f: DataField,
   value: string | number | boolean | string[] | TimerValue,
   onChange: (key: string, val: string | number | boolean | string[] | TimerValue) => void,
-  options?: { disabled?: boolean; uploadNamePrefix?: string; compact?: boolean }
+  options?: { disabled?: boolean; uploadNamePrefix?: string; compact?: boolean; overrideValidation?: boolean }
 ) {
   const disabled = options?.disabled ?? false
   const compact = options?.compact ?? false
+  const overrideValidation = options?.overrideValidation ?? false
   const inputClass = compact
     ? `w-full min-w-0 rounded border border-border bg-background px-2 py-1 text-sm text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
     : `w-full rounded border border-border bg-background px-3 py-2 text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
@@ -71,6 +72,7 @@ export function renderFormField(
     const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
     const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
     const filter = (raw: string) => {
+      if (overrideValidation) return raw
       const filtered = filterTextValue(raw, f.config)
       return maxLen ? filtered.slice(0, maxLen) : filtered
     }
@@ -283,8 +285,9 @@ export function renderFormField(
       onChange={(v) => onChange(f.key, v)}
       config={f.config}
       minLength={minLen}
-      maxLength={maxLen}
+      maxLength={overrideValidation ? undefined : maxLen}
       className={inputClass}
+      overrideValidation={overrideValidation}
       disabled={disabled}
     />
   )

@@ -122,8 +122,12 @@ export function ColumnFilterDropdown({
   const dropdown = (
     <div
       ref={ref}
-      className="fixed z-[100] min-w-[200px] max-w-[280px] rounded-lg border border-border bg-card py-2 shadow-lg"
-      style={{ top: position.top, left: position.left }}
+      className="fixed z-[100] min-w-[200px] max-w-[280px] rounded-lg border border-border py-2 shadow-lg"
+      style={{
+        backgroundColor: 'var(--dropdown-list)',
+        top: position.top,
+        left: position.left,
+      }}
     >
       <div className="border-b border-border px-3 pb-2">
         <input

@@ -3,6 +3,7 @@ import { renderFormField } from '../fields/FormFieldRenderer'
 import { SelectInput } from '../fields/SelectInput'
 import { buildFormRowsFromOrder, isSeparatorId, isSeparatorLineId, normalizeFormLayoutOrder, parseFieldEntry, SPAN_TO_COLS } from '../../utils/formLayout'
 import { getFieldValidationErrors } from '../../utils/fieldValidation'
+import { useAuthStore } from '../../store/authStore'
 import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
 
@@ -43,6 +44,8 @@ export function AddRecordModal({
 }: AddRecordModalProps) {
   const [showDiscardPrompt, setShowDiscardPrompt] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Array<{ fieldKey: string; message: string }>>([])
+  const [overrideValidation, setOverrideValidation] = useState(false)
+  const isAdmin = useAuthStore((s) => s.isAdmin())
 
   const handleDataChange = useCallback(
     (key: string, value: string | number | boolean | string[] | TimerValue) => {
@@ -66,14 +69,18 @@ export function AddRecordModal({
   }, [onCancel])
 
   const handleSave = useCallback(() => {
-    const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
-    if (errors.length > 0) {
-      setValidationErrors(errors)
-      return
+    if (!overrideValidation) {
+      const errors = getFieldValidationErrors(fields, data, {
+        requiredFieldIds: plan?.requiredFieldIds,
+      })
+      if (errors.length > 0) {
+        setValidationErrors(errors)
+        return
+      }
     }
     setValidationErrors([])
     onSave()
-  }, [fields, data, plan?.requiredFieldIds, onSave])
+  }, [fields, data, plan?.requiredFieldIds, onSave, overrideValidation])
 
   const statusField = fields.find((f) => f.type === 'status')
   const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
@@ -117,7 +124,19 @@ export function AddRecordModal({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
-            <h2 className="mb-4 text-lg font-semibold text-foreground">Add row</h2>
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold text-foreground">Add row</h2>
+              {isAdmin && (
+                <label className="flex items-center gap-2 text-xs text-foreground/60">
+                  <input
+                    type="checkbox"
+                    checked={overrideValidation}
+                    onChange={(e) => setOverrideValidation(e.target.checked)}
+                  />
+                  <span>Override validation</span>
+                </label>
+              )}
+            </div>
             <div className="w-full min-w-0 space-y-4">
               {buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
                 Array.isArray(row) ? (
@@ -150,7 +169,10 @@ export function AddRecordModal({
                           <div
                             className={`min-w-0 w-full rounded border ${fieldError ? 'border-red-500 ring-1 ring-red-500/30' : 'border-transparent'}`}
                           >
-                            {renderFormField(field, data[field.key], handleDataChange, { uploadNamePrefix })}
+                            {renderFormField(field, data[field.key], handleDataChange, {
+                              uploadNamePrefix,
+                              overrideValidation,
+                            })}
                           </div>
                           {fieldError && (
                             <p className="mt-1 text-xs text-red-500">{fieldError.message}</p>

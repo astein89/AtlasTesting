@@ -29,7 +29,7 @@ function isEmpty(
 export function getFieldValidationErrors(
   fields: DataField[],
   data: Record<string, string | number | boolean | string[] | TimerValue>,
-  options?: { requiredFieldIds?: string[] }
+  options?: { requiredFieldIds?: string[]; overrideValidation?: boolean }
 ): FieldValidationError[] {
   const errors: FieldValidationError[] = []
   const requiredIds = new Set(options?.requiredFieldIds ?? [])
@@ -37,19 +37,34 @@ export function getFieldValidationErrors(
     if (f.type === 'formula') continue
     const isRequired = f.config?.required === true || requiredIds.has(f.id)
     const val = data[f.key]
-    if (isRequired && isEmpty(val, f.type)) {
+    if (isRequired && isEmpty(val, f.type) && !options?.overrideValidation) {
       errors.push({ fieldKey: f.key, message: 'Required' })
     }
     if (f.type !== 'text' && f.type !== 'longtext') continue
-    const minLen = typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
-    const maxLen = typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
+    if (options?.overrideValidation) continue
+    const minLen =
+      typeof f.config?.minLength === 'number' && f.config.minLength >= 0 ? f.config.minLength : undefined
+    const maxLen =
+      typeof f.config?.maxLength === 'number' && f.config.maxLength > 0 ? f.config.maxLength : undefined
     const strVal = String(data[f.key] ?? '')
-    if (minLen != null && strVal.length < minLen) {
+
+    // For masked text fields, count only characters that fill mask slots (@, #, *, 0, a).
+    let effectiveLen = strVal.length
+    const mask = f.config?.textPatternMask?.trim()
+    if (f.type === 'text' && mask) {
+      const slotCount = mask
+        .split('')
+        .filter((ch) => ch === '@' || ch === '#' || ch === '*' || ch === '0' || ch === 'a').length
+      const slotChars = strVal.replace(/[^A-Za-z0-9]/g, '')
+      effectiveLen = Math.min(slotChars.length, slotCount)
+    }
+
+    if (minLen != null && effectiveLen < minLen) {
       errors.push({
         fieldKey: f.key,
         message: `At least ${minLen} character${minLen === 1 ? '' : 's'}`,
       })
-    } else if (maxLen != null && strVal.length > maxLen) {
+    } else if (maxLen != null && effectiveLen > maxLen) {
       errors.push({
         fieldKey: f.key,
         message: `At most ${maxLen} character${maxLen === 1 ? '' : 's'}`,

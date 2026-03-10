@@ -55,6 +55,8 @@ export interface FieldConfig {
   textDisallowSpaces?: boolean
   /** For text/longtext fields: characters not allowed (e.g. "@#$"); any listed char is stripped */
   textUnallowedChars?: string
+  /** For text/longtext fields: enforce case for letters */
+  textCase?: 'upper' | 'lower' | 'none'
   /** For text fields only: imask pattern (e.g. "000-000" for digits, see https://imask.js.org/guide.html#masked-pattern) */
   textPatternMask?: string
   /** For formula fields: the M-like expression (e.g. [Length] * [Width]). For status fields: when set, status is computed from this formula (read-only per record). */

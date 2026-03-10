@@ -74,6 +74,7 @@ export function FieldEditor() {
   const [textDisallowSpaces, setTextDisallowSpaces] = useState(false)
   const [textUnallowedChars, setTextUnallowedChars] = useState('')
   const [textPatternMask, setTextPatternMask] = useState('')
+  const [textCase, setTextCase] = useState<'none' | 'upper' | 'lower'>('none')
   const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplayKind>('dateTime')
   const [fieldType, setFieldType] = useState<FieldType>('text')
   const [statusUseFormula, setStatusUseFormula] = useState(false)
@@ -182,13 +183,36 @@ export function FieldEditor() {
       else config.max = numberMax
     }
     if (fieldType === 'text' || fieldType === 'longtext') {
-      if (minLength === '') delete config.minLength
-      else config.minLength = minLength
-      if (maxLength === '') delete config.maxLength
-      else config.maxLength = maxLength
       if (textDisallowSpaces) config.textDisallowSpaces = true
       config.textUnallowedChars = textUnallowedChars.trim()
-      if (fieldType === 'text') config.textPatternMask = textPatternMask.trim()
+      if (textCase === 'upper' || textCase === 'lower') config.textCase = textCase
+      else delete config.textCase
+      if (fieldType === 'text') {
+        const mask = textPatternMask.trim()
+        config.textPatternMask = mask
+        if (mask) {
+          // Enforce pattern mask based on number of slots (@, #, *, 0, a).
+          const slotCount = mask
+            .split('')
+            .filter((ch) => ch === '@' || ch === '#' || ch === '*' || ch === '0' || ch === 'a').length
+          if (slotCount > 0) {
+            config.minLength = slotCount
+            delete config.maxLength
+          }
+        } else {
+          // No pattern mask: use explicit min/max length inputs.
+          if (minLength === '') delete config.minLength
+          else config.minLength = minLength
+          if (maxLength === '') delete config.maxLength
+          else config.maxLength = maxLength
+        }
+      } else {
+        // longtext never uses pattern mask; use explicit min/max.
+        if (minLength === '') delete config.minLength
+        else config.minLength = minLength
+        if (maxLength === '') delete config.maxLength
+        else config.maxLength = maxLength
+      }
     }
     if (fieldType === 'datetime') {
       config.dateTimeDisplay = dateTimeDisplay
@@ -284,6 +308,11 @@ export function FieldEditor() {
           if (r.data.config?.textDisallowSpaces === true) setTextDisallowSpaces(true)
           setTextUnallowedChars(typeof r.data.config?.textUnallowedChars === 'string' ? r.data.config.textUnallowedChars : '')
           setTextPatternMask(typeof r.data.config?.textPatternMask === 'string' ? r.data.config.textPatternMask : '')
+          if (r.data.config?.textCase === 'upper' || r.data.config?.textCase === 'lower') {
+            setTextCase(r.data.config.textCase)
+          } else {
+            setTextCase('none')
+          }
           if (r.data.type === 'datetime') {
             const kind = r.data.config?.dateTimeDisplay
             setDateTimeDisplay(
@@ -530,6 +559,23 @@ export function FieldEditor() {
                 />
               </div>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Letter case</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Optional; convert letters as the user types.</p>
+              <select
+                value={textCase}
+                onChange={(e) =>
+                  setTextCase(
+                    e.target.value === 'upper' || e.target.value === 'lower' ? e.target.value : 'none'
+                  )
+                }
+                className="mt-1 w-full max-w-xs rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              >
+                <option value="none">None</option>
+                <option value="upper">UPPERCASE</option>
+                <option value="lower">lowercase</option>
+              </select>
+            </div>
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -553,7 +599,7 @@ export function FieldEditor() {
               <div>
                 <label className="block text-sm font-medium text-foreground">Pattern mask</label>
                 <p className="mt-1 mb-1 text-xs text-foreground/60">
-                  <a href="https://imask.js.org/guide.html#masked-pattern" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">imask</a> pattern: 0=digit, a=letter, *=any; [] optional, {} fixed in value
+                  Use @ for letters, # for numbers, * for letters or numbers. Any other character is taken literally.
                 </p>
                 <input
                   type="text"
