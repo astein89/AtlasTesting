@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getContrastTextColor } from '../../utils/colorContrast'
+
+const DROPDOWN_MAX_HEIGHT = 256
+const GAP = 8
 
 interface SelectInputProps {
   value: string
@@ -23,6 +26,7 @@ export function SelectInput({
   optionColors,
 }: SelectInputProps) {
   const [open, setOpen] = useState(false)
+  const [openUpward, setOpenUpward] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const select = (opt: string) => {
@@ -47,13 +51,68 @@ export function SelectInput({
   useEffect(() => {
     if (!open) return
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (containerRef.current && !containerRef.current.contains(target)) {
         setOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
+
+  useLayoutEffect(() => {
+    if (!open || !containerRef.current) return
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - rect.bottom - GAP
+    setOpenUpward(spaceBelow < DROPDOWN_MAX_HEIGHT)
+  }, [open])
+
+  const dropdownContent = (
+    <>
+      {options.length === 0 ? (
+        <p className="p-3 text-center text-sm text-foreground/60">No options</p>
+      ) : (
+        <div className="divide-y divide-border py-1">
+          <button
+            type="button"
+            onClick={() => select('')}
+            className={`block w-full px-3 py-2 text-left text-sm text-foreground/70 hover:bg-background ${
+              !value ? 'bg-primary/10 font-medium' : ''
+            }`}
+            role="option"
+            aria-selected={!value}
+          >
+            —
+          </button>
+          {options.map((opt) => {
+            const optColor = optionColors?.[opt]
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => select(opt)}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-background ${
+                  value === opt ? 'bg-primary/10 font-medium' : ''
+                }`}
+                role="option"
+                aria-selected={value === opt}
+              >
+                {optColor ? (
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full border border-black/10"
+                    style={{ backgroundColor: optColor }}
+                    aria-hidden
+                  />
+                ) : null}
+                <span className="min-w-0 flex-1 truncate">{opt}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
@@ -72,50 +131,12 @@ export function SelectInput({
 
       {open && (
         <div
-          className="absolute left-0 right-0 top-full z-[60] mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg"
+          className={`absolute left-0 right-0 z-[60] max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg ${
+            openUpward ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
           role="listbox"
         >
-          {options.length === 0 ? (
-            <p className="p-3 text-center text-sm text-foreground/60">No options</p>
-          ) : (
-            <div className="divide-y divide-border py-1">
-              <button
-                type="button"
-                onClick={() => select('')}
-                className={`block w-full px-3 py-2 text-left text-sm text-foreground/70 hover:bg-background ${
-                  !value ? 'bg-primary/10 font-medium' : ''
-                }`}
-                role="option"
-                aria-selected={!value}
-              >
-                —
-              </button>
-              {options.map((opt) => {
-                const optColor = optionColors?.[opt]
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => select(opt)}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-background ${
-                      value === opt ? 'bg-primary/10 font-medium' : ''
-                    }`}
-                    role="option"
-                    aria-selected={value === opt}
-                  >
-                    {optColor ? (
-                      <span
-                        className="h-3 w-3 shrink-0 rounded-full border border-black/10"
-                        style={{ backgroundColor: optColor }}
-                        aria-hidden
-                      />
-                    ) : null}
-                    <span className="min-w-0 flex-1 truncate">{opt}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
+          {dropdownContent}
         </div>
       )}
     </div>

@@ -95,7 +95,9 @@ export function useUserPreference<T>(
     } catch {
       setState(defaultValue)
     }
-  }, [key, loaded, defaultValue])
+    // Intentionally *not* depending on defaultValue to avoid infinite
+    // update loops when callers pass non-stable defaults (like [] or {}).
+  }, [key, loaded])
 
   const setValue = useCallback(
     (value: T | ((prev: T) => T)) => {

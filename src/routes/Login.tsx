@@ -39,7 +39,7 @@ export function Login() {
         accessToken: string
         refreshToken: string
         user: { id: string; username: string; name?: string; role: string }
-      }>('/auth/login', data)
+      }>('/auth/login', { ...data, rememberMe })
       setAuth(res.user, res.accessToken, res.refreshToken, rememberMe)
       navigate('/')
     } catch (e: unknown) {
@@ -92,7 +92,7 @@ export function Login() {
               onChange={(e) => setRememberMe(e.target.checked)}
               className="h-4 w-4 rounded border-neutral-600 bg-neutral-900 text-blue-600"
             />
-            <span className="text-sm text-neutral-200">Remember me (stay signed in for 7 days)</span>
+            <span className="text-sm text-neutral-200">Remember me</span>
           </label>
           {error && <p className="text-sm text-red-500">{error}</p>}
           <button

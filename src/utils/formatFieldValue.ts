@@ -1,6 +1,6 @@
 import { format as dateFnsFormat } from 'date-fns'
 import { getDateTimeConfig, getFormatForDateTimeDisplay } from '../lib/dateTimeConfig'
-import { formatDecimalAsFraction } from './fraction'
+import { formatDecimalAsFraction, formatDecimalAsFractionWithScale, parseFractionScale } from './fraction'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from './timer'
 import type { DataField, FieldConfig, TimerValue } from '../types'
 
@@ -66,6 +66,10 @@ export function formatFieldValue(
   if (typeof value === 'number') {
     if (field.type === 'fraction') {
       return Number.isFinite(value) ? formatDecimalAsFraction(value) : '—'
+    }
+    if (field.type === 'formula' && field.config?.fractionScale != null) {
+      const scale = parseFractionScale(field.config.fractionScale)
+      return formatDecimalAsFractionWithScale(value, scale)
     }
     if (field.type === 'number' || field.type === 'formula') {
       return formatNumberWithOptions(value, field.config)

@@ -62,10 +62,11 @@ export function FieldEditor() {
   const [statusColors, setStatusColors] = useState<Record<string, string>>({})
   const [integerDigits, setIntegerDigits] = useState<number | ''>('')
   const [decimalPlaces, setDecimalPlaces] = useState<number | ''>('')
-  const [numberFormat, setNumberFormat] = useState<'number' | 'percent' | 'currency'>('number')
+  const [numberFormat, setNumberFormat] = useState<'number' | 'percent' | 'currency' | 'fraction'>('number')
   const [thousandsSeparator, setThousandsSeparator] = useState(false)
   const [negativeStyle, setNegativeStyle] = useState<'minus' | 'parentheses'>('minus')
   const [currencySymbol, setCurrencySymbol] = useState('')
+  const [formulaFractionScale, setFormulaFractionScale] = useState<FractionScale | ''>('')
   const [numberMin, setNumberMin] = useState<number | ''>('')
   const [numberMax, setNumberMax] = useState<number | ''>('')
   const [minLength, setMinLength] = useState<number | ''>('')
@@ -152,14 +153,14 @@ export function FieldEditor() {
 
   const onSubmit = async (data: FormData) => {
     const config = { ...data.config }
-    if (fieldType === 'select') config.options = options.filter(Boolean)
+    if (fieldType === 'select') config.options = options.map((o) => (o == null ? '' : String(o)))
     if (fieldType === 'fraction') config.fractionScale = fractionScale
     if (fieldType === 'image') {
       config.imageMultiple = imageMultiple
-      if (imageTag.trim()) config.imageTag = imageTag.trim()
+      config.imageTag = imageTag.trim()
     }
     if (fieldType === 'status') {
-      config.options = options.filter(Boolean)
+      config.options = options.map((o) => (o == null ? '' : String(o)))
       config.statusColors = statusColors
       if (statusUseFormula) {
         const statusFormula = (getValues('config') as { formula?: string })?.formula?.trim()
@@ -167,23 +168,27 @@ export function FieldEditor() {
       } else if ('formula' in config) delete config.formula
     }
     if (fieldType === 'number') {
-      if (integerDigits !== '') config.integerDigits = integerDigits
-      if (decimalPlaces !== '') config.decimalPlaces = decimalPlaces
+      if (integerDigits === '') delete config.integerDigits
+      else config.integerDigits = integerDigits
+      if (decimalPlaces === '') delete config.decimalPlaces
+      else config.decimalPlaces = decimalPlaces
       config.numberFormat = numberFormat
       config.thousandsSeparator = thousandsSeparator
       config.negativeStyle = negativeStyle
-      if (numberFormat === 'currency') config.currencySymbol = currencySymbol.trim() || '$'
-      if (numberMin !== '') config.min = numberMin
-      if (numberMax !== '') config.max = numberMax
+      config.currencySymbol = currencySymbol.trim()
+      if (numberMin === '') delete config.min
+      else config.min = numberMin
+      if (numberMax === '') delete config.max
+      else config.max = numberMax
     }
     if (fieldType === 'text' || fieldType === 'longtext') {
-      if (minLength !== '') config.minLength = minLength
-      else if ('minLength' in config) delete config.minLength
-      if (maxLength !== '') config.maxLength = maxLength
-      else if ('maxLength' in config) delete config.maxLength
+      if (minLength === '') delete config.minLength
+      else config.minLength = minLength
+      if (maxLength === '') delete config.maxLength
+      else config.maxLength = maxLength
       if (textDisallowSpaces) config.textDisallowSpaces = true
-      if (textUnallowedChars.trim()) config.textUnallowedChars = textUnallowedChars.trim()
-      if (fieldType === 'text' && textPatternMask.trim()) config.textPatternMask = textPatternMask.trim()
+      config.textUnallowedChars = textUnallowedChars.trim()
+      if (fieldType === 'text') config.textPatternMask = textPatternMask.trim()
     }
     if (fieldType === 'datetime') {
       config.dateTimeDisplay = dateTimeDisplay
@@ -191,12 +196,16 @@ export function FieldEditor() {
     }
     if (fieldType === 'formula') {
       config.formula = (getValues('config') as { formula?: string })?.formula ?? ''
-      if (decimalPlaces !== '') config.decimalPlaces = decimalPlaces
-      if (integerDigits !== '') config.integerDigits = integerDigits
-      config.numberFormat = numberFormat
+      if (numberFormat === 'fraction') config.fractionScale = formulaFractionScale || 16
+      else if ('fractionScale' in config) delete config.fractionScale
+      if (decimalPlaces === '') delete config.decimalPlaces
+      else config.decimalPlaces = decimalPlaces
+      if (integerDigits === '') delete config.integerDigits
+      else config.integerDigits = integerDigits
+      config.numberFormat = numberFormat === 'fraction' ? 'number' : numberFormat
       config.thousandsSeparator = thousandsSeparator
       config.negativeStyle = negativeStyle
-      if (numberFormat === 'currency') config.currencySymbol = currencySymbol.trim() || '$'
+      config.currencySymbol = currencySymbol.trim()
     }
 
     try {
@@ -238,14 +247,16 @@ export function FieldEditor() {
           setValue('label', r.data.label)
           setValue('type', r.data.type)
           setValue('config', r.data.config || {})
-          if (r.data.config?.options) setOptions(r.data.config.options)
+          if (Array.isArray(r.data.config?.options)) {
+            setOptions(r.data.config.options.map((o) => (o == null ? '' : String(o))))
+          }
           if (r.data.type === 'status' && (!r.data.config?.options || !Array.isArray(r.data.config.options) || r.data.config.options.length === 0))
             setOptions([...STATUS_OPTIONS])
           if (r.data.config?.fractionScale && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
             setFractionScale(r.data.config.fractionScale as FractionScale)
           }
           if (r.data.config?.imageMultiple != null) setImageMultiple(r.data.config.imageMultiple)
-          if (r.data.config?.imageTag != null) setImageTag(String(r.data.config.imageTag))
+          setImageTag(r.data.config?.imageTag != null ? String(r.data.config.imageTag) : '')
           if (r.data.config?.statusColors && typeof r.data.config.statusColors === 'object') {
             setStatusColors(r.data.config.statusColors as Record<string, string>)
           }
@@ -255,18 +266,24 @@ export function FieldEditor() {
           if (r.data.type === 'number' || r.data.type === 'formula') {
             setIntegerDigits(r.data.config?.integerDigits ?? '')
             setDecimalPlaces(r.data.config?.decimalPlaces ?? '')
-            setNumberFormat((r.data.config?.numberFormat as 'number' | 'percent' | 'currency') ?? 'number')
+            if (r.data.type === 'formula' && r.data.config?.fractionScale != null && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
+              setNumberFormat('fraction')
+              setFormulaFractionScale(r.data.config.fractionScale as FractionScale)
+            } else {
+              setNumberFormat((r.data.config?.numberFormat as 'number' | 'percent' | 'currency') ?? 'number')
+              setFormulaFractionScale('')
+            }
             setThousandsSeparator(r.data.config?.thousandsSeparator === true)
             setNegativeStyle((r.data.config?.negativeStyle as 'minus' | 'parentheses') ?? 'minus')
             setCurrencySymbol(typeof r.data.config?.currencySymbol === 'string' ? r.data.config.currencySymbol : '')
           }
-          if (r.data.config?.min != null) setNumberMin(r.data.config.min as number)
-          if (r.data.config?.max != null) setNumberMax(r.data.config.max as number)
-          if (r.data.config?.minLength != null) setMinLength(r.data.config.minLength as number)
-          if (r.data.config?.maxLength != null) setMaxLength(r.data.config.maxLength as number)
+          setNumberMin(r.data.config?.min != null ? (r.data.config.min as number) : '')
+          setNumberMax(r.data.config?.max != null ? (r.data.config.max as number) : '')
+          setMinLength(r.data.config?.minLength != null ? (r.data.config.minLength as number) : '')
+          setMaxLength(r.data.config?.maxLength != null ? (r.data.config.maxLength as number) : '')
           if (r.data.config?.textDisallowSpaces === true) setTextDisallowSpaces(true)
-          if (typeof r.data.config?.textUnallowedChars === 'string') setTextUnallowedChars(r.data.config.textUnallowedChars)
-          if (typeof r.data.config?.textPatternMask === 'string') setTextPatternMask(r.data.config.textPatternMask)
+          setTextUnallowedChars(typeof r.data.config?.textUnallowedChars === 'string' ? r.data.config.textUnallowedChars : '')
+          setTextPatternMask(typeof r.data.config?.textPatternMask === 'string' ? r.data.config.textPatternMask : '')
           if (r.data.type === 'datetime') {
             const kind = r.data.config?.dateTimeDisplay
             setDateTimeDisplay(
@@ -350,6 +367,7 @@ export function FieldEditor() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground">Minimum</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
                 <input
                   type="number"
                   value={numberMin === '' ? '' : numberMin}
@@ -360,6 +378,7 @@ export function FieldEditor() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground">Maximum</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
                 <input
                   type="number"
                   value={numberMax === '' ? '' : numberMax}
@@ -437,6 +456,7 @@ export function FieldEditor() {
             {numberFormat === 'currency' && (
               <div>
                 <label className="block text-sm font-medium text-foreground">Currency symbol</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
                 <input
                   type="text"
                   value={currencySymbol}
@@ -451,7 +471,7 @@ export function FieldEditor() {
         {fieldType === 'datetime' && (
           <div>
             <label className="block text-sm font-medium text-foreground">Display as</label>
-            <p className="mt-1 mb-2 text-xs text-foreground/60">
+            <p className="mt-1 mb-1 text-xs text-foreground/60">
               How this date/time field is shown in tables and cards. Date and time uses your Settings format.
             </p>
             <PopupSelect
@@ -467,11 +487,12 @@ export function FieldEditor() {
         )}
         {fieldType === 'fraction' && (
           <div>
-            <p className="mb-2 text-xs text-foreground/60">
+            <label className="block text-sm font-medium text-foreground">Fraction scale</label>
+            <p className="mt-1 mb-1 text-xs text-foreground/60">
               Denominator for inch fractions (128ths finest, halves coarsest).
             </p>
             <PopupSelect
-              label="Fraction scale"
+              label=""
               value={String(fractionScale)}
               onChange={(v) => setFractionScale(Number(v) as FractionScale)}
               options={FRACTION_SCALES.map((s) => ({
@@ -486,6 +507,7 @@ export function FieldEditor() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground">Min character length</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
                 <input
                   type="number"
                   min={0}
@@ -497,6 +519,7 @@ export function FieldEditor() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground">Max character length</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
                 <input
                   type="number"
                   min={1}
@@ -517,7 +540,7 @@ export function FieldEditor() {
             </label>
             <div>
               <label className="block text-sm font-medium text-foreground">Unallowed characters</label>
-              <p className="mt-0.5 mb-1 text-xs text-foreground/60">List characters that must not appear (e.g. @#$)</p>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">List characters that must not appear (e.g. @#$)</p>
               <input
                 type="text"
                 value={textUnallowedChars}
@@ -529,7 +552,7 @@ export function FieldEditor() {
             {fieldType === 'text' && (
               <div>
                 <label className="block text-sm font-medium text-foreground">Pattern mask</label>
-                <p className="mt-0.5 mb-1 text-xs text-foreground/60">
+                <p className="mt-1 mb-1 text-xs text-foreground/60">
                   <a href="https://imask.js.org/guide.html#masked-pattern" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">imask</a> pattern: 0=digit, a=letter, *=any; [] optional, {} fixed in value
                 </p>
                 <input
@@ -555,7 +578,7 @@ export function FieldEditor() {
             </label>
             <div>
               <label className="block text-sm font-medium text-foreground">Image tag</label>
-              <p className="mt-0.5 mb-1 text-xs text-foreground/60">Optional label (e.g. Before, Defect photo)</p>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Optional label (e.g. Before, Defect photo)</p>
               <input
                 type="text"
                 value={imageTag}
@@ -572,7 +595,7 @@ export function FieldEditor() {
               <label className="block text-sm font-medium text-foreground">
                 Status options
               </label>
-              <p className="mt-1 mb-2 text-xs text-foreground/60">
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
                 Drag to reorder. Add or remove statuses below.
               </p>
               <DraggableOptionList
@@ -597,13 +620,15 @@ export function FieldEditor() {
                 )}
                 onAdd={addOption}
                 addLabel="+ Add status"
+                onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
+                bulkAddLabel="Bulk add statuses"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-foreground">
                 Status colors (optional)
               </label>
-              <p className="mt-1 mb-2 text-xs text-foreground/60">
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
                 Set a color for each status to show in the data view.
               </p>
               <div className="mt-2 space-y-2">
@@ -646,7 +671,7 @@ export function FieldEditor() {
               />
               <span className="text-sm font-medium text-foreground">Use formula</span>
             </label>
-            <p className="mt-0.5 mb-2 text-xs text-foreground/60">
+            <p className="mt-1 mb-1 text-xs text-foreground/60">
               When on, status is computed from other fields and cannot be edited per record.
             </p>
             {statusUseFormula && (
@@ -679,7 +704,7 @@ export function FieldEditor() {
             {fieldType === 'formula' && (
             <div>
               <label className="block text-sm font-medium text-foreground">Formula</label>
-              <p className="mt-1 mb-2 text-xs text-foreground/60">
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
                 Value is computed from other fields. Use [fieldKey] to reference a field.
               </p>
               <div className="flex items-center gap-2">
@@ -734,31 +759,52 @@ export function FieldEditor() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground">Format</label>
-                <p className="mt-1 mb-1 text-xs text-foreground/60">Excel-style</p>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Excel-style or fraction</p>
                 <PopupSelect
                   label=""
                   value={numberFormat}
-                  onChange={(v) => setNumberFormat(v as 'number' | 'percent' | 'currency')}
+                  onChange={(v) => {
+                    const next = v as 'number' | 'percent' | 'currency' | 'fraction'
+                    setNumberFormat(next)
+                    if (next === 'fraction' && formulaFractionScale === '') setFormulaFractionScale(16)
+                  }}
                   options={[
                     { value: 'number', label: 'Number' },
                     { value: 'percent', label: 'Percent' },
                     { value: 'currency', label: 'Currency' },
+                    { value: 'fraction', label: 'Fraction' },
                   ]}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground">Negative numbers</label>
-                <p className="mt-1 mb-1 text-xs text-foreground/60">Display style</p>
-                <PopupSelect
-                  label=""
-                  value={negativeStyle}
-                  onChange={(v) => setNegativeStyle(v as 'minus' | 'parentheses')}
-                  options={[
-                    { value: 'minus', label: '-1234' },
-                    { value: 'parentheses', label: '(1234)' },
-                  ]}
-                />
-              </div>
+              {numberFormat === 'fraction' ? (
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Fraction scale</label>
+                  <p className="mt-1 mb-1 text-xs text-foreground/60">Round to nearest (e.g. 16ths for inches)</p>
+                  <PopupSelect
+                    label=""
+                    value={String(formulaFractionScale || 16)}
+                    onChange={(v) => setFormulaFractionScale(Number(v) as FractionScale)}
+                    options={FRACTION_SCALES.map((s) => ({
+                      value: String(s),
+                      label: s === 2 ? 'Halves (½)' : s === 4 ? '4ths (¼)' : `${s}ths (1/${s})`,
+                    }))}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Negative numbers</label>
+                  <p className="mt-1 mb-1 text-xs text-foreground/60">Display style</p>
+                  <PopupSelect
+                    label=""
+                    value={negativeStyle}
+                    onChange={(v) => setNegativeStyle(v as 'minus' | 'parentheses')}
+                    options={[
+                      { value: 'minus', label: '-1234' },
+                      { value: 'parentheses', label: '(1234)' },
+                    ]}
+                  />
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-4">
               <label className="flex items-center gap-2">
@@ -773,6 +819,7 @@ export function FieldEditor() {
             {numberFormat === 'currency' && (
               <div>
                 <label className="block text-sm font-medium text-foreground">Currency symbol</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
                 <input
                   type="text"
                   value={currencySymbol}
@@ -1097,6 +1144,8 @@ export function FieldEditor() {
               )}
               onAdd={addOption}
               addLabel="+ Add option"
+              onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
+              bulkAddLabel="Bulk add options"
             />
           </div>
         )}

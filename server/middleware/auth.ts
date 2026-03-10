@@ -37,3 +37,14 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
   }
   next()
 }
+
+/** Blocks viewers from mutating data; admin and user can edit. */
+export function requireCanEditData(req: AuthRequest, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(403).json({ error: 'Unauthorized' })
+  }
+  if (req.user.role === 'viewer') {
+    return res.status(403).json({ error: 'Viewer cannot edit or add data' })
+  }
+  next()
+}

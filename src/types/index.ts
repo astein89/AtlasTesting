@@ -27,7 +27,7 @@ export interface FieldConfig {
   max?: number
   options?: string[]
   required?: boolean
-  /** Fraction scale (2, 4, 8, 16, 32, 64, 128) for fraction fields */
+  /** Fraction scale (2, 4, 8, 16, 32, 64, 128). For fraction fields: input denominator. For formula: when set, display numeric result rounded to this fraction (e.g. 16 = 16ths). */
   fractionScale?: number
   /** For image fields: true = multiple photos, false = single photo */
   imageMultiple?: boolean
@@ -65,10 +65,10 @@ export interface FieldConfig {
   dateTimeDisplay?: 'shortDate' | 'longDate' | 'dateTime' | 'longTime' | 'shortTime'
 }
 
-/** Options for a status field: custom config.options or default STATUS_OPTIONS */
+/** Options for a status field: custom config.options or default STATUS_OPTIONS. Blank options are preserved. */
 export function getStatusOptions(field: { config?: FieldConfig } | null | undefined): string[] {
   const opts = field?.config?.options
-  if (Array.isArray(opts) && opts.length > 0) return opts.filter(Boolean)
+  if (Array.isArray(opts) && opts.length > 0) return opts
   return [...STATUS_OPTIONS]
 }
 
@@ -134,5 +134,5 @@ export interface User {
   id: string
   username: string
   name?: string
-  role: 'admin' | 'user'
+  role: 'admin' | 'user' | 'viewer'
 }

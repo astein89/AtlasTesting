@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthGuard } from './components/auth/AuthGuard'
 import { AdminGuard } from './components/auth/AdminGuard'
@@ -19,18 +19,50 @@ import { useAuthStore } from './store/authStore'
 import { api } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
 
+const REHYDRATE_DELAY_MS = 300
+
 function AuthInit() {
   const setAuth = useAuthStore((s) => s.setAuth)
   const setAccessToken = useAuthStore((s) => s.setAccessToken)
   const setInitializing = useAuthStore((s) => s.setInitializing)
   const refreshToken = useAuthStore((s) => s.refreshToken)
   const user = useAuthStore((s) => s.user)
+  const [hydrationDone, setHydrationDone] = useState(false)
 
   useEffect(() => {
-    if (user) return
-    if (!refreshToken) {
-      setInitializing(false)
+    const persist = useAuthStore.persist
+    let done = false
+    const markDone = () => {
+      if (!done) {
+        done = true
+        setHydrationDone(true)
+      }
+    }
+    if (persist.hasHydrated?.()) {
+      markDone()
       return
+    }
+    const unsub = persist.onFinishHydration?.(markDone)
+    const fallback = setTimeout(markDone, 500)
+    return () => {
+      unsub?.()
+      clearTimeout(fallback)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hydrationDone) return
+
+    const accessToken = useAuthStore.getState().accessToken
+    if (user && accessToken) return
+    const currentRefresh = useAuthStore.getState().refreshToken
+    if (!currentRefresh) {
+      const t = setTimeout(() => {
+        if (!useAuthStore.getState().refreshToken) {
+          useAuthStore.getState().setInitializing(false)
+        }
+      }, REHYDRATE_DELAY_MS)
+      return () => clearTimeout(t)
     }
 
     setInitializing(true)
@@ -39,14 +71,14 @@ function AuthInit() {
     }, 15000)
 
     api
-      .post<{ accessToken: string }>('/auth/refresh', { refreshToken })
+      .post<{ accessToken: string }>('/auth/refresh', { refreshToken: currentRefresh })
       .then((r) => {
         setAccessToken(r.data.accessToken)
         return api.get<{ id: string; username: string; name?: string; role: string }>('/auth/me')
       })
       .then((r) => {
         const token = useAuthStore.getState().accessToken
-        if (token) setAuth(r.data, token, refreshToken)
+        if (token) setAuth(r.data, token, currentRefresh)
       })
       .catch(() => {
         useAuthStore.getState().logout()
@@ -57,7 +89,7 @@ function AuthInit() {
       })
 
     return () => clearTimeout(timeout)
-  }, [refreshToken, user, setAuth, setAccessToken, setInitializing])
+  }, [hydrationDone, refreshToken, user, setAuth, setAccessToken, setInitializing])
 
   return null
 }

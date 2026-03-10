@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
-import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requireAdmin, requireCanEditData, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -181,7 +181,7 @@ router.get('/:id/history', requireAdmin, (req: AuthRequest, res) => {
   res.json(entries)
 })
 
-router.post('/', (req: AuthRequest, res) => {
+router.post('/', requireCanEditData, (req: AuthRequest, res) => {
   const { testPlanId, data, status, recordedAt: bodyRecordedAt } = req.body
   if (!testPlanId || !req.user) {
     return res.status(400).json({ error: 'testPlanId required' })
@@ -237,7 +237,7 @@ router.post('/', (req: AuthRequest, res) => {
   })
 })
 
-router.put('/:id', (req: AuthRequest, res) => {
+router.put('/:id', requireCanEditData, (req: AuthRequest, res) => {
   const { id } = req.params
   const { data, status } = req.body
 
@@ -317,7 +317,7 @@ router.put('/:id', (req: AuthRequest, res) => {
   })
 })
 
-router.delete('/:id', (req: AuthRequest, res) => {
+router.delete('/:id', requireCanEditData, (req: AuthRequest, res) => {
   const id = req.params.id
   const row = db.prepare('SELECT * FROM test_runs WHERE id = ?').get(id) as {
     id: string

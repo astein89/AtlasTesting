@@ -9,9 +9,9 @@ export function Layout() {
   useDateTimeConfig()
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="flex h-screen flex-col min-h-0 bg-background text-foreground">
       <Navbar onMenuClick={() => setSidebarOpen((o) => !o)} />
-      <div className="flex min-w-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1">
         <Sidebar
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
@@ -23,7 +23,7 @@ export function Layout() {
             aria-hidden
           />
         )}
-        <main className="min-w-0 flex-1 overflow-auto px-3 py-3 sm:px-6 sm:py-4">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 py-3 sm:px-6 sm:py-4">
           <Outlet />
         </main>
       </div>

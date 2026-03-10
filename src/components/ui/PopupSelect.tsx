@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface PopupSelectOption {
   value: string
@@ -14,6 +15,8 @@ interface PopupSelectProps {
   emptyOption?: string
   className?: string
   id?: string
+  /** Render dropdown in a portal so it is not clipped by overflow (e.g. inside tables). */
+  usePortal?: boolean
 }
 
 function toOptions(opts: PopupSelectOption[] | string[]): PopupSelectOption[] {
@@ -31,9 +34,55 @@ export function PopupSelect({
   emptyOption,
   className = '',
   id,
+  usePortal = false,
 }: PopupSelectProps) {
+  const DROPDOWN_MAX_HEIGHT = 256
+  const GAP = 8
+
   const [open, setOpen] = useState(false)
+  const [portalRect, setPortalRect] = useState<{
+    top: number
+    left: number
+    width: number
+    openUpward?: boolean
+  } | null>(null)
+  const [openUpward, setOpenUpward] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const opts = toOptions(options)
+
+  const updatePortalRect = () => {
+    if (!buttonRef.current) return
+    const rect = buttonRef.current.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - rect.bottom - GAP
+    const openUp = spaceBelow < DROPDOWN_MAX_HEIGHT
+    let top = openUp ? rect.top - DROPDOWN_MAX_HEIGHT - GAP : rect.bottom + GAP
+    if (openUp && top < 0) top = 0
+    let left = rect.left
+    if (left + rect.width > window.innerWidth) left = window.innerWidth - rect.width
+    if (left < 0) left = 0
+    const width = Math.min(rect.width, window.innerWidth - left)
+    setPortalRect((prev) => {
+      if (
+        prev &&
+        prev.top === top &&
+        prev.left === left &&
+        prev.width === width &&
+        prev.openUpward === openUp
+      ) {
+        return prev
+      }
+      return { top, left, width, openUpward: openUp }
+    })
+  }
+
+  const updateOpenUpward = () => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect()
+      const spaceBelow = window.innerHeight - rect.bottom - GAP
+      setOpenUpward(spaceBelow < DROPDOWN_MAX_HEIGHT)
+    }
+  }
 
   const select = (opt: string) => {
     onChange(opt)
@@ -52,8 +101,41 @@ export function PopupSelect({
     return () => window.removeEventListener('keydown', handler)
   }, [open])
 
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (containerRef.current && !containerRef.current.contains(target)) {
+        const portalEl = document.getElementById('popup-select-portal-list')
+        if (!portalEl?.contains(target)) setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open || !usePortal) {
+      setPortalRect(null)
+      return
+    }
+    updatePortalRect()
+    const onScrollOrResize = () => updatePortalRect()
+    window.addEventListener('scroll', onScrollOrResize, true)
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true)
+      window.removeEventListener('resize', onScrollOrResize)
+    }
+  }, [open, usePortal])
+
+  useLayoutEffect(() => {
+    if (!open || usePortal) return
+    updateOpenUpward()
+  }, [open, usePortal])
+
   return (
-    <div className={className}>
+    <div ref={containerRef} className={`relative ${className}`}>
       {label && (
         <label
           htmlFor={id}
@@ -63,73 +145,112 @@ export function PopupSelect({
         </label>
       )}
       <button
+        ref={buttonRef}
         type="button"
         id={id}
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((o) => !o)}
         className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        aria-expanded={open}
+        aria-haspopup="listbox"
       >
         <span className={!value ? 'text-foreground/60' : ''}>
           {displayLabel}
         </span>
       </button>
 
-      {open && (
+      {open && !usePortal && (
         <div
-          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-          onClick={() => setOpen(false)}
+          className={`absolute left-0 right-0 z-[60] max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg ${
+            openUpward ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
+          role="listbox"
         >
-          <div
-            className="w-full max-h-[85dvh] max-w-sm overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[85vh] sm:rounded-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-border p-4">
-              <span className="text-lg font-medium text-foreground">
-                {label || placeholder}
-              </span>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="min-h-[44px] min-w-[44px] rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background"
-              >
-                Cancel
-              </button>
-            </div>
-
-            <div className="max-h-[60dvh] overflow-y-auto sm:max-h-[60vh]">
-              {opts.length === 0 ? (
-                <p className="p-4 text-center text-sm text-foreground/60">
-                  No options
-                </p>
-              ) : (
-                <div className="divide-y divide-border">
-                  {emptyOption !== undefined && (
-                    <button
-                      type="button"
-                      onClick={() => select('')}
-                      className={`flex min-h-[44px] w-full items-center px-4 py-3 text-left text-foreground hover:bg-card ${
-                        !value ? 'bg-primary/10 font-medium' : ''
-                      }`}
-                    >
-                      {emptyOption}
-                    </button>
-                  )}
-                  {opts.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => select(opt.value)}
-                      className={`flex min-h-[44px] w-full items-center px-4 py-3 text-left text-foreground hover:bg-card ${
-                        value === opt.value ? 'bg-primary/10 font-medium' : ''
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+          {opts.length === 0 ? (
+            <p className="p-3 text-center text-sm text-foreground/60">
+              No options
+            </p>
+          ) : (
+            <div className="divide-y divide-border py-1">
+              {emptyOption !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => select('')}
+                  className={`flex min-h-[44px] w-full items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
+                    !value ? 'bg-primary/10 font-medium' : ''
+                  }`}
+                  role="option"
+                  aria-selected={!value}
+                >
+                  {emptyOption}
+                </button>
               )}
+              {opts.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => select(opt.value)}
+                  className={`flex min-h-[44px] w-full items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
+                    value === opt.value ? 'bg-primary/10 font-medium' : ''
+                  }`}
+                  role="option"
+                  aria-selected={value === opt.value}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
-          </div>
+          )}
         </div>
+      )}
+
+      {open && usePortal && portalRect && createPortal(
+        <div
+          id="popup-select-portal-list"
+          role="listbox"
+          className="fixed z-[100] mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg"
+          style={{
+            top: portalRect.top + 4,
+            left: portalRect.left,
+            minWidth: portalRect.width,
+          }}
+        >
+          {opts.length === 0 ? (
+            <p className="p-3 text-center text-sm text-foreground/60">
+              No options
+            </p>
+          ) : (
+            <div className="divide-y divide-border py-1">
+              {emptyOption !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => select('')}
+                  className={`flex min-h-[44px] w-full items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
+                    !value ? 'bg-primary/10 font-medium' : ''
+                  }`}
+                  role="option"
+                  aria-selected={!value}
+                >
+                  {emptyOption}
+                </button>
+              )}
+              {opts.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => select(opt.value)}
+                  className={`flex min-h-[44px] w-full items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
+                    value === opt.value ? 'bg-primary/10 font-medium' : ''
+                  }`}
+                  role="option"
+                  aria-selected={value === opt.value}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>,
+        document.body
       )}
     </div>
   )

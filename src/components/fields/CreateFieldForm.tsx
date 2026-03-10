@@ -74,17 +74,17 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   const onSubmit = async (data: FormData) => {
     const config: Record<string, unknown> = {}
     if (fieldType === 'select') {
-      config.options = options.filter(Boolean)
+      config.options = options.map((o) => (o == null ? '' : String(o)))
     }
     if (fieldType === 'fraction') {
       config.fractionScale = fractionScale
     }
     if (fieldType === 'image') {
       config.imageMultiple = imageMultiple
-      if (imageTag.trim()) config.imageTag = imageTag.trim()
+      config.imageTag = imageTag.trim()
     }
     if (fieldType === 'status') {
-      config.options = options.filter(Boolean)
+      config.options = options.map((o) => (o == null ? '' : String(o)))
       config.statusColors = statusColors
     }
     if (fieldType === 'number') {
@@ -260,6 +260,8 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
               )}
               onAdd={() => setOptions((o) => [...o, ''])}
               addLabel="+ Add status"
+              onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
+              bulkAddLabel="Bulk add statuses"
             />
           </div>
           <div>
@@ -373,6 +375,8 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
             )}
             onAdd={() => setOptions((o) => [...o, ''])}
             addLabel="+ Add option"
+            onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
+            bulkAddLabel="Bulk add options"
           />
         </div>
       )}

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { parseFormattedFraction } from '../../utils/fraction'
 
 interface ColumnFilterDropdownProps {
   columnKey: string
@@ -9,6 +10,8 @@ interface ColumnFilterDropdownProps {
   onChange: (selected: Set<string>) => void
   onClose: () => void
   anchorRef: React.RefObject<HTMLElement | null | undefined>
+  /** When set, sort list by numeric value (smallest to largest) instead of string order */
+  valueType?: 'fraction' | 'number'
 }
 
 export function ColumnFilterDropdown({
@@ -19,13 +22,37 @@ export function ColumnFilterDropdown({
   onChange,
   onClose,
   anchorRef,
+  valueType,
 }: ColumnFilterDropdownProps) {
   const [search, setSearch] = useState('')
   const [localSelected, setLocalSelected] = useState(selected)
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
 
-  const uniqueValues = [...new Set(values)].filter((v) => v !== '' && v != null).sort()
+  const uniqueValues = (() => {
+    const uniq = [...new Set(values)].filter((v) => v !== '' && v != null)
+    if (valueType === 'fraction') {
+      return uniq.sort((a, b) => {
+        const na = parseFormattedFraction(a)
+        const nb = parseFormattedFraction(b)
+        if (Number.isNaN(na) && Number.isNaN(nb)) return String(a).localeCompare(String(b))
+        if (Number.isNaN(na)) return 1
+        if (Number.isNaN(nb)) return -1
+        return na - nb
+      })
+    }
+    if (valueType === 'number') {
+      return uniq.sort((a, b) => {
+        const na = parseFloat(a)
+        const nb = parseFloat(b)
+        if (Number.isNaN(na) && Number.isNaN(nb)) return String(a).localeCompare(String(b))
+        if (Number.isNaN(na)) return 1
+        if (Number.isNaN(nb)) return -1
+        return na - nb
+      })
+    }
+    return uniq.sort()
+  })()
   const filteredValues = search.trim()
     ? uniqueValues.filter((v) =>
         String(v).toLowerCase().includes(search.toLowerCase())

@@ -1,16 +1,10 @@
 import { useDateTimeConfig } from '../hooks/useDateTimeConfig'
 import { DATE_TIME_PRESETS, formatDateTime } from '../lib/dateTimeConfig'
+import { PopupSelect } from '../components/ui/PopupSelect'
 
 export function Settings() {
   const [config, setConfig] = useDateTimeConfig()
   const exampleDate = new Date('2025-03-15T14:30:00')
-
-  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const idx = Number(e.target.value)
-    if (idx >= 0 && idx < DATE_TIME_PRESETS.length) {
-      setConfig(DATE_TIME_PRESETS[idx].value)
-    }
-  }
 
   const currentPresetIndex = DATE_TIME_PRESETS.findIndex(
     (p) =>
@@ -18,6 +12,12 @@ export function Settings() {
       p.value.timeFormat === config.timeFormat &&
       p.value.dateTimeFormat === config.dateTimeFormat
   )
+
+  const presetValue = currentPresetIndex >= 0 ? String(currentPresetIndex) : 'custom'
+  const presetOptions = [
+    ...DATE_TIME_PRESETS.map((p, i) => ({ value: String(i), label: p.label })),
+    { value: 'custom', label: 'Custom' },
+  ]
 
   return (
     <div>
@@ -31,21 +31,20 @@ export function Settings() {
           <label htmlFor="date-time-preset" className="text-sm font-medium text-foreground/90">
             Preset
           </label>
-          <select
+          <PopupSelect
             id="date-time-preset"
-            value={currentPresetIndex >= 0 ? currentPresetIndex : ''}
-            onChange={handlePresetChange}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
-          >
-            {DATE_TIME_PRESETS.map((p, i) => (
-              <option key={i} value={i}>
-                {p.label}
-              </option>
-            ))}
-            {currentPresetIndex < 0 && (
-              <option value="">Custom</option>
-            )}
-          </select>
+            label=""
+            value={presetValue}
+            onChange={(v) => {
+              if (v !== 'custom' && v !== '') {
+                const idx = Number(v)
+                if (idx >= 0 && idx < DATE_TIME_PRESETS.length) {
+                  setConfig(DATE_TIME_PRESETS[idx].value)
+                }
+              }
+            }}
+            options={presetOptions}
+          />
         </div>
         <p className="mt-3 text-sm text-foreground/70">
           Example: {formatDateTime(exampleDate)}

@@ -4,6 +4,8 @@ import { renderFormField } from '../fields/FormFieldRenderer'
 import { SelectInput } from '../fields/SelectInput'
 import { buildFormRowsFromOrder, isSeparatorId, isSeparatorLineId, normalizeFormLayoutOrder, parseFieldEntry, SPAN_TO_COLS } from '../../utils/formLayout'
 import { getFieldValidationErrors } from '../../utils/fieldValidation'
+import { formatFieldValue } from '../../utils/formatFieldValue'
+import { getContrastTextColor } from '../../utils/colorContrast'
 import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
 import { formatDateTime } from '../../lib/dateTimeConfig'
@@ -43,6 +45,8 @@ interface EditRecordModalProps {
   plan?: { keyField?: string; hiddenFieldIds?: string[]; requiredFieldIds?: string[] }
   /** When true, show History button in footer (admin-only) */
   isAdmin?: boolean
+  /** When true, show record as read-only (e.g. for viewer role) */
+  readOnly?: boolean
 }
 
 function dataChanged(
@@ -79,6 +83,7 @@ export function EditRecordModal({
   formLayoutOrder = [],
   plan,
   isAdmin = false,
+  readOnly = false,
 }: EditRecordModalProps) {
   const [showSavePrompt, setShowSavePrompt] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Array<{ fieldKey: string; message: string }>>([])
@@ -86,6 +91,13 @@ export function EditRecordModal({
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[] | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [fullScreenImagePath, setFullScreenImagePath] = useState<string | null>(null)
+
+  const imageUrl = useCallback((p: string) => {
+    if (p.startsWith('http')) return p
+    const path = p.startsWith('/') ? p : '/' + p
+    return typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
+  }, [])
 
   const handleDataChange = useCallback(
     (key: string, value: string | number | boolean | string[] | TimerValue) => {
@@ -96,12 +108,16 @@ export function EditRecordModal({
   )
 
   const handleClose = useCallback(() => {
+    if (readOnly) {
+      onCancel()
+      return
+    }
     if (dataChanged(record.data, data)) {
       setShowSavePrompt(true)
     } else {
       onCancel()
     }
-  }, [record.data, data, onCancel])
+  }, [readOnly, record.data, data, onCancel])
 
   const handleSaveClick = useCallback(() => {
     const errors = getFieldValidationErrors(fields, data, { requiredFieldIds: plan?.requiredFieldIds })
@@ -145,8 +161,9 @@ export function EditRecordModal({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showHistory) setShowHistory(false)
-        else if (showSavePrompt) setShowSavePrompt(false)
+        if (fullScreenImagePath) setFullScreenImagePath(null)
+        else if (showHistory) setShowHistory(false)
+        else if (!readOnly && showSavePrompt) setShowSavePrompt(false)
         else handleClose()
       }
     }
@@ -157,7 +174,7 @@ export function EditRecordModal({
       window.removeEventListener('keydown', handler)
       document.body.style.overflow = prevOverflow
     }
-  }, [handleClose, showSavePrompt, showHistory])
+  }, [handleClose, readOnly, showSavePrompt, showHistory, fullScreenImagePath])
 
   useEffect(() => {
     if (!showHistory || !record.id) return
@@ -176,35 +193,107 @@ export function EditRecordModal({
 
   return (
     <>
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-      onClick={handleClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div
-        className="flex h-[100dvh] max-h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:h-auto sm:min-h-[88vh] sm:max-h-[95vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
+        className="absolute inset-0 bg-black/50"
+        onClick={handleClose}
+        aria-hidden
+      />
+      <div
+        className="relative z-10 flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
           <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
-            Edit row — {formatDateTime(record.recordedAt)}
+            {readOnly ? 'View row' : 'Edit row'} — {formatDateTime(record.recordedAt)}
           </h2>
-          {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
+            {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
             <div className="flex shrink-0 items-center gap-2">
               <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
-              <SelectInput
-                value={String(data[statusField.key] ?? '')}
-                onChange={(v) => onDataChange(statusField.key, v)}
-                options={getStatusOptions(statusField)}
-                className="min-w-[140px]"
-                valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
-                optionColors={statusField.config?.statusColors}
-              />
+              {readOnly ? (
+                (() => {
+                  const statusColor = statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]
+                  return (
+                    <span
+                      className="rounded border border-border bg-background px-3 py-1.5 text-sm"
+                      style={
+                        statusColor
+                          ? { backgroundColor: statusColor, color: getContrastTextColor(statusColor) }
+                          : undefined
+                      }
+                    >
+                      {String(data[statusField.key] ?? '') || '—'}
+                    </span>
+                  )
+                })()
+              ) : (
+                <SelectInput
+                  value={String(data[statusField.key] ?? '')}
+                  onChange={(v) => onDataChange(statusField.key, v)}
+                  options={getStatusOptions(statusField)}
+                  className="min-w-[140px]"
+                  valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
+                  optionColors={statusField.config?.statusColors}
+                />
+              )}
             </div>
           ) : null}
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
           <div className="w-full min-w-0 space-y-4">
-            {buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
+            {readOnly
+              ? buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
+                  Array.isArray(row) ? (
+                    <div
+                      key={ri}
+                      className="grid w-full gap-4"
+                      style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' }}
+                    >
+                      {row.map(({ field, span }) => {
+                        const rawVal = data[field.key]
+                        const imagePaths = Array.isArray(rawVal) ? rawVal : rawVal ? [rawVal] : []
+                        const isImage = field.type === 'image'
+                        return (
+                          <div
+                            key={field.id}
+                            className="min-w-0 w-full"
+                            style={{ gridColumn: `span ${SPAN_TO_COLS[span]}` }}
+                          >
+                            <div className="mb-1 text-sm font-medium text-foreground/70">{field.label}</div>
+                            <div className="min-w-0 w-full text-sm text-foreground">
+                              {field.type === 'longtext' ? (
+                                <p className="whitespace-pre-wrap">{formatFieldValue(field, data[field.key])}</p>
+                              ) : isImage && imagePaths.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {imagePaths.map((p, i) => (
+                                    <div key={`${p}-${i}`} className="relative">
+                                      <button
+                                        type="button"
+                                        onClick={() => setFullScreenImagePath(p)}
+                                        className="block text-left"
+                                      >
+                                        <img
+                                          src={imageUrl(p)}
+                                          alt=""
+                                          className="h-20 w-20 cursor-pointer rounded-lg border border-border object-cover bg-background hover:opacity-90"
+                                        />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                formatFieldValue(field, data[field.key])
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div key={ri} className="my-4 border-t-2 border-border" />
+                  )
+                )
+              : buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
               Array.isArray(row) ? (
                 <div
                   key={ri}
@@ -252,7 +341,7 @@ export function EditRecordModal({
         </div>
         <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 overflow-x-auto border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
           <div className="flex shrink-0 gap-2">
-            {isAdmin && (
+            {!readOnly && isAdmin && (
               <button
                 type="button"
                 onClick={() => setShowHistory(true)}
@@ -263,33 +352,67 @@ export function EditRecordModal({
             )}
           </div>
           <div className="flex shrink-0 justify-end gap-2">
-            <button
-              type="button"
-              onClick={onDelete}
-              disabled={submitting}
-              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
-            >
-              Delete
-            </button>
-            <button
-              type="button"
-              onClick={handleClose}
-              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveClick}
-              disabled={submitting}
-              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
-            >
-              {submitting ? 'Saving...' : 'Save'}
-            </button>
+            {readOnly ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+              >
+                Close
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  disabled={submitting}
+                  className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveClick}
+                  disabled={submitting}
+                  className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+                >
+                  {submitting ? 'Saving...' : 'Save'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
     </div>
+    {fullScreenImagePath && (
+      <div
+        className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
+        onClick={() => setFullScreenImagePath(null)}
+      >
+        <img
+          src={imageUrl(fullScreenImagePath)}
+          alt=""
+          className="max-h-full max-w-full cursor-pointer object-contain"
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setFullScreenImagePath(null)
+          }}
+          className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white hover:bg-white/30"
+        >
+          ✕
+        </button>
+      </div>
+    )}
     {showSavePrompt && (
       <div
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"

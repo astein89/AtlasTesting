@@ -8,10 +8,12 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
 const router = Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'atlas-dev-secret-change-in-production'
 const ACCESS_EXPIRY = '15m'
-const REFRESH_EXPIRY = '7d'
+/** Refresh token: 24h when not "remember me", 30 days when "remember me" */
+const REFRESH_EXPIRY_SESSION = '24h'
+const REFRESH_EXPIRY_REMEMBER = '30d'
 
 router.post('/login', (req, res) => {
-  const { username, password } = req.body
+  const { username, password, rememberMe } = req.body
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' })
   }
@@ -33,10 +35,11 @@ router.post('/login', (req, res) => {
     JWT_SECRET,
     { expiresIn: ACCESS_EXPIRY }
   )
+  const refreshExpiry = rememberMe ? REFRESH_EXPIRY_REMEMBER : REFRESH_EXPIRY_SESSION
   const refreshToken = jwt.sign(
     { sub: user.id, type: 'refresh' },
     JWT_SECRET,
-    { expiresIn: REFRESH_EXPIRY }
+    { expiresIn: refreshExpiry }
   )
 
   res.json({

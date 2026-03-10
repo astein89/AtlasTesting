@@ -106,12 +106,14 @@ export function AddRecordModal({
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-        onClick={handleClose}
-      >
+      <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
         <div
-          className="flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
+          className="absolute inset-0 bg-black/50"
+          onClick={handleClose}
+          aria-hidden
+        />
+        <div
+          className="relative z-10 flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">

@@ -13,6 +13,7 @@ import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { renderFormField } from '../components/fields/FormFieldRenderer'
 import { SelectInput } from '../components/fields/SelectInput'
+import { PopupSelect } from '../components/ui/PopupSelect'
 import {
   buildFormRowsFromOrder,
   isSeparatorId,
@@ -119,6 +120,7 @@ export function TestPlanDataView() {
   const [archiveEndDate, setArchiveEndDate] = useState('')
   const [viewingArchivedRun, setViewingArchivedRun] = useState<{ startDate: string; endDate: string } | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
+  const [planInfoCollapsed, setPlanInfoCollapsed] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   type ViewMode = 'table' | 'card' | 'compact-card' | 'responsive'
   const [viewMode, setViewMode] = useUserPreference<ViewMode>('atlas-data-view-mode', 'responsive')
@@ -144,6 +146,7 @@ export function TestPlanDataView() {
   const columnPickerAnchorRef = useRef<HTMLButtonElement | null>(null)
   const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
   const isAdmin = useAuthStore((s) => s.isAdmin())
+  const canEditData = useAuthStore((s) => s.canEditData())
   const { showAlert } = useAlertConfirm()
 
   const columnsPrefKey = planId ? `atlas-data-hidden-columns-${planId}` : 'atlas-data-hidden-columns-default'
@@ -990,14 +993,14 @@ export function TestPlanDataView() {
   const hasFields = fields.length > 0
 
   return (
-    <div className="w-full min-w-0">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <Link
         to="/test-plans"
-        className="mb-2 flex min-h-[44px] w-fit items-center text-sm text-foreground/60 hover:text-foreground sm:min-h-0"
+        className="mb-2 flex min-h-[44px] w-fit shrink-0 items-center text-sm text-foreground/60 hover:text-foreground sm:min-h-0"
       >
         ← Back to plans
       </Link>
-      <div className="mb-4 min-w-0 flex flex-col">
+      <div className="mb-4 flex min-w-0 shrink-0 flex-col">
         <h1 className="text-2xl font-semibold text-foreground">{plan.name}</h1>
         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-end sm:gap-x-5 sm:gap-y-1">
@@ -1049,7 +1052,7 @@ export function TestPlanDataView() {
                 </button>
               </>
             )}
-            {hasFields && (
+            {hasFields && canEditData && (
               <button
                 type="button"
                 onClick={startAdd}
@@ -1062,29 +1065,74 @@ export function TestPlanDataView() {
         </div>
       </div>
       {(plan.testPlan || plan.constraints) && (
-        <div className="mb-6 w-full min-w-0 rounded-lg border border-border bg-card/50 p-5">
-          <div className="grid gap-6 sm:grid-cols-2">
-            {plan.testPlan && (
-              <div className="min-w-0">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                  Test plan
-                </h3>
-                <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
-                  {plan.testPlan}
-                </p>
+        <div className="mb-6 w-full min-w-0">
+          {planInfoCollapsed ? (
+            <div className="rounded-lg border border-border bg-card/50">
+              <button
+                type="button"
+                onClick={() => setPlanInfoCollapsed(false)}
+                className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left text-sm font-medium text-foreground hover:bg-background/30"
+                aria-expanded={false}
+              >
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground/70">
+                  Test plan & criteria
+                </span>
+                <svg
+                  className="h-4 w-4 shrink-0 text-foreground/50"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border bg-card/50">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setPlanInfoCollapsed(true)}
+                  className="absolute right-3 top-3 z-[1] rounded p-1 text-foreground/50 hover:bg-background/30 hover:text-foreground/80"
+                  aria-expanded={true}
+                  aria-label="Collapse test plan & criteria"
+                >
+                  <svg
+                    className="h-4 w-4 rotate-180"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                <div className="grid gap-6 p-5 sm:grid-cols-2">
+                {plan.testPlan && (
+                  <div className="min-w-0">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
+                      Test plan
+                    </h3>
+                    <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
+                      {plan.testPlan}
+                    </p>
+                  </div>
+                )}
+                {plan.constraints && (
+                  <div className="min-w-0">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
+                      Test criteria
+                    </h3>
+                    <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
+                      {plan.constraints}
+                    </p>
+                  </div>
+                )}
+                </div>
               </div>
-            )}
-            {plan.constraints && (
-              <div className="min-w-0">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                  TEST CRITERIA
-                </h3>
-                <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
-                  {plan.constraints}
-                </p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
       {isAdding && (
@@ -1127,6 +1175,7 @@ export function TestPlanDataView() {
           formLayoutOrder={plan?.formLayoutOrder}
           plan={plan ?? undefined}
           isAdmin={isAdmin}
+          readOnly={!canEditData}
         />
       )}
       {showArchiveModal && (
@@ -1478,12 +1527,12 @@ export function TestPlanDataView() {
             <h3 className="mb-3 text-lg font-semibold text-foreground">Edit field for {selectedIds.size} row(s)</h3>
             <div className="mb-4">
               <label className="mb-1 block text-sm font-medium text-foreground">Field</label>
-              <select
+              <PopupSelect
+                label=""
                 value={bulkEditFieldKey ?? ''}
-                onChange={(e) => {
-                  const key = e.target.value || null
-                  setBulkEditFieldKey(key)
+                onChange={(key) => {
                   const field = key ? fields.find((f) => f.key === key) : null
+                  setBulkEditFieldKey(key || null)
                   const firstRecord = recordsWithComputed.find((r) => selectedIds.has(r.id))
                   if (field) {
                     const val = firstRecord?.data[key] ?? getDefaultValueForField(field, plan?.fieldDefaults)
@@ -1492,15 +1541,9 @@ export function TestPlanDataView() {
                     setBulkEditValue(null)
                   }
                 }}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              >
-                <option value="">Select a field</option>
-                {bulkEditableFields.map((f) => (
-                  <option key={f.id} value={f.key}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
+                emptyOption="Select a field"
+                options={bulkEditableFields.map((f) => ({ value: f.key, label: f.label }))}
+              />
             </div>
             {bulkEditFieldKey && (() => {
               const field = fields.find((f) => f.key === bulkEditFieldKey)
@@ -1603,8 +1646,8 @@ export function TestPlanDataView() {
           )}
         </div>
       ) : (
-        <div className="w-full min-w-0 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[160px] max-w-xs">
               <input
                 type="search"
@@ -1685,6 +1728,7 @@ export function TestPlanDataView() {
                 )
               })}
             </div>
+            {canEditData && (
             <div className="ml-auto flex shrink-0 items-center gap-2">
               <button
                 type="button"
@@ -1730,6 +1774,7 @@ export function TestPlanDataView() {
                 )}
               </button>
             </div>
+            )}
             {showTableView && (
             <div className="relative">
               <button
@@ -1848,7 +1893,7 @@ export function TestPlanDataView() {
               <div />
             )}
           </div>
-          {bulkSelectMode && (
+          {canEditData && bulkSelectMode && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2">
               <span className="text-sm font-medium text-foreground">
                 {selectedIds.size} selected
@@ -1973,6 +2018,7 @@ export function TestPlanDataView() {
                         onChange={(s) => setColumnFilters((p) => ({ ...p, [f.key]: s }))}
                         onClose={() => setOpenFilterColumn(null)}
                         anchorRef={{ current: filterAnchorRefs.current[f.key] }}
+                        valueType={f.type === 'fraction' ? 'fraction' : f.type === 'number' ? 'number' : undefined}
                       />
                     )}
                   </div>
@@ -2009,7 +2055,7 @@ export function TestPlanDataView() {
                     onClick={(e) => handleRowClick(record, e)}
                     className={`w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70 ${bulkSelectMode && selectedIds.has(record.id) ? 'border-primary ring-1 ring-primary/50' : 'border-border'}`}
                   >
-                    {bulkSelectMode ? (
+                    {canEditData && bulkSelectMode ? (
                       <div className="mb-2 flex items-start gap-2" onClick={(e) => e.stopPropagation()}>
                         <label className="flex shrink-0 cursor-pointer pt-0.5">
                           <input
@@ -2110,6 +2156,7 @@ export function TestPlanDataView() {
                           )
                         })()
                       ) : null}
+                      {canEditData && (
                       <div className="flex shrink-0 gap-2">
                         <button
                           type="button"
@@ -2127,6 +2174,7 @@ export function TestPlanDataView() {
                           Delete
                         </button>
                       </div>
+                      )}
                     </div>
                   </div>
                 )
@@ -2134,24 +2182,24 @@ export function TestPlanDataView() {
             )}
           </div>
           )}
-          {/* Table view */}
+          {/* Table view: confined to viewport with visible horizontal scrollbar */}
           {showTableView && (
-          <div className="w-full min-w-0 overflow-x-auto rounded-lg border border-border">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-scroll rounded-lg border border-border">
           <table
             className="w-full"
             style={{ tableLayout: 'fixed' }}
           >
             <colgroup>
-              {bulkSelectMode && <col style={{ width: '2.5rem' }} />}
+              {canEditData && bulkSelectMode && <col style={{ width: '2.5rem' }} />}
               <col style={{ width: '14rem' }} />
               {visibleFields.map((f) => (
                 <col key={f.id} style={{ width: hasFieldLayout ? (fieldLayout[f.id] || getColumnWidth(f)) : getColumnWidth(f) }} />
               ))}
               <col style={{ width: '150px' }} />
             </colgroup>
-            <thead className="bg-card">
+            <thead className="sticky top-0 z-10 border-b border-border bg-card">
               <tr>
-                {bulkSelectMode && (
+                {canEditData && bulkSelectMode && (
                   <th className="w-10 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                     <label className="flex cursor-pointer justify-center">
                       <input
@@ -2240,6 +2288,7 @@ export function TestPlanDataView() {
                         onChange={(s) => setColumnFilters((p) => ({ ...p, [f.key]: s }))}
                         onClose={() => setOpenFilterColumn(null)}
                         anchorRef={{ current: filterAnchorRefs.current[f.key] }}
+                        valueType={f.type === 'fraction' ? 'fraction' : f.type === 'number' ? 'number' : undefined}
                       />
                     )}
                   </th>
@@ -2273,9 +2322,9 @@ export function TestPlanDataView() {
                   <tr
                     key={record.id}
                     onClick={(e) => handleRowClick(record, e)}
-                    className={`cursor-pointer bg-background transition-colors hover:bg-card ${bulkSelectMode && selectedIds.has(record.id) ? 'ring-1 ring-primary/50' : ''}`}
+                    className={`cursor-pointer bg-background transition-colors hover:bg-card ${canEditData && bulkSelectMode && selectedIds.has(record.id) ? 'ring-1 ring-primary/50' : ''}`}
                   >
-                    {bulkSelectMode && (
+                    {canEditData && bulkSelectMode && (
                       <td className="w-10 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <label className="flex cursor-pointer justify-center">
                           <input
@@ -2299,7 +2348,7 @@ export function TestPlanDataView() {
                       {formatDateTime(record.recordedAt)}
                     </td>
                     {visibleFields.map((f) => {
-                      const cellEditable = (directTableEdit || f.type === 'status') && f.type !== 'formula' && !(f.type === 'status' && f.config?.formula)
+                      const cellEditable = canEditData && (directTableEdit || f.type === 'status') && f.type !== 'formula' && !(f.type === 'status' && f.config?.formula)
                       return (
                       <td
                         key={f.id}
@@ -2370,6 +2419,7 @@ export function TestPlanDataView() {
                       </td>
                     ); })}
                     <td className="whitespace-nowrap px-2 py-3 text-right align-middle sm:px-3" onClick={(e) => e.stopPropagation()}>
+                      {canEditData && (
                       <div className="flex shrink-0 justify-end gap-2">
                         <button
                           type="button"
@@ -2387,6 +2437,7 @@ export function TestPlanDataView() {
                           Delete
                         </button>
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))

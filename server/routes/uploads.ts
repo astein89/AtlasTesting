@@ -3,7 +3,7 @@ import fs from 'fs'
 import multer from 'multer'
 import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
-import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requireCanEditData, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -47,14 +47,14 @@ const upload = multer({
   },
 })
 
-router.post('/', upload.array('images', 20), (req: AuthRequest, res) => {
+router.post('/', requireCanEditData, upload.array('images', 20), (req: AuthRequest, res) => {
   const files = req.files as Express.Multer.File[]
   const base = '/api/uploads/'
   const paths = (files || []).map((f) => base + f.filename) as string[]
   res.json({ paths })
 })
 
-router.post('/single', upload.single('image'), (req: AuthRequest, res) => {
+router.post('/single', requireCanEditData, upload.single('image'), (req: AuthRequest, res) => {
   const file = req.file
   if (!file) return res.status(400).json({ error: 'No image uploaded' })
   res.json({ path: '/api/uploads/' + file.filename } as { path: string })

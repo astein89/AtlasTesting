@@ -4,6 +4,8 @@ import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
+import { PopupSelect } from '../components/ui/PopupSelect'
+import { SelectInput } from '../components/fields/SelectInput'
 import {
   formatFieldEntry,
   getFieldIdsFromOrder,
@@ -366,21 +368,16 @@ export function TestPlanEditor() {
           <label className="block text-sm font-medium text-foreground">
             Key field (for file naming)
           </label>
-          <p className="mt-1 mb-2 text-sm text-foreground/60">
+          <p className="mt-1 mb-1 text-sm text-foreground/60">
             Optional. When exporting a single record, this field&apos;s value can be used in the filename. Not unique.
           </p>
-          <select
+          <PopupSelect
+            label=""
             value={keyField}
-            onChange={(e) => setKeyField(e.target.value)}
-            className="mt-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-          >
-            <option value="">(none)</option>
-            {planFields.map((f) => (
-              <option key={f.id} value={f.key}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            onChange={setKeyField}
+            emptyOption="(none)"
+            options={planFields.map((f) => ({ value: f.key, label: f.label }))}
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
@@ -389,39 +386,36 @@ export function TestPlanEditor() {
           <p className="mt-1 mb-2 text-sm text-foreground/60">
             Initial sort when viewing this plan&apos;s data. First row is primary, then secondary, etc.
           </p>
-          <div className="mt-2 space-y-2">
+            <div className="mt-2 space-y-2">
             {defaultSortOrder.map((level, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-foreground/60">{i + 1}.</span>
-                <select
+                <PopupSelect
+                  label=""
                   value={level.key}
-                  onChange={(e) =>
+                  onChange={(v) =>
                     setDefaultSortOrder((prev) =>
-                      prev.map((s, j) => (j === i ? { ...s, key: e.target.value } : s))
+                      prev.map((s, j) => (j === i ? { ...s, key: v } : s))
                     )
                   }
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                >
-                  <option value="date">Date</option>
-                  {planFields.map((f) => (
-                    <option key={f.id} value={f.key}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-                <select
+                  options={[
+                    { value: 'date', label: 'Date' },
+                    ...planFields.map((f) => ({ value: f.key, label: f.label })),
+                  ]}
+                />
+                <PopupSelect
+                  label=""
                   value={level.dir}
-                  onChange={(e) =>
+                  onChange={(v) =>
                     setDefaultSortOrder((prev) =>
-                      prev.map((s, j) => (j === i ? { ...s, dir: e.target.value as 'asc' | 'desc' } : s))
+                      prev.map((s, j) => (j === i ? { ...s, dir: v as 'asc' | 'desc' } : s))
                     )
                   }
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                  title={level.dir === 'asc' ? 'Ascending' : 'Descending'}
-                >
-                  <option value="asc">↓ Ascending</option>
-                  <option value="desc">↑ Descending</option>
-                </select>
+                  options={[
+                    { value: 'asc', label: '↓ Ascending' },
+                    { value: 'desc', label: '↑ Descending' },
+                  ]}
+                />
                 <button
                   type="button"
                   onClick={() =>
@@ -527,32 +521,22 @@ export function TestPlanEditor() {
                                 </label>
                               )}
                               {f.type === 'select' && (
-                                <select
+                                <SelectInput
                                   value={val === undefined ? '' : String(val)}
-                                  onChange={(e) => setVal(e.target.value)}
-                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
-                                >
-                                  <option value="">(none)</option>
-                                  {(f.config?.options || []).map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {opt}
-                                    </option>
-                                  ))}
-                                </select>
+                                  onChange={(v) => setVal(v)}
+                                  options={f.config?.options || []}
+                                  placeholder="(none)"
+                                  className="w-full"
+                                />
                               )}
                               {f.type === 'status' && (
-                                <select
+                                <SelectInput
                                   value={val === undefined ? '' : String(val)}
-                                  onChange={(e) => setVal(e.target.value)}
-                                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
-                                >
-                                  <option value="">(none)</option>
-                                  {getStatusOptions(f).map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {opt}
-                                    </option>
-                                  ))}
-                                </select>
+                                  onChange={(v) => setVal(v)}
+                                  options={getStatusOptions(f)}
+                                  placeholder="(none)"
+                                  className="w-full"
+                                />
                               )}
                               {!['number', 'text', 'longtext', 'boolean', 'select', 'status'].includes(f.type) && (
                                 <input

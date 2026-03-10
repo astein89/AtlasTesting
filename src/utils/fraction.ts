@@ -52,3 +52,52 @@ export function formatDecimalAsFraction(value: number): string {
   }
   return String(value)
 }
+
+/**
+ * Round a decimal to the nearest fraction with the given scale (e.g. 16 → nearest 1/16).
+ */
+export function roundToFractionScale(value: number, scale: FractionScale): number {
+  if (!Number.isFinite(value)) return value
+  return Math.round(value * scale) / scale
+}
+
+/**
+ * Format a numeric value as a fraction, rounding to the nearest fraction with the given scale.
+ * Use for formula fields when "format as fraction" with a specific denominator is set.
+ */
+export function formatDecimalAsFractionWithScale(value: number, scale: FractionScale): string {
+  if (!Number.isFinite(value)) return '—'
+  const rounded = roundToFractionScale(value, scale)
+  return formatDecimalAsFraction(rounded)
+}
+
+/**
+ * Parse a formatted fraction string (from formatDecimalAsFraction) back to a number.
+ * Handles "0", integers, "num/denom", "whole-num/denom", "whole-n". Returns NaN for unparseable.
+ */
+export function parseFormattedFraction(s: string): number {
+  const t = String(s).trim()
+  if (t === '' || t === '—') return Number.NaN
+  const intOnly = /^\d+$/
+  const fracOnly = /^(\d+)\/(\d+)$/
+  const mixed = /^(\d+)-(\d+)\/(\d+)$/
+  const mixedWhole = /^(\d+)-(\d+)$/
+  if (intOnly.test(t)) return parseInt(t, 10)
+  const fracMatch = t.match(fracOnly)
+  if (fracMatch) return parseInt(fracMatch[1], 10) / parseInt(fracMatch[2], 10)
+  const mixedMatch = t.match(mixed)
+  if (mixedMatch) {
+    const whole = parseInt(mixedMatch[1], 10)
+    const num = parseInt(mixedMatch[2], 10)
+    const denom = parseInt(mixedMatch[3], 10)
+    return whole + num / denom
+  }
+  const wholeMatch = t.match(mixedWhole)
+  if (wholeMatch) {
+    const whole = parseInt(wholeMatch[1], 10)
+    const n = parseInt(wholeMatch[2], 10)
+    return whole + n
+  }
+  const n = parseFloat(t)
+  return Number.isFinite(n) ? n : Number.NaN
+}
