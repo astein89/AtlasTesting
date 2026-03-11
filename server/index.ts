@@ -50,32 +50,23 @@ if (isProd) {
   // distPath: from script location (dist/server/index.js -> dist) so it works under PM2 regardless of cwd
   const distPath = path.join(__dirname, '..')
   if (basePath) {
-    // Serve static files under basePath by resolving path manually (avoids express.static mount issues)
-    app.use(basePath, (req, res, next) => {
-      let pathname = (req.originalUrl ?? req.url).split('?')[0]
-      if (!pathname.startsWith('/')) pathname = '/' + pathname
-      const after =
-        pathname === basePath || pathname === basePath + '/'
-          ? '/'
-          : pathname.startsWith(basePath + '/')
-            ? pathname.slice(basePath.length) || '/'
-            : null
-      if (after === null) return next()
-      const relative = after === '/' ? 'index.html' : after.replace(/^\//, '')
-      const filePath = path.join(distPath, relative)
+    // Single GET route for basePath: serve file from dist if it exists, else index.html (route param is reliable)
+    const basePathEscaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    app.get(new RegExp(`^${basePathEscaped}/?(.*)$`), (req, res, next) => {
+      const subpath = (req.params[0] ?? '').replace(/^\/+/, '')
+      if (!subpath) {
+        return res.sendFile(path.join(distPath, 'index.html'))
+      }
+      const filePath = path.join(distPath, subpath)
       const resolved = path.resolve(filePath)
       const distResolved = path.resolve(distPath)
       if (!resolved.startsWith(distResolved)) return next()
       fs.stat(resolved, (err, stat) => {
-        if (err || !stat.isFile()) return next()
+        if (err || !stat.isFile()) {
+          return res.sendFile(path.join(distPath, 'index.html'))
+        }
         res.sendFile(resolved)
       })
-    })
-    app.get(basePath, (_, res) => {
-      res.sendFile(path.join(distPath, 'index.html'))
-    })
-    app.get(`${basePath}/*`, (_, res) => {
-      res.sendFile(path.join(distPath, 'index.html'))
     })
   } else {
     app.use(express.static(distPath))
