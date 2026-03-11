@@ -46,13 +46,19 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 runSeed()
 
 if (isProd) {
-  const distPath = path.join(__dirname, '..')
+  // Use cwd-relative path so PM2/other launchers resolve dist consistently
+  const distPath = path.resolve(process.cwd(), 'dist')
   if (basePath) {
     app.use(basePath, express.static(distPath))
     app.get(basePath, (_, res) => {
       res.sendFile(path.join(distPath, 'index.html'))
     })
-    app.get(`${basePath}/*`, (_, res) => {
+    app.get(`${basePath}/*`, (req, res, next) => {
+      // Don't send index.html for asset requests (avoids wrong MIME when static missed)
+      const subpath = req.path.slice(basePath.length).replace(/^\//, '')
+      if (/\.(js|css|ico|png|svg|jpg|jpeg|gif|webp|woff2?|map)$/i.test(subpath)) {
+        return next()
+      }
       res.sendFile(path.join(distPath, 'index.html'))
     })
   } else {
