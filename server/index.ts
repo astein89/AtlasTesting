@@ -47,8 +47,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 runSeed()
 
 if (isProd) {
-  // Use cwd-relative path so PM2/other launchers resolve dist consistently
-  const distPath = path.resolve(process.cwd(), 'dist')
+  // distPath: from script location (dist/server/index.js -> dist) so it works under PM2 regardless of cwd
+  const distPath = path.join(__dirname, '..')
   if (basePath) {
     // Serve static files under basePath by resolving path manually (avoids express.static mount issues)
     app.use(basePath, (req, res, next) => {
@@ -66,7 +66,10 @@ if (isProd) {
       const distResolved = path.resolve(distPath)
       if (!resolved.startsWith(distResolved)) return next()
       fs.stat(resolved, (err, stat) => {
-        if (err || !stat.isFile()) return next()
+        if (err || !stat.isFile()) {
+          if (relative.startsWith('assets/')) console.warn('[basePath static] miss:', resolved, err?.message ?? 'not a file')
+          return next()
+        }
         res.sendFile(resolved)
       })
     })
