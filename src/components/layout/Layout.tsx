@@ -1,12 +1,24 @@
-import { useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Navbar } from './Navbar'
 import { Sidebar } from './Sidebar'
 import { useDateTimeConfig } from '../../hooks/useDateTimeConfig'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { showAlert } = useAlertConfirm()
   useDateTimeConfig()
+
+  useEffect(() => {
+    const state = location.state as { adminRequired?: boolean } | null
+    if (state?.adminRequired) {
+      showAlert('You need administrator rights to access that page.', 'Access denied')
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location.state, location.pathname, navigate, showAlert])
 
   return (
     <div className="flex h-screen flex-col min-h-0 bg-background text-foreground">

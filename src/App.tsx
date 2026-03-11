@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthGuard } from './components/auth/AuthGuard'
 import { AdminGuard } from './components/auth/AdminGuard'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Layout } from './components/layout/Layout'
 import { Login } from './routes/Login'
 import { Dashboard } from './routes/Dashboard'
@@ -126,10 +127,10 @@ function App() {
             }
           />
           <Route path="test-plans" element={<TestPlansList />} />
-          <Route path="test-plans/new" element={<AdminGuard><TestPlanEditor /></AdminGuard>} />
+          <Route path="test-plans/new" element={<AdminGuard><ErrorBoundary fallbackTitle="Could not load plan editor" backTo="/test-plans" backLabel="Back to Test plans"><TestPlanEditor /></ErrorBoundary></AdminGuard>} />
           <Route path="test-plans/:planId" element={<Navigate to="data" replace />} />
           <Route path="test-plans/:planId/data" element={<TestPlanDataRedirect />} />
-          <Route path="test-plans/:planId/edit" element={<AdminGuard><TestPlanEditor /></AdminGuard>} />
+          <Route path="test-plans/:planId/edit" element={<AdminGuard><ErrorBoundary fallbackTitle="Could not load plan editor" backTo="/test-plans" backLabel="Back to Test plans"><TestPlanEditor /></ErrorBoundary></AdminGuard>} />
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
           <Route path="settings" element={<AdminGuard><Settings /></AdminGuard>} />

@@ -258,7 +258,7 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
               <div>
                 <label className="block text-sm font-medium text-foreground">Enter value</label>
                 <div
-                  className="mt-1 flex gap-2"
+                  className="mt-1 flex items-start gap-2"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
@@ -286,9 +286,6 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
                     Add
                   </button>
                 </div>
-                <p className="mt-1 text-xs text-foreground/60">
-                  You can type or use a scanner; press Enter or click Add to capture each value.
-                </p>
               </div>
               <div className="flex items-end justify-end text-sm text-foreground/70">
                 <span>{entries.length} value{entries.length === 1 ? '' : 's'} entered</span>

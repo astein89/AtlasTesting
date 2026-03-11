@@ -1,4 +1,7 @@
+import { useState, useRef, useEffect } from 'react'
 import type { FieldConfig } from '../../types'
+
+const INVALID_CHAR_WARNING_MS = 2500
 
 /** Filter value: remove spaces if disallowSpaces, strip any char in unallowedChars */
 export function filterTextValue(
@@ -51,6 +54,12 @@ export function MaskedTextInput({
 }: MaskedTextInputProps) {
   const pattern = config?.textPatternMask?.trim()
   const effectivePlaceholder = placeholder || pattern || undefined
+  const [invalidCharWarning, setInvalidCharWarning] = useState(false)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+  }, [])
 
   const handleChange = (raw: string) => {
     // First apply generic filters (no spaces / unallowed chars / case), unless override is on.
@@ -102,6 +111,21 @@ export function MaskedTextInput({
     }
 
     const limited = maxLength ? nextValue.slice(0, maxLength) : nextValue
+    // Only warn when we actually removed a character (not when we only changed case).
+    const filterRejected = base.length < raw.length
+    const slotCharsRaw = base.replace(/[^A-Za-z0-9]/g, '').length
+    const slotCharsLimited = limited.replace(/[^A-Za-z0-9]/g, '').length
+    // Pattern rejected = we dropped a char that didn't match slot type (not just maxLength truncation).
+    const patternRejected =
+      !!pattern && limited === nextValue && slotCharsRaw > slotCharsLimited
+    if (filterRejected || patternRejected) {
+      setInvalidCharWarning(true)
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      timeoutRef.current = setTimeout(() => {
+        setInvalidCharWarning(false)
+        timeoutRef.current = null
+      }, INVALID_CHAR_WARNING_MS)
+    }
     onChange(limited)
   }
 
@@ -136,6 +160,9 @@ export function MaskedTextInput({
         <span className="mt-1 text-xs text-foreground/60">
           {remaining} character{remaining === 1 ? '' : 's'} remaining
         </span>
+      )}
+      {invalidCharWarning && (
+        <span className="mt-1 text-xs text-red-500">Invalid character; only allowed characters are accepted.</span>
       )}
     </div>
   )

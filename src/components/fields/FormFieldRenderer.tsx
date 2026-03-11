@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react'
 import { AutoExpandTextarea } from './AutoExpandTextarea'
 import { AtlasLocationInput } from './AtlasLocationInput'
 import { FractionInput } from './FractionInput'
@@ -13,6 +14,185 @@ import type { DataField, FieldConfig } from '../../types'
 import type { TimerValue } from '../../types'
 import type { DateTimeDisplayKind } from '../../lib/dateTimeConfig'
 
+const INVALID_CHAR_WARNING_MS = 2500
+
+/** Format a number for input display without scientific notation (e.g. 1e+22 → full digits). */
+function formatNumberForDisplay(n: number, decimals: number | undefined): string {
+  if (!Number.isFinite(n)) return ''
+  const str = n.toString()
+  if (!str.includes('e') && !str.includes('E')) {
+    return str
+  }
+  const sign = n < 0 ? '-' : ''
+  const abs = Math.abs(n)
+  const [mantissa, expStr] = str.replace('-', '').split(/[eE]/)
+  const exp = parseInt(expStr, 10)
+  const [intPart, decPart = ''] = mantissa.split('.')
+  const digits = intPart + decPart
+  const decimalOffset = decPart.length
+  const newExp = exp - decimalOffset
+  if (newExp >= 0) {
+    return sign + digits + '0'.repeat(newExp)
+  }
+  const pos = digits.length + newExp
+  if (pos <= 0) {
+    return sign + '0.' + '0'.repeat(-pos) + digits
+  }
+  const whole = digits.slice(0, pos)
+  const frac = digits.slice(pos)
+  const rounded = decimals != null ? frac.slice(0, decimals) : frac
+  return sign + whole + (rounded ? '.' + rounded : '')
+}
+
+function filterNumericInput(raw: string): string {
+  let out = raw.replace(/[^0-9.-]/g, '')
+  const minusCount = (out.match(/-/g) || []).length
+  if (minusCount > 0) {
+    if (!out.startsWith('-')) out = out.replace(/-/g, '')
+    else if (minusCount > 1) out = '-' + out.slice(1).replace(/-/g, '')
+  }
+  const dotIndex = out.indexOf('.')
+  if (dotIndex >= 0 && out.indexOf('.', dotIndex + 1) >= 0) {
+    out = out.slice(0, dotIndex + 1) + out.slice(dotIndex + 1).replace(/\./g, '')
+  }
+  return out
+}
+
+function NumberFieldInput({
+  fieldKey,
+  value,
+  onChange,
+  decimals,
+  min,
+  max,
+  inputClass,
+  disabled,
+}: {
+  fieldKey: string
+  value: string | number
+  onChange: (key: string, val: string | number) => void
+  decimals: number | undefined
+  min: number | undefined
+  max: number | undefined
+  inputClass: string
+  disabled: boolean
+}) {
+  const [invalidCharWarning, setInvalidCharWarning] = useState(false)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+  }, [])
+
+  const numVal = value === '' || value == null ? '' : Number(value)
+  const displayVal =
+    numVal === '' || !Number.isFinite(numVal)
+      ? ''
+      : formatNumberForDisplay(numVal as number, decimals)
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value
+    const filtered = filterNumericInput(raw)
+    if (raw !== filtered) {
+      setInvalidCharWarning(true)
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      timeoutRef.current = setTimeout(() => {
+        setInvalidCharWarning(false)
+        timeoutRef.current = null
+      }, INVALID_CHAR_WARNING_MS)
+    }
+    if (filtered === '' || filtered === '-') {
+      onChange(fieldKey, '')
+      return
+    }
+    let n = parseFloat(filtered)
+    if (!Number.isFinite(n)) {
+      onChange(fieldKey, '')
+      return
+    }
+    if (decimals != null) n = Number(n.toFixed(decimals))
+    if (min != null && n < min) n = min
+    if (max != null && n > max) n = max
+    onChange(fieldKey, n)
+  }
+
+  return (
+    <div className="flex flex-col">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={displayVal}
+        onChange={handleChange}
+        className={inputClass}
+        disabled={disabled}
+        aria-valuemin={min}
+        aria-valuemax={max}
+      />
+      {invalidCharWarning && (
+        <span className="mt-1 text-xs text-red-500">Only numbers, decimal point, and minus are allowed.</span>
+      )}
+    </div>
+  )
+}
+
+function LongTextFieldInput({
+  fieldKey,
+  value,
+  onChange,
+  filter,
+  minRows,
+  minLength,
+  maxLength,
+  inputClass,
+  disabled,
+}: {
+  fieldKey: string
+  value: string
+  onChange: (key: string, val: string) => void
+  filter: (raw: string) => string
+  minRows: number
+  minLength: number | undefined
+  maxLength: number | undefined
+  inputClass: string
+  disabled: boolean
+}) {
+  const [invalidCharWarning, setInvalidCharWarning] = useState(false)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+  }, [])
+
+  return (
+    <div className="flex flex-col">
+      <AutoExpandTextarea
+        value={value}
+        onChange={(e) => {
+          const raw = e.target.value
+          const filtered = filter(raw)
+          if (raw !== filtered) {
+            setInvalidCharWarning(true)
+            if (timeoutRef.current) clearTimeout(timeoutRef.current)
+            timeoutRef.current = setTimeout(() => {
+              setInvalidCharWarning(false)
+              timeoutRef.current = null
+            }, INVALID_CHAR_WARNING_MS)
+          }
+          onChange(fieldKey, filtered)
+        }}
+        minRows={minRows}
+        minLength={minLength}
+        maxLength={maxLength}
+        className={inputClass}
+        disabled={disabled}
+      />
+      {invalidCharWarning && (
+        <span className="mt-1 text-xs text-red-500">Invalid character; only allowed characters are accepted.</span>
+      )}
+    </div>
+  )
+}
+
 export function renderFormField(
   f: DataField,
   value: string | number | boolean | string[] | TimerValue,
@@ -27,32 +207,18 @@ export function renderFormField(
     : `w-full rounded border border-border bg-background px-3 py-2 text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
 
   if (f.type === 'number') {
-    const numVal = value === '' || value == null ? '' : Number(value)
-    const displayVal = numVal === '' || !Number.isFinite(numVal) ? '' : numVal
     const decimals = typeof f.config?.decimalPlaces === 'number' && f.config.decimalPlaces >= 0 ? f.config.decimalPlaces : undefined
-    const step = decimals != null ? (decimals === 0 ? '1' : String(10 ** -decimals)) : 'any'
+    const min = typeof f.config?.min === 'number' ? f.config.min : undefined
+    const max = typeof f.config?.max === 'number' ? f.config.max : undefined
     return (
-      <input
-        type="number"
-        value={displayVal}
-        step={step}
-        min={typeof f.config?.min === 'number' ? f.config.min : undefined}
-        max={typeof f.config?.max === 'number' ? f.config.max : undefined}
-        onChange={(e) => {
-          const raw = e.target.value
-          if (raw === '') {
-            onChange(f.key, '')
-            return
-          }
-          let n = parseFloat(raw)
-          if (!Number.isFinite(n)) {
-            onChange(f.key, '')
-            return
-          }
-          if (decimals != null) n = Number(n.toFixed(decimals))
-          onChange(f.key, n)
-        }}
-        className={inputClass}
+      <NumberFieldInput
+        fieldKey={f.key}
+        value={value as string | number}
+        onChange={onChange as (key: string, val: string | number) => void}
+        decimals={decimals}
+        min={min}
+        max={max}
+        inputClass={inputClass}
         disabled={disabled}
       />
     )
@@ -77,13 +243,15 @@ export function renderFormField(
       return maxLen ? filtered.slice(0, maxLen) : filtered
     }
     return (
-      <AutoExpandTextarea
+      <LongTextFieldInput
+        fieldKey={f.key}
         value={String(value ?? '')}
-        onChange={(e) => onChange(f.key, filter(e.target.value))}
+        onChange={onChange as (key: string, val: string) => void}
+        filter={filter}
         minRows={compact ? 2 : 6}
         minLength={minLen}
         maxLength={maxLen}
-        className={inputClass}
+        inputClass={inputClass}
         disabled={disabled}
       />
     )
