@@ -23,6 +23,14 @@ const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
+// Debug: log request path for auth (remove after fixing 404)
+app.use((req, res, next) => {
+  if (req.path?.includes('auth') || req.url?.includes('auth')) {
+    console.warn('[auth req]', req.method, 'path=', req.path, 'url=', req.url)
+  }
+  next()
+})
+
 // Middleware: for GET under basePath (except /api), serve file from dist or pass through (no route pattern)
 if (isProd && basePath) {
   const distPath = path.join(__dirname, '..')
@@ -72,7 +80,9 @@ function mountRoutes(prefix: string) {
   app.use(`${prefix}/api/uploads`, express.static(path.join(process.cwd(), 'uploads')))
 }
 
-mountRoutes(basePath || '/')
+const prefix = basePath || '/'
+app.get(`${prefix}/api/health`, (_req, res) => res.json({ ok: true }))
+mountRoutes(prefix)
 
 // Log errors with upload paths redacted
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
