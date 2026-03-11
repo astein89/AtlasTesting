@@ -23,28 +23,34 @@ const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
-// Register basePath static route first (before API routes) so GET /basePath/... is handled here
+// Middleware: for GET under basePath (except /api), serve file from dist or pass through (no route pattern)
 if (isProd && basePath) {
   const distPath = path.join(__dirname, '..')
-  const serveBasePath = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    let pathname = req.path
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+    let pathname = req.path ?? req.url?.split('?')[0] ?? ''
     if (!pathname.startsWith('/')) pathname = '/' + pathname
-    if (!pathname.startsWith(basePath)) return next()
-    const subpath = pathname.slice(basePath.length).replace(/^\/+/, '') || 'index.html'
+    if (!pathname.startsWith(basePath + '/') && pathname !== basePath) return next()
+    if (pathname.startsWith(basePath + '/api')) return next()
+    const subpath = pathname === basePath ? 'index.html' : pathname.slice(basePath.length).replace(/^\/+/, '')
     const filePath = path.join(distPath, subpath)
     const resolved = path.resolve(filePath)
     const distResolved = path.resolve(distPath)
     if (!resolved.startsWith(distResolved)) return next()
-    if (subpath.startsWith('assets/')) console.warn('[static] resolved=', resolved, 'pathname=', pathname)
     fs.stat(resolved, (err, stat) => {
-      if (err || !stat.isFile()) {
-        return res.sendFile(path.join(distPath, 'index.html'))
-      }
+      if (err || !stat.isFile()) return next()
       res.sendFile(resolved)
     })
-  }
-  const basePathEscaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  app.get(new RegExp(`^${basePathEscaped}/?(.*)$`), serveBasePath)
+  })
+  // SPA fallback: GET under basePath (not /api) that didn't match a file
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+    let pathname = req.path ?? req.url?.split('?')[0] ?? ''
+    if (!pathname.startsWith('/')) pathname = '/' + pathname
+    if (!pathname.startsWith(basePath + '/') && pathname !== basePath) return next()
+    if (pathname.startsWith(basePath + '/api')) return next()
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
 }
 
 function mountRoutes(prefix: string) {
