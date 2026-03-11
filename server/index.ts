@@ -50,13 +50,12 @@ if (isProd) {
   // distPath: from script location (dist/server/index.js -> dist) so it works under PM2 regardless of cwd
   const distPath = path.join(__dirname, '..')
   if (basePath) {
-    // Single GET route for basePath: serve file from dist if it exists, else index.html (route param is reliable)
-    const basePathEscaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    app.get(new RegExp(`^${basePathEscaped}/?(.*)$`), (req, res, next) => {
-      const subpath = (req.params[0] ?? '').replace(/^\/+/, '')
-      if (!subpath) {
-        return res.sendFile(path.join(distPath, 'index.html'))
-      }
+    // Handler: serve file from dist if exists, else index.html (req.path = request pathname)
+    const serveBasePath = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const pathname = req.path
+      if (req.path.startsWith(basePath + '/assets/')) console.warn('[serveBasePath] pathname=', pathname, 'distPath=', distPath)
+      if (!pathname.startsWith(basePath)) return next()
+      const subpath = pathname.slice(basePath.length).replace(/^\/+/, '') || 'index.html'
       const filePath = path.join(distPath, subpath)
       const resolved = path.resolve(filePath)
       const distResolved = path.resolve(distPath)
@@ -67,7 +66,9 @@ if (isProd) {
         }
         res.sendFile(resolved)
       })
-    })
+    }
+    app.get(basePath, serveBasePath)
+    app.get(`${basePath}*`, serveBasePath)
   } else {
     app.use(express.static(distPath))
     app.get('*', (_, res) => {
