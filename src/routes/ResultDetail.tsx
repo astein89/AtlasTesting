@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { formatDateTime } from '../lib/dateTimeConfig'
+import { getBasePath } from '../lib/basePath'
 import {
   buildFormRowsFromOrder,
   isSeparatorId,
@@ -158,7 +159,7 @@ export function ResultDetail() {
                               )
                               if (paths.length === 0) return '—'
                               const toUrl = (p: string) =>
-                                p.startsWith('http') ? p : `${window.location.origin}${p.startsWith('/') ? '' : '/'}${p}`
+                                p.startsWith('http') ? p : `${window.location.origin}${getBasePath()}${p.startsWith('/') ? '' : '/'}${p}`
                               return (
                                 <div className="mt-1 flex flex-wrap gap-2">
                                   {paths.map((path, i) => (

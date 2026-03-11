@@ -7,7 +7,7 @@ Use this guide to upgrade an existing Automation Testing installation to a newer
 ## Before You Start
 
 - **Back up the database** — Your data is in `atlas.db`. Copy it before upgrading.
-- **Note your setup** — Port, PM2 config, any custom changes.
+- **Note your setup** — Port, PM2 config, base path (BASE_PATH / VITE_BASE_PATH) and whether you use a reverse proxy, and any custom changes.
 
 ---
 
@@ -68,6 +68,8 @@ npm install --omit=dev
 npm run build
 ```
 
+If you use a base path (e.g. http://\<pi-ip\>/automation-testing behind a reverse proxy), build with the same value: `VITE_BASE_PATH=/automation-testing npm run build` (or set `VITE_BASE_PATH` in a `.env` file and source it before building).
+
 Skip this step if you copied a pre-built `dist` folder.
 
 ### Step 6: Start the app
@@ -85,7 +87,7 @@ pm2 status
 pm2 logs automation-testing
 ```
 
-Open the app in a browser and confirm it works.
+Open the app in a browser at its URL (http://\<pi-ip\>:3000 or http://\<pi-ip\>/automation-testing if using a reverse proxy) and confirm it works.
 
 ---
 
@@ -97,6 +99,8 @@ If you use Git and build on the Pi, you can run the control script:
 cd ~/automation-testing
 ./scripts/ctl.sh update
 ```
+
+When using a base path, ensure `VITE_BASE_PATH` is set when building (e.g. in a `.env` file in the project root; the update script sources it before building). See [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md) for the full base-path and reverse-proxy setup.
 
 Or the same steps manually:
 

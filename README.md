@@ -35,6 +35,8 @@ Quick steps:
 4. `pm2 start ecosystem.config.cjs`
 5. `pm2 startup` + `pm2 save`
 
+To serve on port 80 at a path (e.g. http://\<pi-ip\>/automation-testing) alongside other apps, set `VITE_BASE_PATH` when building and `BASE_PATH` in PM2, then configure a reverse proxy (nginx or Caddy). See the [Raspberry Pi Setup Guide](docs/RASPBERRY_PI_SETUP.md).
+
 ## Tech Stack
 
 - React 18 + Vite + Tailwind CSS

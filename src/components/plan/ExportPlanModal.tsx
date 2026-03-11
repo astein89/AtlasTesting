@@ -3,13 +3,14 @@ import JSZip from 'jszip'
 import { api } from '../../api/client'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { useAuthStore } from '../../store/authStore'
+import { getBasePath } from '../../lib/basePath'
 import { recordsToCsv } from '../../utils/csvExport'
 import { sanitizeForLog } from '../../utils/sanitizeLog'
 import { getElapsedMs } from '../../utils/timer'
 import type { DataField, TimerValue } from '../../types'
 
 async function fetchPhotoBlob(path: string): Promise<Blob | null> {
-  const url = path.startsWith('http') ? path : `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`
+  const url = path.startsWith('http') ? path : `${window.location.origin}${getBasePath()}${path.startsWith('/') ? '' : '/'}${path}`
   const token = useAuthStore.getState().accessToken
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -212,10 +213,11 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
       ? sanitizeForFilename(String(sortedForExport[0].data[keyField] ?? planName))
       : planName.replace(/[^a-z0-9]/gi, '-')
 
+  const uploadsPath = getBasePath() + '/api/uploads/'
   const hasPhotos = sortedForExport.some((r) =>
     Object.values(r.data).some((v) => {
       const arr = Array.isArray(v) ? v : v ? [v] : []
-      return arr.some((p) => typeof p === 'string' && p.includes('/api/uploads/'))
+      return arr.some((p) => typeof p === 'string' && (p.includes(uploadsPath) || p.includes('/api/uploads/')))
     })
   )
 
@@ -244,7 +246,7 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
               const paths = Array.isArray(val) ? val : val ? [val] : []
               for (let i = 0; i < paths.length; i++) {
                 const p = paths[i] as string
-                if (typeof p !== 'string' || !p.includes('/api/uploads/')) continue
+                if (typeof p !== 'string' || (!p.includes(uploadsPath) && !p.includes('/api/uploads/'))) continue
                 const blob = await fetchPhotoBlob(p)
                 if (blob) {
                   const filename = getExportPhotoFilename(record, key, i, keyField, fields, p)
@@ -275,7 +277,7 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
               const paths = Array.isArray(val) ? val : val ? [val] : []
               for (let i = 0; i < paths.length; i++) {
                 const p = paths[i] as string
-                if (typeof p !== 'string' || !p.includes('/api/uploads/')) continue
+                if (typeof p !== 'string' || (!p.includes(uploadsPath) && !p.includes('/api/uploads/'))) continue
                 const blob = await fetchPhotoBlob(p)
                 if (blob) {
                   const filename = getExportPhotoFilename(record, key, i, keyField, fields, p)

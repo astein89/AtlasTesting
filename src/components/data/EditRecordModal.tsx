@@ -9,6 +9,7 @@ import { getContrastTextColor } from '../../utils/colorContrast'
 import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
 import { formatDateTime } from '../../lib/dateTimeConfig'
+import { getBasePath } from '../../lib/basePath'
 
 interface Record {
   id: string
@@ -97,7 +98,7 @@ export function EditRecordModal({
   const imageUrl = useCallback((p: string) => {
     if (p.startsWith('http')) return p
     const path = p.startsWith('/') ? p : '/' + p
-    return typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
+    return typeof window !== 'undefined' ? `${window.location.origin}${getBasePath()}${path}` : path
   }, [])
 
   const handleDataChange = useCallback(

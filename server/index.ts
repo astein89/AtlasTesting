@@ -17,19 +17,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = Number(process.env.PORT) || 3001
 const isProd = process.env.NODE_ENV === 'production'
+const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
-app.use('/api/auth', authRouter)
-app.use('/api/admin', adminRouter)
-app.use('/api/fields', fieldsRouter)
-app.use('/api/test-plans', testPlansRouter)
-app.use('/api/records', recordsRouter)
-app.use('/api/users', usersRouter)
-app.use('/api/preferences', preferencesRouter)
-app.use('/api/upload', uploadsRouter)
-app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')))
+function mountRoutes(prefix: string) {
+  app.use(`${prefix}/api/auth`, authRouter)
+  app.use(`${prefix}/api/admin`, adminRouter)
+  app.use(`${prefix}/api/fields`, fieldsRouter)
+  app.use(`${prefix}/api/test-plans`, testPlansRouter)
+  app.use(`${prefix}/api/records`, recordsRouter)
+  app.use(`${prefix}/api/users`, usersRouter)
+  app.use(`${prefix}/api/preferences`, preferencesRouter)
+  app.use(`${prefix}/api/upload`, uploadsRouter)
+  app.use(`${prefix}/api/uploads`, express.static(path.join(process.cwd(), 'uploads')))
+}
+
+mountRoutes(basePath || '/')
 
 // Log errors with upload paths redacted
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -42,10 +47,20 @@ runSeed()
 
 if (isProd) {
   const distPath = path.join(__dirname, '..')
-  app.use(express.static(distPath))
-  app.get('*', (_, res) => {
-    res.sendFile(path.join(distPath, 'index.html'))
-  })
+  if (basePath) {
+    app.use(basePath, express.static(distPath))
+    app.get(basePath, (_, res) => {
+      res.sendFile(path.join(distPath, 'index.html'))
+    })
+    app.get(`${basePath}/*`, (_, res) => {
+      res.sendFile(path.join(distPath, 'index.html'))
+    })
+  } else {
+    app.use(express.static(distPath))
+    app.get('*', (_, res) => {
+      res.sendFile(path.join(distPath, 'index.html'))
+    })
+  }
 }
 
 app.listen(PORT, '0.0.0.0', () => {

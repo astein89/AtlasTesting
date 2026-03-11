@@ -25,7 +25,8 @@ git pull origin main
 # Step 4: Install dependencies
 npm install
 
-# Step 5: Build
+# Step 5: Build (VITE_BASE_PATH from .env if using base path; see docs/RASPBERRY_PI_SETUP.md)
+[ -f .env ] && set -a && . ./.env && set +a
 npm run build
 
 # Step 6: Start the app

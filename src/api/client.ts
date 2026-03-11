@@ -1,8 +1,11 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
+import { getBasePath } from '../lib/basePath'
+
+const basePath = getBasePath()
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: `${basePath}/api`,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -23,19 +26,20 @@ api.interceptors.response.use(
     if (err.response?.status === 401 && !original._retry && !isRefreshRequest) {
       original._retry = true
       const refreshToken = useAuthStore.getState().refreshToken
+      const loginHref = `${basePath}/login`
       if (refreshToken) {
         try {
-          const { data } = await axios.post('/api/auth/refresh', { refreshToken })
+          const { data } = await axios.post(`${basePath}/api/auth/refresh`, { refreshToken })
           useAuthStore.getState().setAccessToken(data.accessToken)
           original.headers.Authorization = `Bearer ${data.accessToken}`
           return api(original)
         } catch {
           useAuthStore.getState().logout()
-          window.location.href = '/login'
+          window.location.href = loginHref
         }
       } else {
         useAuthStore.getState().logout()
-        window.location.href = '/login'
+        window.location.href = loginHref
       }
     }
     return Promise.reject(err)

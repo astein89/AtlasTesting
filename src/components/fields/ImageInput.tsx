@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useAuthStore } from '../../store/authStore'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
+import { getBasePath } from '../../lib/basePath'
 
 interface ImageInputProps {
   value: string | string[]
@@ -108,7 +109,7 @@ export function ImageInput({
   const url = (p: string) => {
     if (p.startsWith('http')) return p
     const path = p.startsWith('/') ? p : '/' + p
-    return `${window.location.origin}${path}`
+    return `${window.location.origin}${getBasePath()}${path}`
   }
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -133,7 +134,7 @@ export function ImageInput({
       const { status, data } = await new Promise<{ status: number; data: { paths?: string[]; error?: string } }>(
         (resolve, reject) => {
           const xhr = new XMLHttpRequest()
-          xhr.open('POST', `${window.location.origin}/api/upload`)
+          xhr.open('POST', `${window.location.origin}${getBasePath()}/api/upload`)
           xhr.withCredentials = true
           if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
           xhr.onload = () => {

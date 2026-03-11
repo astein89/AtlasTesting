@@ -4,6 +4,7 @@ import path from 'path'
 
 export default defineConfig({
   appType: 'spa',
+  base: process.env.VITE_BASE_PATH ? `${process.env.VITE_BASE_PATH.replace(/\/$/, '')}/` : '/',
   plugins: [react()],
   build: {
     sourcemap: false,

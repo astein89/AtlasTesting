@@ -79,6 +79,8 @@ Or use SCP, USB drive, or another transfer method.
 
 ## Step 5: Install Dependencies & Build
 
+If you will serve the app at a path (e.g. under a reverse proxy at `/automation-testing`), set the base path when building: `VITE_BASE_PATH=/automation-testing npm run build` (see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below).
+
 ### Option A: Build on the Pi
 
 You need full dependencies (including Vite) to build:
@@ -89,6 +91,8 @@ npm install
 npm run build
 ```
 
+For path-based deployment (e.g. at `/automation-testing`), run: `VITE_BASE_PATH=/automation-testing npm run build` instead.
+
 ### Option B: Build on Your Dev Machine, Copy to Pi (recommended for low-memory Pi)
 
 On your development machine:
@@ -97,6 +101,8 @@ On your development machine:
 npm install
 npm run build
 ```
+
+For path-based deployment, run: `VITE_BASE_PATH=/automation-testing npm run build` instead.
 
 Then copy the project to the Pi (including the `dist` folder). On the Pi:
 
@@ -129,6 +135,8 @@ PM2 keeps the app running, restarts it on crash, and can start it on boot.
 ---
 
 ## Step 8: Start the Application
+
+When using a base path (e.g. behind a reverse proxy at `/automation-testing`), set `BASE_PATH` in `ecosystem.config.cjs` in the `env` section, e.g. `BASE_PATH: '/automation-testing'`. See [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
 
 ```bash
 cd ~/automation-testing
@@ -165,14 +173,63 @@ The app will now start automatically after a reboot.
 - **Default:** http://\<raspberry-pi-ip\>:3000
 - **Default login:** `admin` / `admin`
 
-**Change the port** (optional): Edit `ecosystem.config.cjs` and set `PORT` in the `env` section:
+**Port 80 with multiple apps:** To serve on port 80 at a path (e.g. http://\<pi-ip\>/automation-testing) alongside other apps, see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
 
-```javascript
-env: {
-  NODE_ENV: 'production',
-  PORT: 3000,  // Change to 80, 8080, etc.
+**Change the port** (optional): Edit `ecosystem.config.cjs` and set `PORT` in the `env` section (e.g. 80, 8080). For multiple apps on port 80, use the reverse proxy approach instead.
+
+---
+
+## Serving on port 80 with a reverse proxy (multiple apps)
+
+To access the app at **http://\<pi-ip\>/automation-testing** (port 80, no `:3000`) and host other apps the same way (e.g. http://\<pi-ip\>/other-app), use a reverse proxy on port 80. The app keeps running on port 3000; the proxy forwards by path.
+
+### 1. Build and run with base path
+
+- **Build:** Set the base path when building (Step 5). On the Pi or your dev machine: `VITE_BASE_PATH=/automation-testing npm run build`.
+- **Run:** In `ecosystem.config.cjs`, add to the `env` section: `BASE_PATH: '/automation-testing'`. Then start or restart: `pm2 start ecosystem.config.cjs` or `pm2 restart automation-testing`.
+
+### 2. Install and configure nginx (recommended)
+
+```bash
+sudo apt install nginx
+```
+
+Edit the default site or add a config (e.g. `/etc/nginx/sites-available/default` or a new file under `sites-available`). Add a `location` for the app:
+
+```nginx
+location /automation-testing {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
+
+Enable the site if you created a new one, then reload nginx:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Allow port 80 in the firewall if needed: `sudo ufw allow 80 && sudo ufw status`.
+
+**Access:** http://\<pi-ip\>/automation-testing
+
+**Add more apps:** Add another `location` (e.g. `location /other-app { proxy_pass http://127.0.0.1:3001; ... }`) and run the other app on port 3001 (or another port) with its own base path.
+
+### 3. Alternative: Caddy
+
+Install Caddy, then in your Caddyfile (e.g. `:80`):
+
+```
+route /automation-testing/* {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+Reload Caddy. Access at http://\<pi-ip\>/automation-testing. Add more `route` blocks for other apps.
 
 ---
 
@@ -210,11 +267,11 @@ cp ~/automation-testing/atlas.db ~/automation-testing/atlas.db.backup
 - [ ] Node.js 18+ installed
 - [ ] Project copied to Pi
 - [ ] `npm install` run (full install if building on Pi)
-- [ ] `npm run build` completed
+- [ ] `npm run build` completed (use `VITE_BASE_PATH=/automation-testing npm run build` if using reverse proxy at a path)
 - [ ] PM2 installed globally
-- [ ] `pm2 start ecosystem.config.cjs` run
+- [ ] `pm2 start ecosystem.config.cjs` run (set `BASE_PATH` in ecosystem if using reverse proxy)
 - [ ] `pm2 startup` and `pm2 save` executed
-- [ ] App accessible at http://\<pi-ip\>:3000
+- [ ] App accessible at http://\<pi-ip\>:3000 (or http://\<pi-ip\>/automation-testing if using reverse proxy)
 
 ---
 
@@ -233,6 +290,8 @@ This comes from the **React DevTools** browser extension, not the app. It’s ha
 sudo lsof -i :3000
 # Kill the process or change PORT in ecosystem.config.cjs
 ```
+
+When using a reverse proxy, the app still listens on port 3000; the proxy listens on 80.
 
 ### Out of memory
 
@@ -259,12 +318,7 @@ If ufw is not installed:
 sudo apt install ufw
 ```
 
-Then allow the port:
-
-```bash
-sudo ufw allow 3000
-sudo ufw status
-```
+Then allow the port the app uses: `sudo ufw allow 3000` (direct access), or if using a reverse proxy on port 80: `sudo ufw allow 80`. Then run `sudo ufw status`.
 
 **2. Ensure the server binds to all interfaces**
 
@@ -276,7 +330,7 @@ The app listens on `0.0.0.0` by default (all network interfaces). If you changed
 hostname -I
 ```
 
-Use that IP from another device: `http://192.168.1.xxx:3000`
+Use that IP from another device: `http://192.168.1.xxx:3000` (or `http://192.168.1.xxx/automation-testing` if using a reverse proxy).
 
 **4. Same network**
 
@@ -296,13 +350,14 @@ Raspberry Pi OS often has no firewall by default. If `ufw` is not installed and 
 sudo ufw disable
 # Try connecting from other PC
 # If it works, re-enable and add the rule: sudo ufw allow 3000 && sudo ufw enable
+# (or sudo ufw allow 80 if using a reverse proxy)
 ```
 
 ---
 
-## Optional: Run on Port 80
+## Optional: Run directly on port 80 (single app only)
 
-To use port 80 (no `:3000` in the URL):
+To run the app on port 80 without a reverse proxy (one app per Pi):
 
 ```bash
 sudo setcap 'cap_net_bind_service=+ep' $(which node)
@@ -313,3 +368,5 @@ Then set `PORT: 80` in `ecosystem.config.cjs` and restart:
 ```bash
 pm2 restart automation-testing
 ```
+
+For **multiple apps** on port 80 (e.g. http://\<pi-ip\>/automation-testing and http://\<pi-ip\>/other-app), use the [reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) approach instead.

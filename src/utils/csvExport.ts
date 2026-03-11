@@ -1,4 +1,5 @@
 import { formatDateTime } from '../lib/dateTimeConfig'
+import { getBasePath } from '../lib/basePath'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from './timer'
 import type { TimerValue } from '../types'
 
@@ -38,10 +39,13 @@ export function recordsToCsv(records: Record[]): string {
           return
         }
         const parts = Array.isArray(val) ? val : [val]
+        const uploadsPrefix = getBasePath() + '/api/uploads/'
         const str = parts
           .map((v) => {
             const s = String(v)
-            return s.includes('/api/uploads/') ? s.replace(/^.*\/api\/uploads\//, '') : s
+            if (s.includes(uploadsPrefix)) return s.replace(uploadsPrefix, '')
+            if (s.includes('/api/uploads/')) return s.replace(/^.*\/api\/uploads\//, '')
+            return s
           })
           .join('; ')
         row.push(escapeCsv(str.trim()))
