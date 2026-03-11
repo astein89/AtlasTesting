@@ -23,6 +23,29 @@ const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
+// Register basePath static route first (before API routes) so GET /basePath/... is handled here
+if (isProd && basePath) {
+  const distPath = path.join(__dirname, '..')
+  const serveBasePath = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    let pathname = req.path
+    if (!pathname.startsWith('/')) pathname = '/' + pathname
+    if (!pathname.startsWith(basePath)) return next()
+    const subpath = pathname.slice(basePath.length).replace(/^\/+/, '') || 'index.html'
+    const filePath = path.join(distPath, subpath)
+    const resolved = path.resolve(filePath)
+    const distResolved = path.resolve(distPath)
+    if (!resolved.startsWith(distResolved)) return next()
+    fs.stat(resolved, (err, stat) => {
+      if (err || !stat.isFile()) {
+        return res.sendFile(path.join(distPath, 'index.html'))
+      }
+      res.sendFile(resolved)
+    })
+  }
+  const basePathEscaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  app.get(new RegExp(`^${basePathEscaped}/?(.*)$`), serveBasePath)
+}
+
 function mountRoutes(prefix: string) {
   app.use(`${prefix}/api/auth`, authRouter)
   app.use(`${prefix}/api/admin`, adminRouter)
@@ -46,37 +69,12 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 runSeed()
 
-if (isProd) {
-  // distPath: from script location (dist/server/index.js -> dist) so it works under PM2 regardless of cwd
+if (isProd && !basePath) {
   const distPath = path.join(__dirname, '..')
-  if (basePath) {
-    // Handler: serve file from dist if exists, else index.html
-    const serveBasePath = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      console.warn('[serveBasePath] hit path=', req.path, 'url=', req.url)
-      let pathname = req.path
-      if (!pathname.startsWith('/')) pathname = '/' + pathname
-      if (!pathname.startsWith(basePath)) return next()
-      const subpath = pathname.slice(basePath.length).replace(/^\/+/, '') || 'index.html'
-      const filePath = path.join(distPath, subpath)
-      const resolved = path.resolve(filePath)
-      const distResolved = path.resolve(distPath)
-      if (!resolved.startsWith(distResolved)) return next()
-      fs.stat(resolved, (err, stat) => {
-        if (err || !stat.isFile()) {
-          return res.sendFile(path.join(distPath, 'index.html'))
-        }
-        res.sendFile(resolved)
-      })
-    }
-    // Use regex so path definitely matches (Express * in string path may not match multiple segments)
-    const basePathEscaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    app.get(new RegExp(`^${basePathEscaped}/?(.*)$`), serveBasePath)
-  } else {
-    app.use(express.static(distPath))
-    app.get('*', (_, res) => {
-      res.sendFile(path.join(distPath, 'index.html'))
-    })
-  }
+  app.use(express.static(distPath))
+  app.get('*', (_, res) => {
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
 }
 
 app.listen(PORT, '0.0.0.0', () => {
