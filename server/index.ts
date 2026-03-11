@@ -96,9 +96,11 @@ runSeed()
 if (isProd && !basePath) {
   const distPath = path.join(__dirname, '..')
   app.use(express.static(distPath))
-  app.get('*', (_, res) => {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next()
     res.sendFile(path.join(distPath, 'index.html'))
   })
+  app.use((_req, res) => res.status(404).json({ error: 'Not found' }))
 }
 
 app.listen(PORT, '0.0.0.0', () => {
