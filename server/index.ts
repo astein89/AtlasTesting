@@ -52,7 +52,8 @@ if (isProd) {
   if (basePath) {
     // Serve static files under basePath by resolving path manually (avoids express.static mount issues)
     app.use(basePath, (req, res, next) => {
-      const pathname = (req.originalUrl ?? req.url).split('?')[0]
+      let pathname = (req.originalUrl ?? req.url).split('?')[0]
+      if (!pathname.startsWith('/')) pathname = '/' + pathname
       const after =
         pathname === basePath || pathname === basePath + '/'
           ? '/'
@@ -66,10 +67,7 @@ if (isProd) {
       const distResolved = path.resolve(distPath)
       if (!resolved.startsWith(distResolved)) return next()
       fs.stat(resolved, (err, stat) => {
-        if (err || !stat.isFile()) {
-          if (relative.startsWith('assets/')) console.warn('[basePath static] miss:', resolved, err?.message ?? 'not a file')
-          return next()
-        }
+        if (err || !stat.isFile()) return next()
         res.sendFile(resolved)
       })
     })
