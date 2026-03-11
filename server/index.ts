@@ -24,8 +24,18 @@ app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
 const prefix = basePath || '/'
-app.get(`${prefix}/api/health`, (_req, res) => res.json({ ok: true }))
-mountRoutes(prefix)
+const apiRouter = express.Router()
+apiRouter.get('/health', (_req, res) => res.json({ ok: true }))
+apiRouter.use('/auth', authRouter)
+apiRouter.use('/admin', adminRouter)
+apiRouter.use('/fields', fieldsRouter)
+apiRouter.use('/test-plans', testPlansRouter)
+apiRouter.use('/records', recordsRouter)
+apiRouter.use('/users', usersRouter)
+apiRouter.use('/preferences', preferencesRouter)
+apiRouter.use('/upload', uploadsRouter)
+apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
+app.use(`${prefix}/api`, apiRouter)
 
 // Debug: log request path for auth (remove after fixing 404)
 app.use((req, res, next) => {
@@ -70,18 +80,6 @@ if (isProd && basePath) {
     if (pathname.startsWith(basePath + '/api') || pathname.startsWith('/api')) return next()
     res.sendFile(path.join(distPath, 'index.html'))
   })
-}
-
-function mountRoutes(prefix: string) {
-  app.use(`${prefix}/api/auth`, authRouter)
-  app.use(`${prefix}/api/admin`, adminRouter)
-  app.use(`${prefix}/api/fields`, fieldsRouter)
-  app.use(`${prefix}/api/test-plans`, testPlansRouter)
-  app.use(`${prefix}/api/records`, recordsRouter)
-  app.use(`${prefix}/api/users`, usersRouter)
-  app.use(`${prefix}/api/preferences`, preferencesRouter)
-  app.use(`${prefix}/api/upload`, uploadsRouter)
-  app.use(`${prefix}/api/uploads`, express.static(path.join(process.cwd(), 'uploads')))
 }
 
 // Log errors with upload paths redacted
