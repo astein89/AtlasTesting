@@ -49,7 +49,17 @@ if (isProd) {
   // Use cwd-relative path so PM2/other launchers resolve dist consistently
   const distPath = path.resolve(process.cwd(), 'dist')
   if (basePath) {
-    app.use(basePath, express.static(distPath))
+    // Rewrite URL so static serves from dist/ root (mount strips path; ensure req.url is relative)
+    app.use(basePath, (req, res, next) => {
+      const pathname = req.originalUrl?.split('?')[0] ?? req.url
+      const after = pathname.startsWith(basePath + '/')
+        ? pathname.slice(basePath.length)
+        : pathname === basePath || pathname === basePath + '/'
+          ? '/'
+          : pathname
+      req.url = after || '/'
+      next()
+    }, express.static(distPath))
     app.get(basePath, (_, res) => {
       res.sendFile(path.join(distPath, 'index.html'))
     })
