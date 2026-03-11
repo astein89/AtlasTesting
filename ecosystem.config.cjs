@@ -9,7 +9,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
-        BASE_PATH: '/automation-testing',
+        // BASE_PATH: '/automation-testing',
       },
       instances: 1,
       autorestart: true,

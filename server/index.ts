@@ -30,28 +30,32 @@ if (isProd && basePath) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
     let pathname = req.path ?? req.url?.split('?')[0] ?? ''
     if (!pathname.startsWith('/')) pathname = '/' + pathname
-    if (!pathname.startsWith(basePath + '/') && pathname !== basePath) return next()
-    if (pathname.startsWith(basePath + '/api')) return next()
-    const subpath = pathname === basePath ? 'index.html' : pathname.slice(basePath.length).replace(/^\/+/, '')
+    // req.path may be relative to mount (e.g. /assets/foo when app is under /automation-testing)
+    const underBasePath = pathname.startsWith(basePath + '/') || pathname === basePath
+    const relativePath = pathname.startsWith('/assets/') || pathname === '/' || pathname === ''
+    if (!underBasePath && !relativePath) return next()
+    if (pathname.startsWith(basePath + '/api') || pathname.startsWith('/api')) return next()
+    const subpath = underBasePath
+      ? (pathname === basePath ? 'index.html' : pathname.slice(basePath.length).replace(/^\/+/, ''))
+      : (pathname === '/' || pathname === '' ? 'index.html' : pathname.replace(/^\/+/, ''))
     const filePath = path.join(distPath, subpath)
     const resolved = path.resolve(filePath)
     const distResolved = path.resolve(distPath)
     if (!resolved.startsWith(distResolved)) return next()
     fs.stat(resolved, (err, stat) => {
-      if (err || !stat.isFile()) {
-        if (subpath.startsWith('assets/')) console.warn('[basePath] stat failed:', resolved, err?.message ?? 'not a file')
-        return next()
-      }
+      if (err || !stat.isFile()) return next()
       res.sendFile(resolved)
     })
   })
-  // SPA fallback: GET under basePath (not /api) that didn't match a file
+  // SPA fallback: GET under basePath or relative path that didn't match a file
   app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
     let pathname = req.path ?? req.url?.split('?')[0] ?? ''
     if (!pathname.startsWith('/')) pathname = '/' + pathname
-    if (!pathname.startsWith(basePath + '/') && pathname !== basePath) return next()
-    if (pathname.startsWith(basePath + '/api')) return next()
+    const underBasePath = pathname.startsWith(basePath + '/') || pathname === basePath
+    const relativePath = pathname.startsWith('/assets/') || pathname === '/' || pathname === ''
+    if (!underBasePath && !relativePath) return next()
+    if (pathname.startsWith(basePath + '/api') || pathname.startsWith('/api')) return next()
     res.sendFile(path.join(distPath, 'index.html'))
   })
 }

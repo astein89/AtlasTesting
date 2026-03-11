@@ -181,20 +181,58 @@ The app will now start automatically after a reboot.
 
 ## Serving on port 80 with a reverse proxy (multiple apps)
 
-To access the app at **http://\<pi-ip\>/automation-testing** (port 80, no `:3000`) and host other apps the same way (e.g. http://\<pi-ip\>/other-app), use a reverse proxy on port 80. The app keeps running on port 3000; the proxy forwards by path.
+To access the app at **http://\<pi-ip\>/automation-testing** (port 80, no `:3000`) and host other apps the same way, use a reverse proxy on port 80.
 
-### 1. Build and run with base path
+### Recommended: nginx strips the path (no BASE_PATH)
 
-- **Build:** Set the base path when building (Step 5). On the Pi or your dev machine: `VITE_BASE_PATH=/automation-testing npm run build`.
-- **Run:** In `ecosystem.config.cjs`, add to the `env` section: `BASE_PATH: '/automation-testing'`. Then start or restart: `pm2 start ecosystem.config.cjs` or `pm2 restart automation-testing`.
+The app runs at the **root** (no `BASE_PATH`). Nginx rewrites `/automation-testing/...` to `/...` before proxying, so the Node app receives `/`, `/assets/...`, `/api/...` and serves them normally.
 
-### 2. Install and configure nginx (recommended)
+**1. Build with base path** (so the client requests `/automation-testing/...` in the browser):
+
+```bash
+VITE_BASE_PATH=/automation-testing npm run build
+```
+
+**2. Do not set BASE_PATH** in `ecosystem.config.cjs`. Leave only `NODE_ENV` and `PORT` in the `env` section (comment out or remove `BASE_PATH`).
+
+**3. Configure nginx** to strip `/automation-testing` and proxy:
 
 ```bash
 sudo apt install nginx
 ```
 
-Edit the default site or add a config (e.g. `/etc/nginx/sites-available/default` or a new file under `sites-available`). Add a `location` for the app:
+Edit `/etc/nginx/sites-available/default` (or your site config). Use a **rewrite** so the backend sees paths at root:
+
+```nginx
+location /automation-testing/ {
+    rewrite ^/automation-testing/?(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+location = /automation-testing {
+    rewrite ^ / break;
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`.
+
+**Access:** http://\<pi-ip\>/automation-testing — the app and assets load correctly because nginx sends `/`, `/assets/...`, `/api/...` to Node.
+
+**Add more apps:** Add similar `location` blocks for other paths (e.g. `/other-app/`) with rewrite and their own backend port.
+
+### Alternative: proxy without rewrite (Node uses BASE_PATH)
+
+If you prefer the Node app to handle the full path, set `BASE_PATH: '/automation-testing'` in `ecosystem.config.cjs` and use a simple proxy (no rewrite). This can be fragile depending on how the request path is seen by Node; the nginx-rewrite approach above is more reliable.
 
 ```nginx
 location /automation-testing {
@@ -207,29 +245,17 @@ location /automation-testing {
 }
 ```
 
-Enable the site if you created a new one, then reload nginx:
+### Caddy (with path strip)
 
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-Allow port 80 in the firewall if needed: `sudo ufw allow 80 && sudo ufw status`.
-
-**Access:** http://\<pi-ip\>/automation-testing
-
-**Add more apps:** Add another `location` (e.g. `location /other-app { proxy_pass http://127.0.0.1:3001; ... }`) and run the other app on port 3001 (or another port) with its own base path.
-
-### 3. Alternative: Caddy
-
-Install Caddy, then in your Caddyfile (e.g. `:80`):
+With Caddy you can strip the path before proxying so the app sees root paths. Example (strip prefix and proxy):
 
 ```
-route /automation-testing/* {
+handle_path /automation-testing/* {
     reverse_proxy 127.0.0.1:3000
 }
 ```
 
-Reload Caddy. Access at http://\<pi-ip\>/automation-testing. Add more `route` blocks for other apps.
+Reload Caddy. Use the same build and no `BASE_PATH` as in the nginx section. Access at http://\<pi-ip\>/automation-testing.
 
 ---
 
