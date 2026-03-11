@@ -35,6 +35,7 @@ if (isProd && basePath) {
     const resolved = path.resolve(filePath)
     const distResolved = path.resolve(distPath)
     if (!resolved.startsWith(distResolved)) return next()
+    if (subpath.startsWith('assets/')) console.warn('[static] resolved=', resolved, 'pathname=', pathname)
     fs.stat(resolved, (err, stat) => {
       if (err || !stat.isFile()) {
         return res.sendFile(path.join(distPath, 'index.html'))
