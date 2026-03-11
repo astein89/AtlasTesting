@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { runSeed } from './db/seed.js'
@@ -49,26 +50,30 @@ if (isProd) {
   // Use cwd-relative path so PM2/other launchers resolve dist consistently
   const distPath = path.resolve(process.cwd(), 'dist')
   if (basePath) {
-    // Rewrite URL so static serves from dist/ root (mount strips path; ensure req.url is relative)
+    // Serve static files under basePath by resolving path manually (avoids express.static mount issues)
     app.use(basePath, (req, res, next) => {
-      const pathname = req.originalUrl?.split('?')[0] ?? req.url
-      const after = pathname.startsWith(basePath + '/')
-        ? pathname.slice(basePath.length)
-        : pathname === basePath || pathname === basePath + '/'
+      const pathname = (req.originalUrl ?? req.url).split('?')[0]
+      const after =
+        pathname === basePath || pathname === basePath + '/'
           ? '/'
-          : pathname
-      req.url = after || '/'
-      next()
-    }, express.static(distPath))
+          : pathname.startsWith(basePath + '/')
+            ? pathname.slice(basePath.length) || '/'
+            : null
+      if (after === null) return next()
+      const relative = after === '/' ? 'index.html' : after.replace(/^\//, '')
+      const filePath = path.join(distPath, relative)
+      const resolved = path.resolve(filePath)
+      const distResolved = path.resolve(distPath)
+      if (!resolved.startsWith(distResolved)) return next()
+      fs.stat(resolved, (err, stat) => {
+        if (err || !stat.isFile()) return next()
+        res.sendFile(resolved)
+      })
+    })
     app.get(basePath, (_, res) => {
       res.sendFile(path.join(distPath, 'index.html'))
     })
-    app.get(`${basePath}/*`, (req, res, next) => {
-      // Don't send index.html for asset requests (avoids wrong MIME when static missed)
-      const subpath = req.path.slice(basePath.length).replace(/^\//, '')
-      if (/\.(js|css|ico|png|svg|jpg|jpeg|gif|webp|woff2?|map)$/i.test(subpath)) {
-        return next()
-      }
+    app.get(`${basePath}/*`, (_, res) => {
       res.sendFile(path.join(distPath, 'index.html'))
     })
   } else {
