@@ -23,6 +23,10 @@ const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
+const prefix = basePath || '/'
+app.get(`${prefix}/api/health`, (_req, res) => res.json({ ok: true }))
+mountRoutes(prefix)
+
 // Debug: log request path for auth (remove after fixing 404)
 app.use((req, res, next) => {
   if (req.path?.includes('auth') || req.url?.includes('auth')) {
@@ -80,10 +84,6 @@ function mountRoutes(prefix: string) {
   app.use(`${prefix}/api/uploads`, express.static(path.join(process.cwd(), 'uploads')))
 }
 
-const prefix = basePath || '/'
-app.get(`${prefix}/api/health`, (_req, res) => res.json({ ok: true }))
-mountRoutes(prefix)
-
 // Log errors with upload paths redacted
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(sanitizeForLog(err.message))
@@ -104,5 +104,6 @@ if (isProd && !basePath) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`)
+  const p = basePath || '(none)'
+  console.log(`Server running on http://0.0.0.0:${PORT} BASE_PATH=${p}`)
 })
