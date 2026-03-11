@@ -44,14 +44,14 @@ You can call the script from anywhere by linking it into a directory on your `PA
 **On Linux / Raspberry Pi:**
 
 ```bash
-sudo ln -s /home/pi/automation-testing/scripts/ctl.sh /usr/local/bin/atlas-ctl
+sudo ln -s /home/pi/automation-testing/scripts/ctl.sh /usr/local/bin/autotest
 ```
 
 Use your actual repo path instead of `/home/pi/automation-testing` if different. Then run:
 
 ```bash
-atlas-ctl status
-atlas-ctl update
+autotest status
+autotest update
 ```
 
 The script changes into the repo directory before running PM2 or the update script, so the symlink can live anywhere.

@@ -371,13 +371,15 @@ export function TestPlanEditor() {
           <p className="mt-1 mb-1 text-sm text-foreground/60">
             Optional. When exporting a single record, this field&apos;s value can be used in the filename. Not unique.
           </p>
-          <PopupSelect
-            label=""
-            value={keyField}
-            onChange={setKeyField}
-            emptyOption="(none)"
-            options={planFields.map((f) => ({ value: f.key, label: f.label }))}
-          />
+          <div className="w-full sm:w-1/2 sm:max-w-[14rem]">
+            <PopupSelect
+              label=""
+              value={keyField}
+              onChange={setKeyField}
+              emptyOption="(none)"
+              options={planFields.map((f) => ({ value: f.key, label: f.label }))}
+            />
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
@@ -389,20 +391,22 @@ export function TestPlanEditor() {
             <div className="mt-2 space-y-2">
             {defaultSortOrder.map((level, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-foreground/60">{i + 1}.</span>
-                <PopupSelect
-                  label=""
-                  value={level.key}
-                  onChange={(v) =>
-                    setDefaultSortOrder((prev) =>
-                      prev.map((s, j) => (j === i ? { ...s, key: v } : s))
-                    )
-                  }
-                  options={[
-                    { value: 'date', label: 'Date' },
-                    ...planFields.map((f) => ({ value: f.key, label: f.label })),
-                  ]}
-                />
+                <span className="shrink-0 text-sm text-foreground/60">{i + 1}.</span>
+                <div className="w-full flex-1 sm:w-1/2 sm:max-w-[14rem]">
+                  <PopupSelect
+                    label=""
+                    value={level.key}
+                    onChange={(v) =>
+                      setDefaultSortOrder((prev) =>
+                        prev.map((s, j) => (j === i ? { ...s, key: v } : s))
+                      )
+                    }
+                    options={[
+                      { value: 'date', label: 'Date' },
+                      ...planFields.map((f) => ({ value: f.key, label: f.label })),
+                    ]}
+                  />
+                </div>
                 <PopupSelect
                   label=""
                   value={level.dir}

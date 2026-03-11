@@ -216,8 +216,8 @@ export function PopupSelect({
           id="popup-select-portal-list"
           role="listbox"
           className="fixed z-[100] mt-1 max-h-64 overflow-y-auto rounded-lg border border-border shadow-lg"
-          style={{ backgroundColor: 'var(--dropdown-list)' }}
           style={{
+            backgroundColor: 'var(--dropdown-list)',
             top: portalRect.top + 4,
             left: portalRect.left,
             minWidth: portalRect.width,

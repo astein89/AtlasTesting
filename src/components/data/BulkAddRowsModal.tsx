@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PopupSelect } from '../ui/PopupSelect'
 import { renderFormField } from '../fields/FormFieldRenderer'
 import type { DataField, TimerValue, TestPlan } from '../../types'
@@ -28,6 +28,7 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
   const [submitting, setSubmitting] = useState(false)
   const [overrideValidation, setOverrideValidation] = useState(false)
   const isAdmin = useAuthStore((s) => s.isAdmin())
+  const entryFieldRef = useRef<HTMLDivElement>(null)
 
   const visibleFields = useMemo(
     () => fields.filter((f) => !(plan.hiddenFieldIds ?? []).includes(f.id)),
@@ -56,6 +57,17 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
       setTargetFieldKey(targetFieldOptions[0].value)
     }
   }, [targetFieldKey, targetFieldOptions])
+
+  useEffect(() => {
+    const focusEntry = () => {
+      const el = entryFieldRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>(
+        'input:not([type="hidden"]), textarea, button[type="button"]'
+      )
+      el?.focus()
+    }
+    const t = setTimeout(focusEntry, 0)
+    return () => clearTimeout(t)
+  }, [])
 
   const targetField =
     mainInputFields.find((f) => f.key === targetFieldKey) ?? mainInputFields[0]
@@ -100,6 +112,13 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
     setEntries((prev) => [...prev, v as FieldValue])
     // Reset to an empty value for the next entry.
     setEntryValue('')
+    // Refocus the enter value field so user can type or scan the next value.
+    setTimeout(() => {
+      const el = entryFieldRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>(
+        'input:not([type="hidden"]), textarea, button[type="button"]'
+      )
+      el?.focus()
+    }, 0)
   }
 
   const toggleSharedField = (fieldId: string) => {
@@ -107,6 +126,58 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
       prev.includes(fieldId) ? prev.filter((id) => id !== fieldId) : [...prev, fieldId]
     )
   }
+
+  const hasEnteredData = useMemo(() => {
+    if (entries.length > 0) return true
+    const entryFilled =
+      entryValue !== '' &&
+      entryValue !== null &&
+      entryValue !== undefined &&
+      (typeof entryValue !== 'string' || entryValue.trim() !== '')
+    if (entryFilled) return true
+    const hasShared =
+      selectedFieldIds.some((id) => {
+        const f = visibleFields.find((x) => x.id === id)
+        if (!f) return false
+        const v = sharedValues[f.key]
+        if (v === undefined || v === null) return false
+        if (typeof v === 'string') return v.trim() !== ''
+        if (typeof v === 'number') return true
+        if (typeof v === 'boolean') return true
+        if (Array.isArray(v)) return v.length > 0
+        return true
+      })
+    return hasShared
+  }, [entries.length, entryValue, selectedFieldIds, sharedValues, visibleFields])
+
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+
+  const handleCloseRequest = useCallback(() => {
+    if (hasEnteredData) {
+      setShowCloseConfirm(true)
+    } else {
+      onClose()
+    }
+  }, [hasEnteredData, onClose])
+
+  useEffect(() => {
+    if (!showCloseConfirm) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowCloseConfirm(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [showCloseConfirm])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !showCloseConfirm) {
+        handleCloseRequest()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [showCloseConfirm, handleCloseRequest])
 
   const handleSubmit = async () => {
     if (!plan.id) return
@@ -152,7 +223,7 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div
         className="absolute inset-0 bg-black/50"
-        onClick={onClose}
+        onClick={handleCloseRequest}
         aria-hidden
       />
       <div
@@ -195,7 +266,10 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
                     }
                   }}
                 >
-                  <div className="w-full max-w-xl rounded-lg border border-border bg-background px-2 py-1.5">
+                  <div
+                    ref={entryFieldRef}
+                    className="w-full max-w-xl rounded-lg border border-border bg-background px-2 py-1.5"
+                  >
                     {targetField &&
                       renderFormField(
                         targetField,
@@ -221,49 +295,46 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
               </div>
             </div>
             {entries.length > 0 && (
-              <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-muted/40">
-                <table className="min-w-full text-[0.9rem]">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/40">
-                      <th className="px-3 py-1 text-left font-medium text-foreground/70">
+              <div className="mt-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border">
+                <table className="min-w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
+                  <thead className="sticky top-0 z-10 border-b border-border bg-card">
+                    <tr>
+                      <th className="w-full px-4 py-1.5 text-left text-sm font-medium text-foreground">
                         {targetField?.label || targetField?.key || 'Value'}
                       </th>
-                      <th className="px-3 py-1" />
+                      <th className="w-0 px-3 py-1.5 text-right text-sm font-medium text-foreground">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {entries.map((v, i) => (
-                      <tr key={`${i}-${String(v)}`}>
-                        <td className="px-3 py-0.5 align-middle">
-                          <span className="inline-flex max-w-full rounded-full bg-card px-2.5 py-1 text-sm font-medium text-foreground">
-                            <span className="truncate">{String(v)}</span>
-                          </span>
-                        </td>
-                        <td className="px-3 py-1 align-middle text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEntries((prev) => prev.filter((_, idx) => idx !== i))
-                            }
-                            className="text-xs text-red-500 hover:text-red-400"
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t border-border bg-muted/40">
-                      <td
-                        className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-foreground/70"
-                        colSpan={2}
-                      >
-                        {entries.length} value{entries.length === 1 ? '' : 's'} entered
-                      </td>
-                    </tr>
-                  </tfoot>
                 </table>
+                <div className="h-[12.25rem] min-h-[12.25rem] overflow-y-auto">
+                  <table className="min-w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
+                    <tbody className="divide-y divide-border">
+                      {entries.map((v, i) => (
+                        <tr
+                          key={`${i}-${String(v)}`}
+                          className="bg-background transition-colors hover:bg-card"
+                        >
+                          <td className="min-w-0 px-4 py-1.5 text-foreground">
+                            <span className="inline-block max-w-full truncate">{String(v)}</span>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-1.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEntries((prev) => prev.filter((_, idx) => idx !== i))
+                              }
+                              className="text-sm text-red-500 hover:text-red-400"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
@@ -350,7 +421,7 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCloseRequest}
             className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
           >
             Cancel
@@ -365,6 +436,58 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
           </button>
         </div>
       </div>
+
+      {showCloseConfirm && (
+        <div
+          className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setShowCloseConfirm(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-add-close-confirm-title"
+        >
+          <div
+            className="flex max-w-sm flex-col rounded-xl border border-border bg-card shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="bulk-add-close-confirm-title" className="border-b border-border px-4 py-3 text-lg font-semibold text-foreground">
+              Unsaved data
+            </h2>
+            <p className="px-4 py-3 text-sm text-foreground">
+              You have entered data. Create rows now or discard?
+            </p>
+            <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCloseConfirm(false)
+                  handleSubmit()
+                }}
+                disabled={submitting || entries.length === 0 || !targetField}
+                className="min-h-[44px] rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                Create rows
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCloseConfirm(false)
+                  onClose()
+                }}
+                className="min-h-[44px] rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCloseConfirm(false)}
+                className="min-h-[44px] rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

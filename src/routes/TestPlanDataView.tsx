@@ -2119,19 +2119,32 @@ export function TestPlanDataView() {
                                 <label className="mb-0.5 block truncate text-sm font-medium text-foreground">
                                   {field.label}
                                 </label>
+                                {field.type === 'image' ? (
+                                  (() => {
+                                    const v = record.data[field.key]
+                                    const arr = Array.isArray(v) ? v : v ? [v] : []
+                                    const urls = arr.filter((s): s is string => typeof s === 'string' && s.length > 0)
+                                    if (urls.length === 0) return <p className="text-sm text-foreground">—</p>
+                                    return (
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {urls.map((src, i) => (
+                                          <img
+                                            key={i}
+                                            src={src}
+                                            alt=""
+                                            className="h-14 w-14 shrink-0 rounded object-cover"
+                                          />
+                                        ))}
+                                      </div>
+                                    )
+                                  })()
+                                ) : (
                                 <p className="truncate text-sm text-foreground">
                                   {typeof record.data[field.key] === 'boolean'
                                     ? record.data[field.key]
                                       ? 'Yes'
                                       : 'No'
-                                    : field.type === 'image'
-                                      ? (() => {
-                                          const v = record.data[field.key]
-                                          const arr = Array.isArray(v) ? v : v ? [v] : []
-                                          const tag = field.config?.imageTag ? ` · ${field.config.imageTag}` : ''
-                                          return arr.length ? `${arr.length} photo(s)${tag}` : '—'
-                                        })()
-                                      : field.type === 'timer'
+                                    : field.type === 'timer'
                                         ? getDisplayVal(record, field.key, field)
                                         : field.type === 'longtext'
                                         ? (() => {
@@ -2145,6 +2158,7 @@ export function TestPlanDataView() {
                                             })()
                                           : String(record.data[field.key] ?? '—')}
                                 </p>
+                                )}
                               </div>
                             ))}
                           </div>

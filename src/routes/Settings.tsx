@@ -1,10 +1,16 @@
 import { useDateTimeConfig } from '../hooks/useDateTimeConfig'
-import { DATE_TIME_PRESETS, formatDateTime } from '../lib/dateTimeConfig'
+import {
+  DATE_TIME_PRESETS,
+  formatDateWithConfig,
+  formatTimeWithConfig,
+  formatDateTimeWithConfig,
+} from '../lib/dateTimeConfig'
 import { PopupSelect } from '../components/ui/PopupSelect'
+
+const EXAMPLE_DATE = new Date('2025-03-15T14:30:00')
 
 export function Settings() {
   const [config, setConfig] = useDateTimeConfig()
-  const exampleDate = new Date('2025-03-15T14:30:00')
 
   const currentPresetIndex = DATE_TIME_PRESETS.findIndex(
     (p) =>
@@ -47,7 +53,7 @@ export function Settings() {
           />
         </div>
         <p className="mt-3 text-sm text-foreground/70">
-          Example: {formatDateTime(exampleDate)}
+          Date: {formatDateWithConfig(EXAMPLE_DATE, config)} · Time: {formatTimeWithConfig(EXAMPLE_DATE, config)} · Date and time: {formatDateTimeWithConfig(EXAMPLE_DATE, config)}
         </p>
       </section>
     </div>

@@ -11,17 +11,17 @@ export interface DateTimeConfig {
 }
 
 export const DEFAULT_DATE_TIME_CONFIG: DateTimeConfig = {
-  dateFormat: 'MMM d, yyyy',
+  dateFormat: 'MM/dd/yyyy',
   timeFormat: 'HH:mm',
   dateTimeFormat: 'MM/dd/yyyy HH:mm',
 }
 
 /** Preset configs users can pick from */
 export const DATE_TIME_PRESETS: { label: string; value: DateTimeConfig }[] = [
-  { label: 'US (MM/dd/yyyy, 24h)', value: { dateFormat: 'MMM d, yyyy', timeFormat: 'HH:mm', dateTimeFormat: 'MM/dd/yyyy HH:mm' } },
-  { label: 'US (MM/dd/yyyy, 12h)', value: { dateFormat: 'MMM d, yyyy', timeFormat: 'h:mm a', dateTimeFormat: 'MM/dd/yyyy h:mm a' } },
-  { label: 'UK (dd/MM/yyyy, 24h)', value: { dateFormat: 'd MMM yyyy', timeFormat: 'HH:mm', dateTimeFormat: 'dd/MM/yyyy HH:mm' } },
-  { label: 'UK (dd/MM/yyyy, 12h)', value: { dateFormat: 'd MMM yyyy', timeFormat: 'h:mm a', dateTimeFormat: 'dd/MM/yyyy h:mm a' } },
+  { label: 'US (MM/dd/yyyy, 24h)', value: { dateFormat: 'MM/dd/yyyy', timeFormat: 'HH:mm', dateTimeFormat: 'MM/dd/yyyy HH:mm' } },
+  { label: 'US (MM/dd/yyyy, 12h)', value: { dateFormat: 'MM/dd/yyyy', timeFormat: 'h:mm a', dateTimeFormat: 'MM/dd/yyyy h:mm a' } },
+  { label: 'UK (dd/MM/yyyy, 24h)', value: { dateFormat: 'dd/MM/yyyy', timeFormat: 'HH:mm', dateTimeFormat: 'dd/MM/yyyy HH:mm' } },
+  { label: 'UK (dd/MM/yyyy, 12h)', value: { dateFormat: 'dd/MM/yyyy', timeFormat: 'h:mm a', dateTimeFormat: 'dd/MM/yyyy h:mm a' } },
   { label: 'ISO (yyyy-MM-dd, 24h)', value: { dateFormat: 'yyyy-MM-dd', timeFormat: 'HH:mm', dateTimeFormat: 'yyyy-MM-dd HH:mm' } },
 ]
 
@@ -75,6 +75,12 @@ export function formatDateWithConfig(date: Date | string, config: DateTimeConfig
   const d = typeof date === 'string' ? new Date(date) : date
   if (Number.isNaN(d.getTime())) return ''
   return dateFnsFormat(d, config.dateFormat)
+}
+
+export function formatTimeWithConfig(date: Date | string, config: DateTimeConfig): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  if (Number.isNaN(d.getTime())) return ''
+  return dateFnsFormat(d, config.timeFormat)
 }
 
 /** Display kind for a datetime field: what part of the value to show */
