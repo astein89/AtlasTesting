@@ -38,7 +38,10 @@ if (isProd && basePath) {
     const distResolved = path.resolve(distPath)
     if (!resolved.startsWith(distResolved)) return next()
     fs.stat(resolved, (err, stat) => {
-      if (err || !stat.isFile()) return next()
+      if (err || !stat.isFile()) {
+        if (subpath.startsWith('assets/')) console.warn('[basePath] stat failed:', resolved, err?.message ?? 'not a file')
+        return next()
+      }
       res.sendFile(resolved)
     })
   })
