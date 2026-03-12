@@ -25,8 +25,10 @@ git pull origin main
 # Step 4: Install dependencies
 npm install
 
-# Step 5: Build (VITE_BASE_PATH from .env if using base path; see docs/RASPBERRY_PI_SETUP.md)
+# Step 5: Build with base path for reverse proxy at /automation-testing (override with .env if needed)
 [ -f .env ] && set -a && . ./.env && set +a
+export VITE_BASE_PATH="${VITE_BASE_PATH:-/automation-testing}"
+echo "Building with VITE_BASE_PATH=$VITE_BASE_PATH"
 npm run build
 
 # Step 6: Start the app
