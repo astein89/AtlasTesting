@@ -117,6 +117,8 @@ export interface TestPlan {
   hiddenFieldIds?: string[]
   /** Field ids that are required when entering records for this plan. */
   requiredFieldIds?: string[]
+  /** Field ids that should be visible by default in the data table (non-hidden fields). */
+  defaultVisibleColumnIds?: string[]
   createdAt?: string
   /** Number of records in this plan (from list endpoint) */
   recordCount?: number

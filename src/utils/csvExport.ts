@@ -13,12 +13,30 @@ interface Record {
   data: Record<string, string | number | boolean | string[] | TimerValue>
 }
 
-export function recordsToCsv(records: Record[]): string {
+export function recordsToCsv(
+  records: Record[],
+  options?: {
+    /** Optional explicit order for data keys (field keys); any remaining keys are appended alphabetically. */
+    fieldOrder?: string[]
+  }
+): string {
   if (records.length === 0) return ''
 
-  const allKeys = new Set<string>(['recordId', 'planName', 'recordedAt', 'User'])
-  records.forEach((r) => Object.keys(r.data).forEach((k) => allKeys.add(k)))
-  const headers = Array.from(allKeys)
+  const fixedPrefix = ['recordId', 'planName', 'recordedAt', 'User']
+  const fieldOrder = options?.fieldOrder ?? []
+
+  // When fieldOrder is provided, use it as the exclusive list of data columns (plan fields only).
+  // Otherwise collect all keys present in records and sort alphabetically.
+  const orderedDataKeys: string[] =
+    fieldOrder.length > 0
+      ? fieldOrder
+      : (() => {
+          const dataKeys = new Set<string>()
+          records.forEach((r) => Object.keys(r.data).forEach((k) => dataKeys.add(k)))
+          return Array.from(dataKeys).sort((a, b) => a.localeCompare(b))
+        })()
+
+  const headers = [...fixedPrefix, ...orderedDataKeys]
 
   const rows = records.map((r) => {
     const row: string[] = []

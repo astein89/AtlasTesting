@@ -50,6 +50,10 @@ interface ExportPlanModalProps {
   keyField?: string
   /** Plan fields (for image_tag when naming exported photos: key_field + image_tag + MMDDYYHHMMSS) */
   fields?: DataField[]
+  /** Optional explicit order of data field keys (e.g. from data table). */
+  fieldOrderKeys?: string[]
+  /** Optional ordered list of field ids and separator ids (newline-xxx) for form layout; used to derive CSV order when no fieldOrderKeys. */
+  formLayoutOrder?: string[]
 }
 
 function getVal(r: Record, key: string): string | number | boolean | string[] | TimerValue {
@@ -151,7 +155,17 @@ function uniqueZipPath(used: Set<string>, dir: string, filename: string): string
   return candidate
 }
 
-export function ExportPlanModal({ planId, planName, onClose, filteredRecords, defaultSortOrder, keyField, fields }: ExportPlanModalProps) {
+export function ExportPlanModal({
+  planId,
+  planName,
+  onClose,
+  filteredRecords,
+  defaultSortOrder,
+  keyField,
+  fields,
+  fieldOrderKeys,
+  formLayoutOrder,
+}: ExportPlanModalProps) {
   const { showAlert } = useAlertConfirm()
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -229,7 +243,20 @@ export function ExportPlanModal({ planId, planName, onClose, filteredRecords, de
     try {
       if (fileCount === 1) {
         if (includeCsv) {
-          const csv = recordsToCsv(sortedForExport)
+          // Prefer explicit field order (from data table), otherwise derive from form layout (excluding separators).
+          let orderedFieldKeys: string[] | undefined
+          if (fieldOrderKeys && fieldOrderKeys.length > 0) {
+            orderedFieldKeys = fieldOrderKeys
+          } else if (formLayoutOrder && fields && formLayoutOrder.length > 0) {
+            orderedFieldKeys = formLayoutOrder
+              .filter((id) => !id.startsWith('newline-'))
+              .map((id) => fields.find((f) => f.id === id)?.key)
+              .filter((k): k is string => Boolean(k))
+          }
+
+          const csv = recordsToCsv(sortedForExport, {
+            fieldOrder: orderedFieldKeys,
+          })
           const blob = new Blob([csv], { type: 'text/csv' })
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')

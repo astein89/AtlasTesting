@@ -106,6 +106,9 @@ router.get('/', (_, res) => {
       archivedRuns: parseArchivedRuns((r as { archived_runs?: string | null }).archived_runs ?? null),
       hiddenFieldIds: parseStringArray((r as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
       requiredFieldIds: parseStringArray((r as { required_field_ids?: string | null }).required_field_ids ?? null),
+      defaultVisibleColumnIds: parseStringArray(
+        (r as { default_visible_columns?: string | null }).default_visible_columns ?? null
+      ),
       createdAt: r.created_at,
       recordCount: countByPlan.get(r.id) ?? 0,
     }))
@@ -189,6 +192,7 @@ router.get('/:id', (req, res) => {
     field_defaults?: string | null
     key_field?: string | null
     created_at: string
+    default_visible_columns?: string | null
   } | undefined
   if (!row) return res.status(404).json({ error: 'Test plan not found' })
   res.json({
@@ -208,6 +212,9 @@ router.get('/:id', (req, res) => {
     archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs ?? null),
     hiddenFieldIds: parseStringArray((row as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
     requiredFieldIds: parseStringArray((row as { required_field_ids?: string | null }).required_field_ids ?? null),
+    defaultVisibleColumnIds: parseStringArray(
+      (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
+    ),
     createdAt: row.created_at,
   })
 })
@@ -242,8 +249,13 @@ router.post('/', requireAdmin, (req, res) => {
   const endDateVal = typeof endDate === 'string' && endDate.trim() ? endDate.trim() : null
   const hiddenFieldIdsJson = Array.isArray(hiddenFieldIds) ? JSON.stringify(hiddenFieldIds) : null
   const requiredFieldIdsJson = Array.isArray(requiredFieldIds) ? JSON.stringify(requiredFieldIds) : null
+  const defaultVisibleColumnsJson =
+    Array.isArray((req.body as { defaultVisibleColumnIds?: string[] }).defaultVisibleColumnIds) &&
+    (req.body as { defaultVisibleColumnIds?: string[] }).defaultVisibleColumnIds!.length > 0
+      ? JSON.stringify((req.body as { defaultVisibleColumnIds?: string[] }).defaultVisibleColumnIds)
+      : null
   db.prepare(
-    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids, default_visible_columns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     name,
@@ -260,7 +272,8 @@ router.post('/', requireAdmin, (req, res) => {
     endDateVal,
     null,
     hiddenFieldIdsJson,
-    requiredFieldIdsJson
+    requiredFieldIdsJson,
+    defaultVisibleColumnsJson
   )
 
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
@@ -294,13 +307,32 @@ router.post('/', requireAdmin, (req, res) => {
     archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs ?? null),
     hiddenFieldIds: parseStringArray((row as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
     requiredFieldIds: parseStringArray((row as { required_field_ids?: string | null }).required_field_ids ?? null),
+    defaultVisibleColumnIds: parseStringArray(
+      (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
+    ),
     createdAt: row.created_at,
   })
 })
 
 router.put('/:id', requireAdmin, (req, res) => {
-  const { name, description, constraints, testPlan, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate, archivedRuns, hiddenFieldIds, requiredFieldIds } =
-    req.body
+  const {
+    name,
+    description,
+    constraints,
+    testPlan,
+    fieldIds,
+    fieldLayout,
+    formLayoutOrder,
+    defaultSortOrder,
+    fieldDefaults,
+    keyField,
+    startDate,
+    endDate,
+    archivedRuns,
+    hiddenFieldIds,
+    requiredFieldIds,
+    defaultVisibleColumnIds,
+  } = req.body
   const { id } = req.params
 
   const existing = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
@@ -384,6 +416,14 @@ router.put('/:id', requireAdmin, (req, res) => {
     updates.push('required_field_ids = ?')
     values.push(Array.isArray(requiredFieldIds) ? JSON.stringify(requiredFieldIds) : null)
   }
+  if (defaultVisibleColumnIds !== undefined) {
+    updates.push('default_visible_columns = ?')
+    values.push(
+      Array.isArray(defaultVisibleColumnIds) && defaultVisibleColumnIds.length > 0
+        ? JSON.stringify(defaultVisibleColumnIds)
+        : null
+    )
+  }
   if (archivedRuns !== undefined && Array.isArray(archivedRuns)) {
     const planRow = db.prepare('SELECT archived_runs FROM test_plans WHERE id = ?').get(id) as { archived_runs: string | null } | undefined
     const oldRuns = parseArchivedRuns(planRow?.archived_runs ?? null)
@@ -448,6 +488,7 @@ router.put('/:id', requireAdmin, (req, res) => {
       field_defaults?: string | null
       key_field?: string | null
       created_at: string
+      default_visible_columns?: string | null
     }
     return res.json({
       id: row.id,
@@ -466,6 +507,9 @@ router.put('/:id', requireAdmin, (req, res) => {
       archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs ?? null),
       hiddenFieldIds: parseStringArray((row as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
       requiredFieldIds: parseStringArray((row as { required_field_ids?: string | null }).required_field_ids ?? null),
+      defaultVisibleColumnIds: parseStringArray(
+        (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
+      ),
       createdAt: row.created_at,
     })
   }
@@ -484,6 +528,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     field_defaults?: string | null
     key_field?: string | null
     created_at: string
+    default_visible_columns?: string | null
   }
   res.json({
     id: row.id,
@@ -502,6 +547,9 @@ router.put('/:id', requireAdmin, (req, res) => {
     archivedRuns: parseArchivedRuns((row as { archived_runs?: string | null }).archived_runs ?? null),
     hiddenFieldIds: parseStringArray((row as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
     requiredFieldIds: parseStringArray((row as { required_field_ids?: string | null }).required_field_ids ?? null),
+    defaultVisibleColumnIds: parseStringArray(
+      (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
+    ),
     createdAt: row.created_at,
   })
 })

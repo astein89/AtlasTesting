@@ -123,8 +123,12 @@ export function EditRecordModal({
 
   const handleSaveClick = useCallback(() => {
     if (!overrideValidation) {
-      const errors = getFieldValidationErrors(fields, data, {
-        requiredFieldIds: plan?.requiredFieldIds,
+      const statusField = fields.find((f) => f.type === 'status')
+      const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
+      const validationFields = fields.filter((f) => f.type !== 'status' && !hiddenSet.has(f.id))
+      const effectiveRequiredIds = plan?.requiredFieldIds?.filter((id) => !hiddenSet.has(id))
+      const errors = getFieldValidationErrors(validationFields, data, {
+        requiredFieldIds: effectiveRequiredIds,
       })
       if (errors.length > 0) {
         setValidationErrors(errors)
@@ -133,12 +137,16 @@ export function EditRecordModal({
     }
     setValidationErrors([])
     onSave()
-  }, [fields, data, plan?.requiredFieldIds, onSave, overrideValidation])
+  }, [fields, data, plan?.requiredFieldIds, plan?.hiddenFieldIds, onSave, overrideValidation])
 
   const handleSaveAndClose = useCallback(() => {
     if (!overrideValidation) {
-      const errors = getFieldValidationErrors(fields, data, {
-        requiredFieldIds: plan?.requiredFieldIds,
+      const statusField = fields.find((f) => f.type === 'status')
+      const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
+      const validationFields = fields.filter((f) => f.type !== 'status' && !hiddenSet.has(f.id))
+      const effectiveRequiredIds = plan?.requiredFieldIds?.filter((id) => !hiddenSet.has(id))
+      const errors = getFieldValidationErrors(validationFields, data, {
+        requiredFieldIds: effectiveRequiredIds,
       })
       if (errors.length > 0) {
         setValidationErrors(errors)
@@ -148,7 +156,7 @@ export function EditRecordModal({
     setValidationErrors([])
     setShowSavePrompt(false)
     onSave()
-  }, [fields, data, plan?.requiredFieldIds, onSave, overrideValidation])
+  }, [fields, data, plan?.requiredFieldIds, plan?.hiddenFieldIds, onSave, overrideValidation])
 
   const handleDiscardAndClose = useCallback(() => {
     setShowSavePrompt(false)
@@ -175,6 +183,9 @@ export function EditRecordModal({
         else if (showHistory) setShowHistory(false)
         else if (!readOnly && showSavePrompt) setShowSavePrompt(false)
         else handleClose()
+      } else if (!readOnly && (e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        handleSaveClick()
       }
     }
     window.addEventListener('keydown', handler)
@@ -184,7 +195,7 @@ export function EditRecordModal({
       window.removeEventListener('keydown', handler)
       document.body.style.overflow = prevOverflow
     }
-  }, [handleClose, readOnly, showSavePrompt, showHistory, fullScreenImagePath])
+  }, [handleClose, handleSaveClick, readOnly, showSavePrompt, showHistory, fullScreenImagePath])
 
   useEffect(() => {
     if (!showHistory || !record.id) return

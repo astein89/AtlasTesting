@@ -39,6 +39,7 @@ export function TestPlanEditor() {
   const [startDate, setStartDate] = useState<string>('')
   const [endDate, setEndDate] = useState<string>('')
   const [hiddenFieldIds, setHiddenFieldIds] = useState<string[]>([])
+  const [defaultVisibleColumnIds, setDefaultVisibleColumnIds] = useState<string[]>([])
   const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
   const [planFields, setPlanFields] = useState<DataField[]>([])
   const [showCreateField, setShowCreateField] = useState(false)
@@ -94,6 +95,7 @@ export function TestPlanEditor() {
           setEndDate(r.data.endDate ?? '')
           setHiddenFieldIds(hiddenIds)
           setRequiredFieldIds(r.data.requiredFieldIds ?? [])
+          setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
         })
         .catch(() => navigate('/test-plans'))
         .finally(() => setLoading(false))
@@ -209,6 +211,8 @@ export function TestPlanEditor() {
           endDate: endDate.trim() || undefined,
           hiddenFieldIds: hiddenFieldIds.length > 0 ? hiddenFieldIds : undefined,
           requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
+          defaultVisibleColumnIds:
+            defaultVisibleColumnIds.length > 0 ? defaultVisibleColumnIds : undefined,
         })
         navigate(returnTo ?? `/test-plans/${data.id}/edit`, { replace: true })
       } else {
@@ -226,6 +230,7 @@ export function TestPlanEditor() {
           endDate: endDate.trim() || undefined,
           hiddenFieldIds,
           requiredFieldIds,
+          defaultVisibleColumnIds,
         })
         navigate(returnTo ?? '/test-plans', { replace: true })
       }
@@ -443,6 +448,55 @@ export function TestPlanEditor() {
             >
               + Add sort
             </button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
+            Default table columns (data view)
+          </label>
+          <p className="mt-1 mb-2 text-sm text-foreground/60">
+            Which fields are shown by default in the data table. Users can change their own view; the
+            Clear button resets back to this selection. Hidden fields are listed but off by default.
+          </p>
+          <div className="mt-2 grid gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2">
+            {planFields.map((f) => {
+              const isHidden = hiddenFieldIds.includes(f.id)
+              const isChecked = defaultVisibleColumnIds.length
+                ? defaultVisibleColumnIds.includes(f.id)
+                : !isHidden
+              return (
+                <label
+                  key={f.id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background"
+                >
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={isChecked}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      setDefaultVisibleColumnIds((prev) => {
+                        // When first editing, seed from current implicit default if prev empty
+                        const base =
+                          prev.length === 0
+                            ? planFields
+                                .filter((pf) => !hiddenFieldIds.includes(pf.id))
+                                .map((pf) => pf.id)
+                            : prev
+                        if (checked) {
+                          return base.includes(f.id) ? base : [...base, f.id]
+                        }
+                        return base.filter((id) => id !== f.id)
+                      })
+                    }}
+                  />
+                  <span className="truncate text-sm text-foreground">
+                    {f.label}
+                    {isHidden && <span className="ml-1 text-xs text-foreground/50">(hidden)</span>}
+                  </span>
+                </label>
+              )
+            })}
           </div>
         </div>
         <div>

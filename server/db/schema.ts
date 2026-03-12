@@ -77,6 +77,7 @@ export function initSchema(db: SqlDb) {
   migratePlanKeyField(db)
   migratePlanHiddenFieldIds(db)
   migratePlanRequiredFieldIds(db)
+  migratePlanDefaultVisibleColumns(db)
   migratePlanStartEndDate(db)
   migratePlanArchivedRuns(db)
   migrateTestRunsRunId(db)
@@ -209,6 +210,19 @@ function migratePlanDefaultSortOrder(db: SqlDb) {
     const has = rows.some((r) => r[1] === 'default_sort_order')
     if (has) return
     db.run('ALTER TABLE test_plans ADD COLUMN default_sort_order TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanDefaultVisibleColumns(db: SqlDb) {
+  try {
+    const info = db.exec('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'default_visible_columns')
+    if (has) return
+    db.run('ALTER TABLE test_plans ADD COLUMN default_visible_columns TEXT')
   } catch {
     // Ignore
   }

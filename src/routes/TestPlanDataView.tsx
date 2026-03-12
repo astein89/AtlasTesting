@@ -160,12 +160,35 @@ export function TestPlanDataView() {
   const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditFieldKey, setBulkEditFieldKey] = useState<string | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState<string | number | boolean | string[] | TimerValue | null>(null)
-  const visibleFields = useMemo(
-    () =>
-      fields.filter(
-        (f) => !(plan?.hiddenFieldIds ?? []).includes(f.id) && !hiddenColumnKeys.includes(f.key)
-      ),
-    [fields, hiddenColumnKeys, plan?.hiddenFieldIds]
+  const visibleFields = useMemo(() => {
+    const allTableFields = fields
+    // If admin configured defaultVisibleColumnIds and user has not customized columns
+    const shouldApplyPlanDefault =
+      plan?.defaultVisibleColumnIds &&
+      plan.defaultVisibleColumnIds.length > 0 &&
+      hiddenColumnKeys.length === 0
+    if (shouldApplyPlanDefault) {
+      const defaultVisibleKeys = new Set(
+        fields
+          .filter((f) => (plan?.defaultVisibleColumnIds ?? []).includes(f.id))
+          .map((f) => f.key)
+      )
+      const allKeys = allTableFields.map((f) => f.key)
+      const newHiddenKeys = allKeys.filter((k) => !defaultVisibleKeys.has(k))
+      if (newHiddenKeys.length > 0) {
+        setHiddenColumnKeys(newHiddenKeys)
+        return allTableFields.filter((f) => !newHiddenKeys.includes(f.key))
+      }
+      return allTableFields
+    }
+    return allTableFields.filter((f) => !hiddenColumnKeys.includes(f.key))
+  }, [fields, hiddenColumnKeys, plan?.defaultVisibleColumnIds, setHiddenColumnKeys])
+
+  // Export uses a fixed column order: all data fields in their base table order,
+  // regardless of which columns are currently hidden in the UI.
+  const exportFieldOrder = useMemo(
+    () => fields.map((f) => f.key),
+    [fields]
   )
   const toggleColumnVisibility = (fieldKey: string) => {
     setHiddenColumnKeys((prev) =>
@@ -947,7 +970,30 @@ export function TestPlanDataView() {
     sortOrder.length !== defaultSortOrder.length ||
     sortOrder.some((s, i) => defaultSortOrder[i]?.key !== s.key || defaultSortOrder[i]?.dir !== s.dir)
   const statusDiffersFromDefault = statusTabs.length > 0 && selectedStatusTab !== 'All'
-  const differsFromDefault = sortDiffersFromDefault || hasActiveFilters || statusDiffersFromDefault
+  const columnSelectionDiffersFromDefault = useMemo(() => {
+    const allTableFields = fields
+    const baselineHiddenKeys =
+      plan?.defaultVisibleColumnIds && plan.defaultVisibleColumnIds.length > 0
+        ? allTableFields
+            .filter((f) => !(plan.defaultVisibleColumnIds ?? []).includes(f.id))
+            .map((f) => f.key)
+        : []
+    // If there is no plan-level default and user hasn't customized, treat as not differing
+    if ((!plan?.defaultVisibleColumnIds || plan.defaultVisibleColumnIds.length === 0) && hiddenColumnKeys.length === 0) {
+      return false
+    }
+    // Compare sets of hidden keys
+    const a = new Set(baselineHiddenKeys)
+    const b = new Set(hiddenColumnKeys)
+    if (a.size !== b.size) return true
+    for (const k of a) {
+      if (!b.has(k)) return true
+    }
+    return false
+  }, [fields, hiddenColumnKeys, plan?.defaultVisibleColumnIds])
+
+  const differsFromDefault =
+    sortDiffersFromDefault || hasActiveFilters || statusDiffersFromDefault || columnSelectionDiffersFromDefault
 
   const clearToDefault = () => {
     setSortOrder(defaultSortOrder)
@@ -955,6 +1001,8 @@ export function TestPlanDataView() {
     setColumnFilters({})
     setOpenFilterColumn(null)
     setSelectedStatusTab('All')
+    // Reset per-user column visibility back to the plan-level default
+    setHiddenColumnKeys([])
   }
 
   const getColumnValues = (key: SortKey): string[] => {
@@ -1104,14 +1152,14 @@ export function TestPlanDataView() {
             </div>
           ) : (
             <div className="rounded-lg border border-border bg-card/50">
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setPlanInfoCollapsed(true)}
-                  className="absolute right-3 top-3 z-[1] rounded p-1 text-foreground/50 hover:bg-background/30 hover:text-foreground/80"
-                  aria-expanded={true}
-                  aria-label="Collapse test plan & criteria"
-                >
+              <button
+                type="button"
+                onClick={() => setPlanInfoCollapsed(true)}
+                className="relative flex w-full cursor-pointer gap-6 p-5 text-left hover:bg-background/30 sm:grid sm:grid-cols-2"
+                aria-expanded={true}
+                aria-label="Collapse test plan & criteria"
+              >
+                <div className="pointer-events-none absolute right-3 top-3 z-[1] rounded p-1 text-foreground/50">
                   <svg
                     className="h-4 w-4 rotate-180"
                     fill="none"
@@ -1121,8 +1169,7 @@ export function TestPlanDataView() {
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
-                </button>
-                <div className="grid gap-6 p-5 sm:grid-cols-2">
+                </div>
                 {plan.testPlan && (
                   <div className="min-w-0">
                     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
@@ -1143,8 +1190,7 @@ export function TestPlanDataView() {
                     </p>
                   </div>
                 )}
-                </div>
-              </div>
+              </button>
             </div>
           )}
         </div>
@@ -1181,6 +1227,8 @@ export function TestPlanDataView() {
           defaultSortOrder={defaultSortOrder}
           keyField={plan.keyField}
           fields={fields}
+          fieldOrderKeys={exportFieldOrder}
+          formLayoutOrder={plan.formLayoutOrder}
         />
       )}
       {editingRecord && (
@@ -1837,7 +1885,7 @@ export function TestPlanDataView() {
                         <input type="checkbox" checked disabled className="h-4 w-4" />
                         <span className="text-sm text-foreground">Date</span>
                       </label>
-                      {fields.filter((f) => !(plan?.hiddenFieldIds ?? []).includes(f.id)).map((f) => (
+                      {fields.map((f) => (
                         <label
                           key={f.id}
                           className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background"
