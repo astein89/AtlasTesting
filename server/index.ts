@@ -23,7 +23,8 @@ const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
-const prefix = basePath || '/'
+// When BASE_PATH is unset, prefix should be '' so API mounts at `/api`, not `//api`
+const prefix = basePath || ''
 const apiRouter = express.Router()
 apiRouter.get('/health', (_req, res) => res.json({ ok: true }))
 apiRouter.use('/auth', authRouter)
