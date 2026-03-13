@@ -171,10 +171,12 @@ export function FractionInput({
       <button
         type="button"
         onClick={openKeypad}
-        className="min-h-[44px] w-full rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        className="min-h-[44px] w-full min-w-0 rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
       >
-        {!open && value === 0 ? 'Click to enter' : (displayValueStorage || '0')}
-        {value === 0 && !open ? '' : storageUnitLabel}
+        <span className="inline-block max-w-full truncate align-middle">
+          {!open && value === 0 ? 'Click to enter' : (displayValueStorage || '0')}
+          {value === 0 && !open ? '' : storageUnitLabel}
+        </span>
       </button>
 
       {open && (

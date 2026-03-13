@@ -210,10 +210,12 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
       <button
         type="button"
         onClick={openModal}
-        className="min-h-[44px] w-full rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        className="min-h-[44px] w-full min-w-0 rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
       >
-        {value === 0 && !open ? 'Click to enter' : (displayStorage || '0')}
-        {value === 0 && !open ? '' : storageUnitLabel}
+        <span className="inline-block max-w-full truncate align-middle">
+          {value === 0 && !open ? 'Click to enter' : (displayStorage || '0')}
+          {value === 0 && !open ? '' : storageUnitLabel}
+        </span>
       </button>
 
       {open && (
