@@ -121,7 +121,9 @@ export function TestPlanDataView() {
   const [archiveEndDate, setArchiveEndDate] = useState('')
   const [viewingArchivedRun, setViewingArchivedRun] = useState<{ startDate: string; endDate: string } | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
-  const [planInfoCollapsed, setPlanInfoCollapsed] = useState(false)
+  const [planInfoCollapsed, setPlanInfoCollapsed] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false
+  )
   const [searchQuery, setSearchQuery] = useState('')
   type ViewMode = 'table' | 'card' | 'compact-card' | 'responsive'
   const [viewMode, setViewMode] = useUserPreference<ViewMode>('atlas-data-view-mode', 'responsive')
@@ -133,8 +135,12 @@ export function TestPlanDataView() {
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
   }, [])
-  const effectiveViewMode: 'table' | 'card' | 'compact-card' =
-    viewMode === 'responsive' ? (isMobile ? 'compact-card' : 'table') : viewMode
+  // On mobile, always show compact card view, regardless of the saved preference.
+  const effectiveViewMode: 'table' | 'card' | 'compact-card' = isMobile
+    ? 'compact-card'
+    : viewMode === 'responsive'
+      ? 'table'
+      : viewMode
   const showTableView = effectiveViewMode === 'table'
   const showCardView = effectiveViewMode === 'card' || effectiveViewMode === 'compact-card'
   const compactCards = effectiveViewMode === 'compact-card'
@@ -1046,18 +1052,43 @@ export function TestPlanDataView() {
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
-      <Link
-        to="/test-plans"
-        className="mb-2 flex min-h-[44px] w-fit shrink-0 items-center text-sm text-foreground/60 hover:text-foreground sm:min-h-0"
-      >
-        ← Back to plans
-      </Link>
+      <div className="mb-2 flex min-h-[44px] shrink-0 items-center justify-between gap-2 sm:min-h-0">
+        <Link
+          to="/test-plans"
+          className="w-fit text-sm text-foreground/60 hover:text-foreground"
+        >
+          ← Back to plans
+        </Link>
+        {isAdmin && (
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              to={`/test-plans/${plan.id}/edit`}
+              state={{ returnTo: `/test-plans/${planId}/data` }}
+              className="min-h-[44px] flex min-w-[44px] items-center justify-center rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+            >
+              Edit plan
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setArchiveStartDate(plan.startDate || '')
+                setArchiveEndDate(plan.endDate || format(new Date(), 'yyyy-MM-dd'))
+                setShowArchiveModal(true)
+              }}
+              className="min-h-[44px] shrink-0 rounded-lg border border-amber-500/50 px-4 py-2 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400 sm:min-h-0"
+              title="View archived runs or archive current testing"
+            >
+              Archive
+            </button>
+          </div>
+        )}
+      </div>
       <div className="mb-4 flex min-w-0 shrink-0 flex-col">
         <h1 className="text-2xl font-semibold text-foreground">{plan.name}</h1>
         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-end sm:gap-x-5 sm:gap-y-1">
             {plan.description && (
-              <p className="text-sm text-foreground/80 leading-relaxed">
+              <p className="min-w-0 truncate text-sm text-foreground/80 leading-relaxed sm:overflow-visible sm:whitespace-normal">
                 <span className="font-medium text-foreground/80">Description:</span>{' '}
                 {plan.description}
               </p>
@@ -1081,29 +1112,6 @@ export function TestPlanDataView() {
             >
               Export
             </button>
-            {isAdmin && (
-              <>
-                <Link
-                  to={`/test-plans/${plan.id}/edit`}
-                  state={{ returnTo: `/test-plans/${planId}/data` }}
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-                >
-                  Edit plan
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setArchiveStartDate(plan.startDate || '')
-                    setArchiveEndDate(plan.endDate || format(new Date(), 'yyyy-MM-dd'))
-                    setShowArchiveModal(true)
-                  }}
-                  className="min-h-[44px] shrink-0 rounded-lg border border-amber-500/50 px-4 py-2 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                  title="View archived runs or archive current testing"
-                >
-                  Archive
-                </button>
-              </>
-            )}
             {hasFields && canEditData && (
               <>
                 <button
@@ -1155,7 +1163,7 @@ export function TestPlanDataView() {
               <button
                 type="button"
                 onClick={() => setPlanInfoCollapsed(true)}
-                className="relative flex w-full cursor-pointer gap-6 p-5 text-left hover:bg-background/30 sm:grid sm:grid-cols-2"
+                className="relative flex w-full cursor-pointer flex-col gap-6 p-5 text-left hover:bg-background/30 sm:grid sm:grid-cols-2"
                 aria-expanded={true}
                 aria-label="Collapse test plan & criteria"
               >
@@ -1171,7 +1179,7 @@ export function TestPlanDataView() {
                   </svg>
                 </div>
                 {plan.testPlan && (
-                  <div className="min-w-0">
+                  <div className="min-w-0 order-1 sm:order-none">
                     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
                       Test plan
                     </h3>
@@ -1181,7 +1189,7 @@ export function TestPlanDataView() {
                   </div>
                 )}
                 {plan.constraints && (
-                  <div className="min-w-0">
+                  <div className="min-w-0 order-2 sm:order-none">
                     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
                       Test criteria
                     </h3>
@@ -2269,9 +2277,9 @@ export function TestPlanDataView() {
             )}
           </div>
           )}
-          {/* Table view: confined to viewport with visible horizontal scrollbar */}
+          {/* Table view: main scroll area. On small screens, ensure enough vertical space for many rows. */}
           {showTableView && (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-scroll rounded-lg border border-border">
+          <div className="flex min-h-[60vh] min-w-0 flex-1 flex-col overflow-y-auto overflow-x-auto rounded-lg border border-border">
           <table
             className="w-full"
             style={{ tableLayout: 'fixed' }}
@@ -2431,7 +2439,7 @@ export function TestPlanDataView() {
                         </label>
                       </td>
                     )}
-                    <td className="px-4 py-3 text-sm text-foreground/70">
+                    <td className="whitespace-nowrap min-w-0 px-4 py-3 text-sm text-foreground align-top">
                       {formatDateTime(record.recordedAt)}
                     </td>
                     {visibleFields.map((f) => {
@@ -2487,17 +2495,14 @@ export function TestPlanDataView() {
                                     const tag = f.config?.imageTag ? ` · ${f.config.imageTag}` : ''
                                     return arr.length ? `${arr.length} photo(s)${tag}` : '—'
                                   })()
-                                : f.type === 'longtext'
+                              : f.type === 'longtext'
                                   ? (
                                     <span className="whitespace-pre-wrap break-words">
                                       {String(record.data[f.key] ?? '—')}
                                     </span>
                                     )
                                   : f.type === 'fraction'
-                                    ? (() => {
-                                        const n = Number(record.data[f.key])
-                                        return n && Number.isFinite(n) ? formatDecimalAsFraction(n) : '—'
-                                      })()
+                                    ? formatFieldValue(f as any, record.data[f.key])
                                     : f.type === 'atlas_location'
                                       ? String(record.data[f.key] ?? '—')
                                       : getDisplayVal(record, f.key, f)}

@@ -1,4 +1,17 @@
-export type FieldType = 'number' | 'text' | 'longtext' | 'boolean' | 'datetime' | 'select' | 'status' | 'fraction' | 'atlas_location' | 'image' | 'timer' | 'formula'
+export type FieldType =
+  | 'number'
+  | 'text'
+  | 'longtext'
+  | 'boolean'
+  | 'datetime'
+  | 'select'
+  | 'status'
+  | 'fraction'
+  | 'weight'
+  | 'atlas_location'
+  | 'image'
+  | 'timer'
+  | 'formula'
 
 /** Timer field value: elapsed time from timestamps so it can run for extended periods */
 export interface TimerValue {

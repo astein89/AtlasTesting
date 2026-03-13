@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { AutoExpandTextarea } from './AutoExpandTextarea'
 import { AtlasLocationInput } from './AtlasLocationInput'
 import { FractionInput } from './FractionInput'
+import { WeightInput } from './WeightInput'
 import { ImageInput } from './ImageInput'
 import { MaskedTextInput, filterTextValue } from './MaskedTextInput'
 import { SelectInput } from './SelectInput'
@@ -273,6 +274,21 @@ export function renderFormField(
         value={Number(value) || 0}
         onChange={(v) => onChange(f.key, v)}
         defaultScale={parseFractionScale(f.config?.fractionScale)}
+        storageUnit={f.config?.unit === 'mm' ? 'mm' : 'in'}
+        className="w-full"
+      />
+    )
+    return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
+  }
+  if (f.type === 'weight') {
+    const unit = typeof f.config?.unit === 'string' ? f.config.unit : 'lb'
+    const storageUnit: 'kg' | 'g' | 'lb' | 'oz' =
+      unit === 'kg' || unit === 'g' || unit === 'lb' || unit === 'oz' ? unit : 'lb'
+    const content = (
+      <WeightInput
+        value={Number(value) || 0}
+        onChange={(v) => onChange(f.key, v)}
+        storageUnit={storageUnit}
         className="w-full"
       />
     )

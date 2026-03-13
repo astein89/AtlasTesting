@@ -16,13 +16,41 @@ import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 const schema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image', 'timer', 'formula']),
+  type: z.enum([
+    'number',
+    'text',
+    'longtext',
+    'boolean',
+    'datetime',
+    'select',
+    'status',
+    'fraction',
+    'weight',
+    'atlas_location',
+    'image',
+    'timer',
+    'formula',
+  ]),
   config: z.record(z.unknown()).optional(),
 })
 
 type FormData = z.infer<typeof schema>
 
-const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image', 'timer', 'formula']
+const TYPES: FieldType[] = [
+  'number',
+  'text',
+  'longtext',
+  'boolean',
+  'datetime',
+  'select',
+  'status',
+  'fraction',
+  'weight',
+  'atlas_location',
+  'image',
+  'timer',
+  'formula',
+]
 
 const FORMULA_PAREN_COLORS = [
   'text-red-600 dark:text-red-400',
@@ -44,6 +72,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
   select: 'Select',
   status: 'Status',
   fraction: 'Fraction (inches)',
+  weight: 'Weight',
   atlas_location: 'Atlas Location',
   image: 'Image',
   timer: 'Timer',
@@ -57,6 +86,8 @@ export function FieldEditor() {
   const { showAlert, showConfirm } = useAlertConfirm()
   const [options, setOptions] = useState<string[]>([])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
+  const [fractionUnit, setFractionUnit] = useState<'in' | 'mm'>('in')
+  const [weightUnit, setWeightUnit] = useState<'kg' | 'g' | 'lb' | 'oz'>('lb')
   const [imageMultiple, setImageMultiple] = useState(false)
   const [imageTag, setImageTag] = useState('')
   const [statusColors, setStatusColors] = useState<Record<string, string>>({})
@@ -155,7 +186,13 @@ export function FieldEditor() {
   const onSubmit = async (data: FormData) => {
     const config = { ...data.config }
     if (fieldType === 'select') config.options = options.map((o) => (o == null ? '' : String(o)))
-    if (fieldType === 'fraction') config.fractionScale = fractionScale
+    if (fieldType === 'fraction') {
+      config.fractionScale = fractionScale
+      config.unit = fractionUnit
+    }
+    if (fieldType === 'weight') {
+      config.unit = weightUnit
+    }
     if (fieldType === 'image') {
       config.imageMultiple = imageMultiple
       config.imageTag = imageTag.trim()
@@ -278,6 +315,15 @@ export function FieldEditor() {
             setOptions([...STATUS_OPTIONS])
           if (r.data.config?.fractionScale && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
             setFractionScale(r.data.config.fractionScale as FractionScale)
+          }
+          if (r.data.type === 'fraction' && (r.data.config?.unit === 'mm' || r.data.config?.unit === 'in')) {
+            setFractionUnit(r.data.config.unit as 'in' | 'mm')
+          }
+          if (r.data.type === 'weight' && typeof r.data.config?.unit === 'string') {
+            const u = r.data.config.unit
+            if (u === 'kg' || u === 'g' || u === 'lb' || u === 'oz') {
+              setWeightUnit(u)
+            }
           }
           if (r.data.config?.imageMultiple != null) setImageMultiple(r.data.config.imageMultiple)
           setImageTag(r.data.config?.imageTag != null ? String(r.data.config.imageTag) : '')
@@ -515,19 +561,55 @@ export function FieldEditor() {
           </div>
         )}
         {fieldType === 'fraction' && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground">Storage unit</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
+                Base unit that values are saved in. You can still view/enter in the other unit in the UI.
+              </p>
+              <PopupSelect
+                label=""
+                value={fractionUnit}
+                onChange={(v) => setFractionUnit((v as 'in' | 'mm') || 'in')}
+                options={[
+                  { value: 'in', label: 'Inches (in)' },
+                  { value: 'mm', label: 'Millimetres (mm)' },
+                ]}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Fraction scale</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
+                Denominator for inch fractions (128ths finest, halves coarsest).
+              </p>
+              <PopupSelect
+                label=""
+                value={String(fractionScale)}
+                onChange={(v) => setFractionScale(Number(v) as FractionScale)}
+                options={FRACTION_SCALES.map((s) => ({
+                  value: String(s),
+                  label: s === 2 ? 'Halves (½)' : `${s}ths (1/${s})`,
+                }))}
+              />
+            </div>
+          </div>
+        )}
+        {fieldType === 'weight' && (
           <div>
-            <label className="block text-sm font-medium text-foreground">Fraction scale</label>
+            <label className="block text-sm font-medium text-foreground">Storage unit</label>
             <p className="mt-1 mb-1 text-xs text-foreground/60">
-              Denominator for inch fractions (128ths finest, halves coarsest).
+              Base unit that values are saved in. Users can still view/enter in the other system.
             </p>
             <PopupSelect
               label=""
-              value={String(fractionScale)}
-              onChange={(v) => setFractionScale(Number(v) as FractionScale)}
-              options={FRACTION_SCALES.map((s) => ({
-                value: String(s),
-                label: s === 2 ? 'Halves (½)' : `${s}ths (1/${s})`,
-              }))}
+              value={weightUnit}
+              onChange={(v) => setWeightUnit((v as 'kg' | 'g' | 'lb' | 'oz') || 'kg')}
+              options={[
+                { value: 'kg', label: 'Kilograms (kg)' },
+                { value: 'g', label: 'Grams (g)' },
+                { value: 'lb', label: 'Pounds (lb)' },
+                { value: 'oz', label: 'Ounces (oz)' },
+              ]}
             />
           </div>
         )}

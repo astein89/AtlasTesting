@@ -65,7 +65,39 @@ export function formatFieldValue(
   }
   if (typeof value === 'number') {
     if (field.type === 'fraction') {
-      return Number.isFinite(value) ? formatDecimalAsFraction(value) : '—'
+      if (!Number.isFinite(value)) return '—'
+      const hasScale = field.config?.fractionScale != null
+      const scale = hasScale ? parseFractionScale(field.config.fractionScale) : undefined
+      const core =
+        hasScale && scale !== undefined
+          ? formatDecimalAsFractionWithScale(value, scale)
+          : formatDecimalAsFraction(value)
+      const unit = (field.config?.unit === 'mm' || field.config?.unit === 'in') ? field.config.unit : undefined
+      return unit ? `${core} ${unit}` : core
+    }
+    if (field.type === 'weight') {
+      if (!Number.isFinite(value)) return '—'
+      const unitRaw = typeof field.config?.unit === 'string' ? field.config.unit : 'lb'
+      const unit: 'kg' | 'g' | 'lb' | 'oz' =
+        unitRaw === 'kg' || unitRaw === 'g' || unitRaw === 'lb' || unitRaw === 'oz' ? unitRaw : 'lb'
+      const n = value
+      let formatted: string
+      if (unit === 'lb') {
+        // For pounds, show the full numeric precision (no forced 2‑decimal rounding),
+        // trimming only redundant trailing zeros.
+        const raw = n.toString()
+        if (!raw.includes('.')) {
+          formatted = raw
+        } else {
+          formatted = raw.replace(/(?:\.0+|(\.\d*?[1-9]))0+$/, '$1')
+        }
+      } else {
+        formatted =
+          Math.abs(n) >= 1000 ? n.toFixed(0) :
+          Math.abs(n) >= 100 ? n.toFixed(1) :
+          n.toFixed(2)
+      }
+      return `${formatted} ${unit}`
     }
     if (field.type === 'formula' && field.config?.fractionScale != null) {
       const scale = parseFractionScale(field.config.fractionScale)

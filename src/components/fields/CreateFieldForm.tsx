@@ -13,7 +13,20 @@ import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 const schema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image', 'timer']),
+  type: z.enum([
+    'number',
+    'text',
+    'longtext',
+    'boolean',
+    'datetime',
+    'select',
+    'status',
+    'fraction',
+    'weight',
+    'atlas_location',
+    'image',
+    'timer',
+  ]),
 })
 
 type FormData = z.infer<typeof schema>
@@ -23,7 +36,20 @@ interface CreateFieldFormProps {
   onCancel: () => void
 }
 
-const TYPES: FieldType[] = ['number', 'text', 'longtext', 'boolean', 'datetime', 'select', 'status', 'fraction', 'atlas_location', 'image', 'timer']
+const TYPES: FieldType[] = [
+  'number',
+  'text',
+  'longtext',
+  'boolean',
+  'datetime',
+  'select',
+  'status',
+  'fraction',
+  'weight',
+  'atlas_location',
+  'image',
+  'timer',
+]
 const TYPE_LABELS: Record<FieldType, string> = {
   number: 'Number',
   text: 'Text',
@@ -33,6 +59,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
   select: 'Select',
   status: 'Status',
   fraction: 'Fraction (inches)',
+  weight: 'Weight',
   atlas_location: 'Atlas Location',
   image: 'Image',
   timer: 'Timer',
@@ -78,6 +105,10 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
     }
     if (fieldType === 'fraction') {
       config.fractionScale = fractionScale
+    }
+    if (fieldType === 'weight') {
+      // Default storage unit for new weight fields
+      config.unit = 'lb'
     }
     if (fieldType === 'image') {
       config.imageMultiple = imageMultiple

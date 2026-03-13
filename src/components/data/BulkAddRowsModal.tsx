@@ -220,14 +220,14 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
       <div
         className="absolute inset-0 bg-black/50"
         onClick={handleCloseRequest}
         aria-hidden
       />
       <div
-        className="relative z-10 flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-3xl sm:rounded-lg sm:min-w-0"
+        className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:rounded-lg sm:border sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">

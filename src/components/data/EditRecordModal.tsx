@@ -32,6 +32,17 @@ interface HistoryEntry {
   changes: HistoryChange[]
 }
 
+/** Format a history change value for display; strip /api/uploads/ prefix so we show filenames only. */
+function formatHistoryVal(val: unknown): string {
+  if (val === undefined || val === null) return '—'
+  if (Array.isArray(val)) {
+    return val.map((v) => formatHistoryVal(v)).join(', ')
+  }
+  const s = String(val).trim()
+  if (!s) return '—'
+  return s.replace(/\/api\/uploads\/?/gi, '').trim() || s
+}
+
 interface EditRecordModalProps {
   record: Record
   fields: DataField[]
@@ -214,14 +225,14 @@ export function EditRecordModal({
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
       <div
         className="absolute inset-0 bg-black/50"
         onClick={handleClose}
         aria-hidden
       />
       <div
-        className="relative z-10 flex max-h-[90dvh] w-full max-w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:min-w-0"
+        className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:border sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
@@ -272,7 +283,7 @@ export function EditRecordModal({
             </div>
           ) : null}
         </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4 sm:p-6">
           <div className="w-full min-w-0 space-y-4">
             {readOnly
               ? buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
@@ -292,7 +303,7 @@ export function EditRecordModal({
                             className="min-w-0 w-full"
                             style={{ gridColumn: `span ${SPAN_TO_COLS[span]}` }}
                           >
-                            <div className="mb-1 text-sm font-medium text-foreground/70">{field.label}</div>
+                            <div className="mb-1 min-w-0 truncate text-sm font-medium text-foreground/70" title={field.label}>{field.label}</div>
                             <div className="min-w-0 w-full text-sm text-foreground">
                               {field.type === 'longtext' ? (
                                 <p className="whitespace-pre-wrap">{formatFieldValue(field, data[field.key])}</p>
@@ -347,11 +358,12 @@ export function EditRecordModal({
                         style={{ gridColumn: `span ${SPAN_TO_COLS[span]}` }}
                       >
                         <label
-                          className={`mb-1 block text-sm font-medium ${fieldError ? 'text-red-500' : 'text-foreground'}`}
+                          className={`mb-1 flex min-w-0 items-baseline gap-0.5 text-sm font-medium ${fieldError ? 'text-red-500' : 'text-foreground'}`}
+                          title={field.label}
                         >
-                          {field.label}
+                          <span className="min-w-0 truncate">{field.label}</span>
                           {(plan?.requiredFieldIds?.includes(field.id) || field.config?.required) && (
-                            <span className="text-red-500" aria-label="required"> *</span>
+                            <span className="shrink-0 text-red-500" aria-label="required"> *</span>
                           )}
                         </label>
                         <div
@@ -375,7 +387,7 @@ export function EditRecordModal({
             )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 overflow-x-auto border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 overflow-x-hidden border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
           <div className="flex shrink-0 gap-2">
             {!readOnly && isAdmin && (
               <button
@@ -462,6 +474,13 @@ export function EditRecordModal({
           <div className="flex justify-end gap-2">
             <button
               type="button"
+              onClick={() => setShowSavePrompt(false)}
+              className="min-h-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
               onClick={handleDiscardAndClose}
               className="min-h-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
             >
@@ -519,8 +538,7 @@ export function EditRecordModal({
                       <ul className="mt-2 space-y-1 pl-2 text-sm text-muted-foreground">
                         {entry.changes.map((c, j) => (
                           <li key={j}>
-                            {c.field}: {c.oldVal === undefined || c.oldVal === null ? '—' : String(c.oldVal)}{' '}
-                            → {c.newVal === undefined || c.newVal === null ? '—' : String(c.newVal)}
+                            {c.field}: {formatHistoryVal(c.oldVal)} → {formatHistoryVal(c.newVal)}
                           </li>
                         ))}
                       </ul>
