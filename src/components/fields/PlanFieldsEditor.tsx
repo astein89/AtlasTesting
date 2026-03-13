@@ -60,6 +60,7 @@ function SortableLayoutItem({
   removeSeparator,
   hiddenFieldIds,
   onHiddenFieldIdsChange,
+  isRequired,
 }: {
   id: string
   index: number
@@ -70,12 +71,11 @@ function SortableLayoutItem({
   removeSeparator: (id: string) => void
   hiddenFieldIds: string[]
   onHiddenFieldIdsChange?: (ids: string[]) => void
-  requiredFieldIds: string[]
-  onRequiredFieldIdsChange?: (ids: string[]) => void
+  /** Whether this field is required; used only for display. */
+  isRequired: boolean
 }) {
   const { fieldId } = parseFieldEntry(id)
   const isHidden = hiddenFieldIds.includes(fieldId)
-  const isRequired = requiredFieldIds.includes(fieldId)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -243,17 +243,21 @@ function useIsTouchDevice() {
   return isTouch
 }
 
-export function PlanFieldsEditor({
-  formLayoutOrder,
-  onChange,
-  hiddenFieldIds = [],
-  onHiddenFieldIdsChange,
-  requiredFieldIds = [],
-  onRequiredFieldIdsChange,
-  onCreateNew,
-  fieldDefaults,
-  renderAbovePreview,
-}: PlanFieldsEditorProps) {
+export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
+  const {
+    formLayoutOrder,
+    onChange,
+    hiddenFieldIds: hiddenFieldIdsProp,
+    onHiddenFieldIdsChange,
+    requiredFieldIds: requiredFieldIdsProp,
+    onRequiredFieldIdsChange,
+    onCreateNew,
+    fieldDefaults,
+    renderAbovePreview,
+  } = props
+  // Ensure these arrays are always defined so downstream code never sees an undefined variable.
+  const hiddenFieldIds = hiddenFieldIdsProp ?? []
+  const requiredFieldIds = requiredFieldIdsProp ?? []
   const [allFields, setAllFields] = useState<DataField[]>([])
   const [search, setSearch] = useState('')
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
@@ -534,11 +538,10 @@ export function PlanFieldsEditor({
                           removeItem={removeItem}
                           insertSeparatorBefore={insertSeparatorBefore}
                           removeSeparator={removeSeparator}
-                        hiddenFieldIds={hiddenFieldIds ?? []}
-                        onHiddenFieldIdsChange={onHiddenFieldIdsChange}
-                        requiredFieldIds={requiredFieldIds ?? []}
-                        onRequiredFieldIdsChange={onRequiredFieldIdsChange}
-                      />
+                          hiddenFieldIds={hiddenFieldIds}
+                          onHiddenFieldIdsChange={onHiddenFieldIdsChange}
+                          isRequired={(requiredFieldIds ?? []).includes(parseFieldEntry(id).fieldId)}
+                        />
                       </Fragment>
                     ))}
                   </ul>
