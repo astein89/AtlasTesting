@@ -133,13 +133,29 @@ export interface TestPlan {
   /** Field ids that should be visible by default in the data table (non-hidden fields). */
   defaultVisibleColumnIds?: string[]
   createdAt?: string
+  updatedAt?: string | null
   /** Number of records in this plan (from list endpoint) */
+  recordCount?: number
+}
+
+/** A first-class test under a test plan (has its own records and dates). */
+export interface Test {
+  id: string
+  testPlanId: string
+  name: string
+  startDate?: string
+  endDate?: string
+  archived?: boolean
+  createdAt?: string
+  updatedAt?: string
   recordCount?: number
 }
 
 export interface DataRecord {
   id: string
   testPlanId: string
+  /** When set, record belongs to this test under the plan. */
+  testId?: string
   planName?: string
   recordedAt: string
   enteredBy: string

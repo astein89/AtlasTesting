@@ -25,13 +25,15 @@ function insertRecordHistory(
 }
 
 router.get('/', (req: AuthRequest, res) => {
-  const { testPlanId, from, to, limit = 50 } = req.query
+  const { testPlanId, testId, from, to, limit = 50 } = req.query
   let sql = `
     SELECT tr.*, tp.name as plan_name,
-    COALESCE(u.name, u.username) as entered_by_name
+    COALESCE(u.name, u.username) as entered_by_name,
+    t.name as test_name
     FROM test_runs tr
     JOIN test_plans tp ON tr.test_plan_id = tp.id
     LEFT JOIN users u ON tr.entered_by = u.id
+    LEFT JOIN tests t ON tr.test_id = t.id
     WHERE 1=1
   `
   const params: unknown[] = []
@@ -39,6 +41,10 @@ router.get('/', (req: AuthRequest, res) => {
   if (testPlanId) {
     sql += ' AND tr.test_plan_id = ?'
     params.push(testPlanId)
+  }
+  if (testId) {
+    sql += ' AND tr.test_id = ?'
+    params.push(testId)
   }
   if (from) {
     sql += ' AND tr.run_at >= ?'
@@ -61,12 +67,16 @@ router.get('/', (req: AuthRequest, res) => {
     plan_name: string
     entered_by_name: string | null
     run_id?: string | null
+    test_id?: string | null
+    test_name?: string | null
   }>
 
   res.json(
     rows.map((r) => ({
       id: r.id,
       testPlanId: r.test_plan_id,
+      testId: r.test_id ?? undefined,
+      testName: r.test_name ?? undefined,
       planName: r.plan_name,
       recordedAt: r.run_at,
       enteredBy: r.entered_by,
@@ -98,10 +108,11 @@ router.get('/:id', (req: AuthRequest, res) => {
 
   if (!row) return res.status(404).json({ error: 'Record not found' })
 
-  const rowWithRunId = row as { run_id?: string | null }
+  const rowWithRunId = row as { run_id?: string | null; test_id?: string | null }
   res.json({
     id: row.id,
     testPlanId: row.test_plan_id,
+    testId: rowWithRunId.test_id ?? undefined,
     planName: row.plan_name,
     recordedAt: row.run_at,
     enteredBy: row.entered_by,
@@ -182,9 +193,12 @@ router.get('/:id/history', requireAdmin, (req: AuthRequest, res) => {
 })
 
 router.post('/', requireCanEditData, (req: AuthRequest, res) => {
-  const { testPlanId, data, status, recordedAt: bodyRecordedAt } = req.body
+  const { testPlanId, testId, data, status, recordedAt: bodyRecordedAt } = req.body
   if (!testPlanId || !req.user) {
     return res.status(400).json({ error: 'testPlanId required' })
+  }
+  if (!testId || typeof testId !== 'string' || !testId.trim()) {
+    return res.status(400).json({ error: 'testId required' })
   }
   if (!status || !['pass', 'fail', 'partial'].includes(status)) {
     return res.status(400).json({ error: 'status required (pass, fail, or partial)' })
@@ -192,6 +206,8 @@ router.post('/', requireCanEditData, (req: AuthRequest, res) => {
 
   const plan = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(testPlanId)
   if (!plan) return res.status(404).json({ error: 'Test plan not found' })
+  const test = db.prepare('SELECT id FROM tests WHERE id = ? AND test_plan_id = ?').get(testId.trim(), testPlanId)
+  if (!test) return res.status(404).json({ error: 'Test not found' })
 
   const id = uuidv4()
   let recordedAt: string
@@ -204,8 +220,8 @@ router.post('/', requireCanEditData, (req: AuthRequest, res) => {
 
   const newData = data ? JSON.stringify(data) : null
   db.prepare(
-    'INSERT INTO test_runs (id, test_plan_id, run_at, entered_by, status, data, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, testPlanId, recordedAt, req.user.id, status, newData, null)
+    'INSERT INTO test_runs (id, test_plan_id, test_id, run_at, entered_by, status, data, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, testPlanId, testId.trim(), recordedAt, req.user.id, status, newData, null)
 
   insertRecordHistory(id, 'created', null, null, newData, status, req.user.id)
 
@@ -223,11 +239,13 @@ router.post('/', requireCanEditData, (req: AuthRequest, res) => {
     data: string | null
     plan_name: string
     run_id?: string | null
+    test_id?: string | null
   }
 
   res.status(201).json({
     id: row.id,
     testPlanId: row.test_plan_id,
+    testId: row.test_id ?? undefined,
     planName: row.plan_name,
     recordedAt: row.run_at,
     enteredBy: row.entered_by,
@@ -239,7 +257,7 @@ router.post('/', requireCanEditData, (req: AuthRequest, res) => {
 
 router.put('/:id', requireCanEditData, (req: AuthRequest, res) => {
   const { id } = req.params
-  const { data, status } = req.body
+  const { data, status, testId: bodyTestId } = req.body
 
   const existing = db.prepare('SELECT * FROM test_runs WHERE id = ?').get(id) as {
     id: string
@@ -248,8 +266,17 @@ router.put('/:id', requireCanEditData, (req: AuthRequest, res) => {
     entered_by: string
     status: string
     data: string | null
+    test_id?: string | null
+    run_id?: string | null
   } | undefined
   if (!existing) return res.status(404).json({ error: 'Record not found' })
+
+  if (bodyTestId !== undefined) {
+    const targetTest = db
+      .prepare('SELECT id FROM tests WHERE id = ? AND test_plan_id = ?')
+      .get(bodyTestId, existing.test_plan_id)
+    if (!targetTest) return res.status(400).json({ error: 'Target test not found or does not belong to this plan' })
+  }
 
   const updates: string[] = []
   const values: unknown[] = []
@@ -261,18 +288,22 @@ router.put('/:id', requireCanEditData, (req: AuthRequest, res) => {
     updates.push('status = ?')
     values.push(status)
   }
+  if (bodyTestId !== undefined) {
+    updates.push('test_id = ?')
+    values.push(typeof bodyTestId === 'string' && bodyTestId.trim() ? bodyTestId.trim() : null)
+  }
   if (updates.length === 0) {
     const planRow = db.prepare('SELECT name FROM test_plans WHERE id = ?').get(existing.test_plan_id) as { name: string }
-    const existingWithRunId = existing as { run_id?: string | null }
     return res.json({
       id: existing.id,
       testPlanId: existing.test_plan_id,
+      testId: existing.test_id ?? undefined,
       planName: planRow?.name || '',
       recordedAt: existing.run_at,
       enteredBy: existing.entered_by,
       status: existing.status,
       data: existing.data ? JSON.parse(existing.data) : {},
-      runId: existingWithRunId.run_id ?? undefined,
+      runId: existing.run_id ?? undefined,
     })
   }
   values.push(id)
@@ -303,17 +334,19 @@ router.put('/:id', requireCanEditData, (req: AuthRequest, res) => {
     status: string
     data: string | null
     plan_name: string
+    test_id?: string | null
+    run_id?: string | null
   }
-  const rowWithRunId = row as { run_id?: string | null }
   res.json({
     id: row.id,
     testPlanId: row.test_plan_id,
+    testId: row.test_id ?? undefined,
     planName: row.plan_name,
     recordedAt: row.run_at,
     enteredBy: row.entered_by,
     status: row.status,
     data: row.data ? JSON.parse(row.data) : {},
-    runId: rowWithRunId.run_id ?? undefined,
+    runId: row.run_id ?? undefined,
   })
 })
 

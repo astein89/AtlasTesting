@@ -36,8 +36,6 @@ export function TestPlanEditor() {
   ])
   const [fieldDefaults, setFieldDefaults] = useState<Record<string, string | number | boolean | string[]>>({})
   const [keyField, setKeyField] = useState<string>('')
-  const [startDate, setStartDate] = useState<string>('')
-  const [endDate, setEndDate] = useState<string>('')
   const [hiddenFieldIds, setHiddenFieldIds] = useState<string[]>([])
   const [defaultVisibleColumnIds, setDefaultVisibleColumnIds] = useState<string[]>([])
   const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
@@ -91,8 +89,6 @@ export function TestPlanEditor() {
           )
           setFieldDefaults(r.data.fieldDefaults && typeof r.data.fieldDefaults === 'object' ? r.data.fieldDefaults : {})
           setKeyField(r.data.keyField ?? '')
-          setStartDate(r.data.startDate ?? '')
-          setEndDate(r.data.endDate ?? '')
           setHiddenFieldIds(hiddenIds)
           setRequiredFieldIds(r.data.requiredFieldIds ?? [])
           setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
@@ -207,8 +203,6 @@ export function TestPlanEditor() {
           defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
           fieldDefaults: Object.keys(fieldDefaults).length > 0 ? fieldDefaults : undefined,
           keyField: keyField.trim() || undefined,
-          startDate: startDate.trim() || undefined,
-          endDate: endDate.trim() || undefined,
           hiddenFieldIds: hiddenFieldIds.length > 0 ? hiddenFieldIds : undefined,
           requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
           defaultVisibleColumnIds:
@@ -226,8 +220,6 @@ export function TestPlanEditor() {
           defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
           fieldDefaults: Object.keys(fieldDefaults).length > 0 ? fieldDefaults : undefined,
           keyField: keyField.trim() || undefined,
-          startDate: startDate.trim() || undefined,
-          endDate: endDate.trim() || undefined,
           hiddenFieldIds,
           requiredFieldIds,
           defaultVisibleColumnIds,
@@ -342,30 +334,6 @@ export function TestPlanEditor() {
               onChange={(e) => setConstraints(e.target.value)}
               className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
               rows={5}
-            />
-          </div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-foreground">
-              Start date
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground">
-              End date
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
             />
           </div>
         </div>

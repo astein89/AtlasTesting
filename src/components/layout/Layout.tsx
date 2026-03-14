@@ -35,7 +35,7 @@ export function Layout() {
             aria-hidden
           />
         )}
-        <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 py-3 sm:px-6 sm:py-4">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
           <Outlet />
         </main>
       </div>

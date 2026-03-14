@@ -81,16 +81,20 @@ export function initSchema(db: SqlDb) {
   migratePlanStartEndDate(db)
   migratePlanArchivedRuns(db)
   migrateTestRunsRunId(db)
+  migrateTestsTableAndBackfill(db)
   migratePlanConstraints(db)
   migratePlanShortDescription(db)
   migrateRecordsToPlanDirect(db)
   migrateUserPreferences(db)
   migrateFieldsAudit(db)
   migrateRecordHistory(db)
+  migrateTestPlansAndTestsUpdatedAt(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
+    CREATE INDEX IF NOT EXISTS idx_test_runs_test_id ON test_runs(test_id);
     CREATE INDEX IF NOT EXISTS idx_test_runs_run_at ON test_runs(run_at);
+    CREATE INDEX IF NOT EXISTS idx_tests_test_plan_id ON tests(test_plan_id);
     CREATE INDEX IF NOT EXISTS idx_record_history_record_id ON record_history(record_id);
   `)
 }
@@ -117,14 +121,15 @@ function migrateRecordHistory(db: SqlDb) {
 
 function migrateRecordsToPlanDirect(db: SqlDb) {
   try {
-    const info = db.exec('PRAGMA table_info(test_runs)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasTestId = rows.some((r) => r[1] === 'test_id')
+    const trRows = db.prepare('PRAGMA table_info(test_runs)').all() as Array<{ name: string }>
+    const hasTestId = trRows.some((r) => r.name === 'test_id')
     if (!hasTestId) {
       db.run('DROP TABLE IF EXISTS tests')
       return
     }
+    const testsRows = db.prepare('PRAGMA table_info(tests)').all() as Array<{ name: string }>
+    const testCols = testsRows.map((r) => r.name)
+    if (testCols.includes('archived')) return
     db.exec(`
       CREATE TABLE test_runs_new (
         id TEXT PRIMARY KEY,
@@ -325,6 +330,54 @@ function migrateTestRunsRunId(db: SqlDb) {
   }
 }
 
+/** Create tests table (first-class tests under a plan), add test_id to test_runs, backfill one Legacy test per plan. */
+function migrateTestsTableAndBackfill(db: SqlDb) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tests (
+        id TEXT PRIMARY KEY,
+        test_plan_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        start_date TEXT,
+        end_date TEXT,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (test_plan_id) REFERENCES test_plans(id)
+      )
+    `)
+    const trRows = db.prepare('PRAGMA table_info(test_runs)').all() as Array<{ name: string }>
+    const trCols = trRows.map((r) => r.name)
+    if (!trCols.includes('test_id')) {
+      db.run('ALTER TABLE test_runs ADD COLUMN test_id TEXT REFERENCES tests(id)')
+    }
+    // Ensure every plan that has records has a Legacy test and backfill records to it
+    const planIdsWithRecords = db.prepare('SELECT DISTINCT test_plan_id FROM test_runs').all() as Array<{ test_plan_id: string }>
+    for (const { test_plan_id: planId } of planIdsWithRecords) {
+      const legacyId = `legacy-${planId}`
+      const existing = db.prepare('SELECT id FROM tests WHERE id = ?').get(legacyId) as { id: string } | undefined
+      if (!existing) {
+        db.prepare(
+          'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
+        ).run(legacyId, planId, 'Legacy')
+      }
+      db.prepare('UPDATE test_runs SET test_id = ? WHERE test_plan_id = ? AND (test_id IS NULL OR test_id = \'\')').run(legacyId, planId)
+    }
+    // Ensure every plan has at least one test (so overview always shows something)
+    const allPlanIds = db.prepare('SELECT id FROM test_plans').all() as Array<{ id: string }>
+    for (const { id: planId } of allPlanIds) {
+      const legacyId = `legacy-${planId}`
+      const hasTest = db.prepare('SELECT 1 FROM tests WHERE test_plan_id = ? LIMIT 1').get(planId)
+      if (!hasTest) {
+        db.prepare(
+          'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
+        ).run(legacyId, planId, 'Legacy')
+      }
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 function migratePlanFieldIds(db: SqlDb) {
   try {
     const info = db.exec('PRAGMA table_info(test_plans)')
@@ -382,6 +435,21 @@ function migrateFieldsAudit(db: SqlDb) {
     }
     if (!cols.includes('updated_by')) {
       db.run('ALTER TABLE fields ADD COLUMN updated_by TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateTestPlansAndTestsUpdatedAt(db: SqlDb) {
+  try {
+    const planRows = db.prepare('PRAGMA table_info(test_plans)').all() as Array<{ name: string }>
+    if (!planRows.some((r) => r.name === 'updated_at')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN updated_at TEXT')
+    }
+    const testRows = db.prepare('PRAGMA table_info(tests)').all() as Array<{ name: string }>
+    if (!testRows.some((r) => r.name === 'updated_at')) {
+      db.run('ALTER TABLE tests ADD COLUMN updated_at TEXT')
     }
   } catch {
     // Ignore

@@ -13,6 +13,67 @@ const dbPath = process.env.DB_PATH || path.join(__dirname, ...Array(levelsUp).fi
 
 let sqlDb: import('sql.js').Database
 
+function save() {
+  const data = sqlDb.export()
+  const buffer = Buffer.from(data)
+  fs.writeFileSync(dbPath, buffer)
+}
+
+// Wrapper to mimic better-sqlite3 API (used by schema migrations and routes)
+function createDbWrapper() {
+  return {
+    prepare(sql: string) {
+      return {
+        run: (...params: unknown[]) => {
+          try {
+            const stmt = sqlDb.prepare(sql)
+            if (params.length > 0) {
+              stmt.bind(params as (string | number | null)[])
+            }
+            stmt.step()
+            stmt.free()
+            save()
+            return { changes: sqlDb.getRowsModified() }
+          } catch (e) {
+            throw e
+          }
+        },
+        get: (...params: unknown[]) => {
+          const stmt = sqlDb.prepare(sql)
+          if (params.length > 0) stmt.bind(params as (string | number | null)[])
+          const row = stmt.step() ? stmt.getAsObject() : undefined
+          stmt.free()
+          return row
+        },
+        all: (...params: unknown[]) => {
+          const stmt = sqlDb.prepare(sql)
+          if (params.length > 0) stmt.bind(params as (string | number | null)[])
+          const rows: Record<string, unknown>[] = []
+          while (stmt.step()) rows.push(stmt.getAsObject())
+          stmt.free()
+          return rows
+        },
+      }
+    },
+    run(sql: string, params?: unknown[] | unknown) {
+      const list = Array.isArray(params) ? params : params !== undefined ? [params] : []
+      if (list.length > 0) {
+        const stmt = sqlDb.prepare(sql)
+        stmt.bind(list as (string | number | null)[])
+        stmt.step()
+        stmt.free()
+      } else {
+        sqlDb.run(sql)
+      }
+      save()
+    },
+    exec(sql: string) {
+      sqlDb.run(sql)
+      save()
+    },
+  }
+}
+
 async function init() {
   const SQL = await initSqlJs()
   if (fs.existsSync(dbPath)) {
@@ -21,57 +82,10 @@ async function init() {
   } else {
     sqlDb = new SQL.Database()
   }
-  initSchema(sqlDb)
+  const dbWrapper = createDbWrapper()
+  initSchema(dbWrapper as Parameters<typeof initSchema>[0])
   save()
+  return dbWrapper
 }
 
-function save() {
-  const data = sqlDb.export()
-  const buffer = Buffer.from(data)
-  fs.writeFileSync(dbPath, buffer)
-}
-
-// Wrapper to mimic better-sqlite3 API
-const dbWrapper = {
-  prepare(sql: string) {
-    return {
-      run: (...params: unknown[]) => {
-        try {
-          const stmt = sqlDb.prepare(sql)
-          if (params.length > 0) {
-            stmt.bind(params as (string | number | null)[])
-          }
-          stmt.step()
-          stmt.free()
-          save()
-          return { changes: sqlDb.getRowsModified() }
-        } catch (e) {
-          throw e
-        }
-      },
-      get: (...params: unknown[]) => {
-        const stmt = sqlDb.prepare(sql)
-        stmt.bind(params as (string | number | null)[])
-        const row = stmt.step() ? stmt.getAsObject() : undefined
-        stmt.free()
-        return row
-      },
-      all: (...params: unknown[]) => {
-        const stmt = sqlDb.prepare(sql)
-        stmt.bind(params as (string | number | null)[])
-        const rows: Record<string, unknown>[] = []
-        while (stmt.step()) rows.push(stmt.getAsObject())
-        stmt.free()
-        return rows
-      },
-    }
-  },
-  exec(sql: string) {
-    sqlDb.run(sql)
-    save()
-  },
-}
-
-await init()
-
-export const db = dbWrapper
+export const db = await init()
