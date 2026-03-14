@@ -257,6 +257,56 @@ handle_path /automation-testing/* {
 
 Reload Caddy. Use the same build and no `BASE_PATH` as in the nginx section. Access at http://\<pi-ip\>/automation-testing.
 
+### Landing page at root (links to all apps)
+
+The repo includes a simple landing page at **`landing/index.html`** that you can serve at **http://\<pi-ip\>/** with links to Automation Testing and other apps.
+
+**1. Copy the landing folder to the Pi** (e.g. next to your app or under `/var/www`):
+
+```bash
+# On the Pi, create a directory and copy the landing page
+mkdir -p /var/www/landing
+# Copy landing/index.html from the project into /var/www/landing/
+```
+
+Or from your dev machine: `scp -r landing pi@<pi-ip>:/var/www/landing`
+
+**2. Configure nginx** so the default server root serves the landing page, and keep your app under `/automation-testing/`:
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    root /var/www/landing;
+    index index.html;
+
+    # Landing page at /
+    location = / {
+        try_files /index.html =404;
+    }
+
+    # Redirect /at to /automation-testing/
+    location = /at { return 301 /automation-testing/; }
+    location = /at/ { return 301 /automation-testing/; }
+
+    # Automation Testing app
+    location /automation-testing/ {
+        rewrite ^/automation-testing/?(.*)$ /$1 break;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Add more location blocks for other apps...
+}
+```
+
+Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`. Then **http://\<pi-ip\>/** shows the landing page with links; edit `landing/index.html` to add or change app links.
+
 ---
 
 ## Useful PM2 Commands
