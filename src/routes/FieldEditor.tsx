@@ -71,7 +71,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
   datetime: 'Date/time',
   select: 'Select',
   status: 'Status',
-  fraction: 'Fraction (inches)',
+  fraction: 'Dimension',
   weight: 'Weight',
   atlas_location: 'Atlas Location',
   image: 'Image',
@@ -84,10 +84,13 @@ export function FieldEditor() {
   const navigate = useNavigate()
   const isNew = id === 'new'
   const { showAlert, showConfirm } = useAlertConfirm()
+  const [keyEditable, setKeyEditable] = useState(false)
   const [options, setOptions] = useState<string[]>([])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
   const [fractionUnit, setFractionUnit] = useState<'in' | 'mm'>('in')
+  const [fractionEntryUnit, setFractionEntryUnit] = useState<'in' | 'mm'>('in')
   const [weightUnit, setWeightUnit] = useState<'kg' | 'g' | 'lb' | 'oz'>('lb')
+  const [weightEntryUnit, setWeightEntryUnit] = useState<'kg' | 'g' | 'lb' | 'oz'>('lb')
   const [imageMultiple, setImageMultiple] = useState(false)
   const [imageTag, setImageTag] = useState('')
   const [statusColors, setStatusColors] = useState<Record<string, string>>({})
@@ -189,9 +192,13 @@ export function FieldEditor() {
     if (fieldType === 'fraction') {
       config.fractionScale = fractionScale
       config.unit = fractionUnit
+      if (fractionEntryUnit !== fractionUnit) config.entryUnit = fractionEntryUnit
+      else if ('entryUnit' in config) delete config.entryUnit
     }
     if (fieldType === 'weight') {
       config.unit = weightUnit
+      if (weightEntryUnit !== weightUnit) config.entryUnit = weightEntryUnit
+      else if ('entryUnit' in config) delete config.entryUnit
     }
     if (fieldType === 'image') {
       config.imageMultiple = imageMultiple
@@ -301,6 +308,7 @@ export function FieldEditor() {
 
   useEffect(() => {
     if (!isNew && id) {
+      setKeyEditable(false)
       api
         .get<DataField>(`/fields/${id}`)
         .then((r) => {
@@ -319,11 +327,25 @@ export function FieldEditor() {
           if (r.data.type === 'fraction' && (r.data.config?.unit === 'mm' || r.data.config?.unit === 'in')) {
             setFractionUnit(r.data.config.unit as 'in' | 'mm')
           }
+          if (r.data.type === 'fraction' && (r.data.config?.entryUnit === 'mm' || r.data.config?.entryUnit === 'in')) {
+            setFractionEntryUnit(r.data.config.entryUnit as 'in' | 'mm')
+          } else if (r.data.type === 'fraction') {
+            setFractionEntryUnit(r.data.config?.unit === 'mm' || r.data.config?.unit === 'in' ? (r.data.config.unit as 'in' | 'mm') : 'in')
+          }
           if (r.data.type === 'weight' && typeof r.data.config?.unit === 'string') {
             const u = r.data.config.unit
             if (u === 'kg' || u === 'g' || u === 'lb' || u === 'oz') {
               setWeightUnit(u)
             }
+          }
+          if (r.data.type === 'weight' && typeof r.data.config?.entryUnit === 'string') {
+            const eu = r.data.config.entryUnit
+            if (eu === 'kg' || eu === 'g' || eu === 'lb' || eu === 'oz') {
+              setWeightEntryUnit(eu)
+            }
+          } else if (r.data.type === 'weight') {
+            const u = r.data.config?.unit
+            setWeightEntryUnit(u === 'kg' || u === 'g' || u === 'lb' || u === 'oz' ? u : 'lb')
           }
           if (r.data.config?.imageMultiple != null) setImageMultiple(r.data.config.imageMultiple)
           setImageTag(r.data.config?.imageTag != null ? String(r.data.config.imageTag) : '')
@@ -405,11 +427,28 @@ export function FieldEditor() {
         className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6"
       >
         <div>
-          <label className="block text-sm font-medium text-foreground">Key</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="block text-sm font-medium text-foreground">Key</label>
+            {!isNew && !keyEditable && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await showConfirm(
+                    'Changing the key can affect existing data. Record data will be migrated to the new key when you save. Continue?',
+                    { title: 'Change field key', confirmLabel: 'Change key', variant: 'default' }
+                  )
+                  if (ok) setKeyEditable(true)
+                }}
+                className="shrink-0 text-sm text-foreground/80 hover:text-foreground hover:underline"
+              >
+                Change key
+              </button>
+            )}
+          </div>
           <input
             {...register('key')}
-            disabled={!isNew}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-60"
+            disabled={!isNew && !keyEditable}
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-60 disabled:cursor-not-allowed"
           />
           {errors.key && (
             <p className="mt-1 text-sm text-red-500">{errors.key.message}</p>
@@ -433,7 +472,7 @@ export function FieldEditor() {
               label="Type"
               value={field.value}
               onChange={field.onChange}
-              options={TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
+              options={[...TYPES].sort((a, b) => TYPE_LABELS[a].localeCompare(TYPE_LABELS[b])).map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
             />
           )}
         />
@@ -565,12 +604,27 @@ export function FieldEditor() {
             <div>
               <label className="block text-sm font-medium text-foreground">Storage unit</label>
               <p className="mt-1 mb-1 text-xs text-foreground/60">
-                Base unit that values are saved in. You can still view/enter in the other unit in the UI.
+                Unit used for display and export. Values are saved in this unit.
               </p>
               <PopupSelect
                 label=""
                 value={fractionUnit}
                 onChange={(v) => setFractionUnit((v as 'in' | 'mm') || 'in')}
+                options={[
+                  { value: 'in', label: 'Inches (in)' },
+                  { value: 'mm', label: 'Millimetres (mm)' },
+                ]}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Entry unit</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
+                Default unit when opening the keypad. Display and export use the storage unit above.
+              </p>
+              <PopupSelect
+                label=""
+                value={fractionEntryUnit}
+                onChange={(v) => setFractionEntryUnit((v as 'in' | 'mm') || 'in')}
                 options={[
                   { value: 'in', label: 'Inches (in)' },
                   { value: 'mm', label: 'Millimetres (mm)' },
@@ -595,22 +649,41 @@ export function FieldEditor() {
           </div>
         )}
         {fieldType === 'weight' && (
-          <div>
-            <label className="block text-sm font-medium text-foreground">Storage unit</label>
-            <p className="mt-1 mb-1 text-xs text-foreground/60">
-              Base unit that values are saved in. Users can still view/enter in the other system.
-            </p>
-            <PopupSelect
-              label=""
-              value={weightUnit}
-              onChange={(v) => setWeightUnit((v as 'kg' | 'g' | 'lb' | 'oz') || 'kg')}
-              options={[
-                { value: 'kg', label: 'Kilograms (kg)' },
-                { value: 'g', label: 'Grams (g)' },
-                { value: 'lb', label: 'Pounds (lb)' },
-                { value: 'oz', label: 'Ounces (oz)' },
-              ]}
-            />
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground">Storage unit</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
+                Unit used for display and export. Values are saved in this unit.
+              </p>
+              <PopupSelect
+                label=""
+                value={weightUnit}
+                onChange={(v) => setWeightUnit((v as 'kg' | 'g' | 'lb' | 'oz') || 'kg')}
+                options={[
+                  { value: 'kg', label: 'Kilograms (kg)' },
+                  { value: 'g', label: 'Grams (g)' },
+                  { value: 'lb', label: 'Pounds (lb)' },
+                  { value: 'oz', label: 'Ounces (oz)' },
+                ]}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Entry unit</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">
+                Default unit when opening the weight input. Display and export use the storage unit above.
+              </p>
+              <PopupSelect
+                label=""
+                value={weightEntryUnit}
+                onChange={(v) => setWeightEntryUnit((v as 'kg' | 'g' | 'lb' | 'oz') || 'kg')}
+                options={[
+                  { value: 'kg', label: 'Kilograms (kg)' },
+                  { value: 'g', label: 'Grams (g)' },
+                  { value: 'lb', label: 'Pounds (lb)' },
+                  { value: 'oz', label: 'Ounces (oz)' },
+                ]}
+              />
+            </div>
           </div>
         )}
         {(fieldType === 'text' || fieldType === 'longtext') && (

@@ -1,77 +1,60 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { formatDate } from '../lib/dateTimeConfig'
-import { useSortableHeader } from '../hooks/useSortableHeader'
-import { useUserPreference } from '../hooks/useUserPreference'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
+import { formatDateTime } from '../lib/dateTimeConfig'
 import type { TestPlan } from '../types'
 
-function planPeriodLabel(plan: TestPlan): string {
-  if (!plan.startDate && !plan.endDate) return '—'
-  const s = plan.startDate ? formatDate(plan.startDate + 'T00:00:00') : ''
-  const e = plan.endDate ? formatDate(plan.endDate + 'T00:00:00') : ''
-  if (s && e) return `${s} – ${e}`
-  if (s) return `From ${s}`
-  return `Through ${e}`
-}
-
-type SortKey = 'name' | 'description'
-type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
+type PlanSortKey = 'name' | 'description' | 'lastEdited' | 'recordCount'
 
 export function TestPlansList() {
   const [plans, setPlans] = useState<TestPlan[]>([])
   const [loading, setLoading] = useState(true)
   const [exportPlanId, setExportPlanId] = useState<string | null>(null)
-  const [sortOrder, setSortOrder] = useUserPreference<SortLevel[]>(
-    'atlas-test-plans-sort',
-    [{ key: 'name', dir: 'asc' }]
-  )
+  const [sortKey, setSortKey] = useState<PlanSortKey>('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const navigate = useNavigate()
-
-  const getVal = (plan: TestPlan, key: SortKey) =>
-    key === 'name' ? (plan.name ?? '') : (plan.description ?? '')
 
   const sortedPlans = useMemo(() => {
     const copy = [...plans]
     copy.sort((a, b) => {
-      for (const { key, dir } of sortOrder) {
-        const cmp = getVal(a, key).localeCompare(getVal(b, key), undefined, { sensitivity: 'base' })
-        const result = dir === 'asc' ? cmp : -cmp
-        if (result !== 0) return result
+      let aVal: string | number
+      let bVal: string | number
+      if (sortKey === 'name') {
+        aVal = a.name ?? ''
+        bVal = b.name ?? ''
+      } else if (sortKey === 'description') {
+        aVal = a.description ?? ''
+        bVal = b.description ?? ''
+      } else if (sortKey === 'lastEdited') {
+        aVal = a.updatedAt ?? a.createdAt ?? ''
+        bVal = b.updatedAt ?? b.createdAt ?? ''
+      } else {
+        aVal = a.recordCount ?? 0
+        bVal = b.recordCount ?? 0
       }
-      return 0
+      const cmp =
+        typeof aVal === 'number' && typeof bVal === 'number'
+          ? aVal - bVal
+          : String(aVal).localeCompare(String(bVal), undefined, { sensitivity: 'base' })
+      return sortDir === 'asc' ? cmp : -cmp
     })
     return copy
-  }, [plans, sortOrder])
+  }, [plans, sortKey, sortDir])
 
-  const handleSort = (key: SortKey, addSecondary: boolean) => {
-    setSortOrder((prev) => {
-      const idx = prev.findIndex((s) => s.key === key)
-      if (addSecondary) {
-        if (idx >= 0) {
-          const next = [...prev]
-          next[idx] = { ...next[idx], dir: next[idx].dir === 'asc' ? 'desc' : 'asc' }
-          return next
-        }
-        return [...prev, { key, dir: 'asc' }]
-      }
-      if (idx >= 0 && prev.length === 1) {
-        return [{ key, dir: prev[0].dir === 'asc' ? 'desc' : 'asc' }]
-      }
-      return [{ key, dir: 'asc' }]
-    })
+  const handleSort = (key: PlanSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
   }
-
-  const getSortHandlers = useSortableHeader(handleSort)
-  const getSortIndex = (key: SortKey) => sortOrder.findIndex((s) => s.key === key)
-  const getSortDir = (key: SortKey) => sortOrder.find((s) => s.key === key)?.dir
 
   const handleRowClick = (plan: TestPlan, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
-    navigate(`/test-plans/${plan.id}/data`)
+    navigate(`/test-plans/${plan.id}`)
   }
 
   useEffect(() => {
@@ -84,17 +67,21 @@ export function TestPlansList() {
 
   return (
     <div className="w-full min-w-0">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold text-foreground">Test Plans</h1>
-        {isAdmin && (
-          <Link
-            to="/test-plans/new"
-            state={{ returnTo: '/test-plans' }}
-            className="min-h-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
-          >
-            New Test Plan
-          </Link>
-        )}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Test Plans</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <Link
+              to="/test-plans/new"
+              state={{ returnTo: '/test-plans' }}
+              className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
+            >
+              New Test Plan
+            </Link>
+          )}
+        </div>
       </div>
       {loading ? (
         <p className="text-foreground/60">Loading...</p>
@@ -102,7 +89,7 @@ export function TestPlansList() {
         <>
           {/* Mobile: card layout */}
           <div className="w-full min-w-0 space-y-2 md:hidden">
-            {sortedPlans.length === 0 ? (
+            {plans.length === 0 ? (
               <p className="rounded-lg border border-border bg-card p-4 text-center text-foreground/60">
                 No test plans yet.
               </p>
@@ -117,11 +104,13 @@ export function TestPlansList() {
                   <p className="mt-0.5 truncate text-sm text-foreground/70">
                     {plan.description?.trim() || '—'}
                   </p>
-                  <p className="mt-0.5 text-xs text-foreground/60">
-                    {planPeriodLabel(plan)}
+                  <p className="mt-0.5 text-sm text-foreground/60">
+                    {(plan.updatedAt ?? plan.createdAt)
+                      ? formatDateTime((plan.updatedAt ?? plan.createdAt)!)
+                      : '—'}
                   </p>
                   <p className="mt-0.5 text-sm text-foreground/60">
-                    {plan.recordCount ?? 0} record{(plan.recordCount ?? 0) !== 1 ? 's' : ''}
+                    {plan.recordCount ?? 0}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                     <button
@@ -149,103 +138,111 @@ export function TestPlansList() {
             )}
           </div>
           {/* Desktop: table */}
-          <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
-          <table className="w-full">
-            <thead className="bg-card">
-              <tr>
-                <th
-                  className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
-                  {...getSortHandlers('name')}
-                  title="Tap to sort. Long-press or Shift+click to add secondary sort."
-                >
-                  <span className="flex items-center gap-1">
-                    Name
-                    {getSortIndex('name') >= 0 && (
-                      <span className="text-foreground/60">
-                        {getSortIndex('name') + 1}{getSortDir('name') === 'asc' ? '↑' : '↓'}
-                      </span>
-                    )}
-                  </span>
-                </th>
-                <th
-                  className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
-                  {...getSortHandlers('description')}
-                  title="Tap to sort. Long-press or Shift+click to add secondary sort."
-                >
-                  <span className="flex items-center gap-1">
-                    Description
-                    {getSortIndex('description') >= 0 && (
-                      <span className="text-foreground/60">
-                        {getSortIndex('description') + 1}{getSortDir('description') === 'asc' ? '↑' : '↓'}
-                      </span>
-                    )}
-                  </span>
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-foreground">
-                  Period
-                </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-foreground">
-                  Records
-                </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-foreground">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {sortedPlans.length === 0 ? (
+          <div className="hidden w-full min-w-0 overflow-x-auto overflow-y-auto rounded-lg border border-border md:block">
+            <table className="w-full">
+              <thead className="sticky top-0 z-10 border-b border-border bg-card">
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-foreground/60">
-                    No test plans yet.
-                  </td>
-                </tr>
-              ) : (
-                sortedPlans.map((plan) => (
-                <tr
-                  key={plan.id}
-                  onClick={(e) => handleRowClick(plan, e)}
-                  className="cursor-pointer bg-background transition-colors hover:bg-card"
-                >
-                  <td className="px-4 py-3 font-medium text-foreground">
-                    {plan.name}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-foreground/70">
-                    {plan.description?.trim() || '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-foreground/70">
-                    {planPeriodLabel(plan)}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm text-foreground/70">
-                    {plan.recordCount ?? 0} record{(plan.recordCount ?? 0) !== 1 ? 's' : ''}
-                  </td>
-                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setExportPlanId(plan.id)
-                        }}
-                        className="min-h-[44px] min-w-[44px] rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background sm:min-h-0 sm:min-w-0 sm:py-1"
-                      >
-                        Export
-                      </button>
-                      {isAdmin && (
-                        <Link
-                          to={`/test-plans/${plan.id}/edit`}
-                          state={{ returnTo: '/test-plans' }}
-                          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background sm:min-h-0 sm:min-w-0 sm:py-1"
-                        >
-                          Edit
-                        </Link>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                    onClick={() => handleSort('name')}
+                  >
+                    <span className="flex items-center gap-1">
+                      Name
+                      {sortKey === 'name' && (
+                        <span className="text-foreground/60">{sortDir === 'asc' ? '↓' : '↑'}</span>
                       )}
-                    </div>
-                  </td>
+                    </span>
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                    onClick={() => handleSort('description')}
+                  >
+                    <span className="flex items-center gap-1">
+                      Description
+                      {sortKey === 'description' && (
+                        <span className="text-foreground/60">{sortDir === 'asc' ? '↓' : '↑'}</span>
+                      )}
+                    </span>
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-right text-sm font-medium text-foreground hover:bg-background/50"
+                    onClick={() => handleSort('lastEdited')}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Last edited
+                      {sortKey === 'lastEdited' && (
+                        <span className="text-foreground/60">{sortDir === 'asc' ? '↓' : '↑'}</span>
+                      )}
+                    </span>
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-right text-sm font-medium text-foreground hover:bg-background/50"
+                    onClick={() => handleSort('recordCount')}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      Records
+                      {sortKey === 'recordCount' && (
+                        <span className="text-foreground/60">{sortDir === 'asc' ? '↓' : '↑'}</span>
+                      )}
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-right text-sm font-medium text-foreground">Actions</th>
                 </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {sortedPlans.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-6 text-center text-foreground/60">
+                      No test plans yet.
+                    </td>
+                  </tr>
+                ) : (
+                  sortedPlans.map((plan) => (
+                    <tr
+                      key={plan.id}
+                      onClick={(e) => handleRowClick(plan, e)}
+                      className="cursor-pointer bg-background transition-colors hover:bg-card"
+                    >
+                      <td className="px-4 py-3 font-medium text-foreground">{plan.name}</td>
+                      <td className="px-4 py-3 text-sm text-foreground/70">
+                        {plan.description?.trim() || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-foreground/70">
+                        {(plan.updatedAt ?? plan.createdAt)
+                          ? formatDateTime(plan.updatedAt ?? plan.createdAt!)
+                          : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-foreground/70">
+                        {plan.recordCount ?? 0}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex shrink-0 justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setExportPlanId(plan.id)
+                            }}
+                            className="shrink-0 rounded border border-border px-3 py-1.5 text-sm text-foreground hover:bg-background"
+                          >
+                            Export
+                          </button>
+                          {isAdmin && (
+                            <Link
+                              to={`/test-plans/${plan.id}/edit`}
+                              state={{ returnTo: '/test-plans' }}
+                              className="shrink-0 rounded border border-border px-3 py-1.5 text-sm text-foreground hover:bg-background"
+                            >
+                              Edit
+                            </Link>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </>
       )}

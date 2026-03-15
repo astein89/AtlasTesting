@@ -58,7 +58,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
   datetime: 'Date/time',
   select: 'Select',
   status: 'Status',
-  fraction: 'Fraction (inches)',
+  fraction: 'Dimension',
   weight: 'Weight',
   atlas_location: 'Atlas Location',
   image: 'Image',
@@ -174,7 +174,7 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
             label="Type"
             value={field.value}
             onChange={field.onChange}
-            options={TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
+            options={[...TYPES].sort((a, b) => TYPE_LABELS[a].localeCompare(TYPE_LABELS[b])).map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
           />
         )}
       />

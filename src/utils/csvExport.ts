@@ -11,6 +11,8 @@ interface Record {
   enteredByName?: string
   status: string
   data: Record<string, string | number | boolean | string[] | TimerValue>
+  /** When present (e.g. from API with test_id joined), used for "Test" column in export */
+  testName?: string
 }
 
 export function recordsToCsv(
@@ -18,11 +20,16 @@ export function recordsToCsv(
   options?: {
     /** Optional explicit order for data keys (field keys); any remaining keys are appended alphabetically. */
     fieldOrder?: string[]
+    /** When provided (e.g. export from a test's data view), add a "Test" column with this value. */
+    testName?: string
   }
 ): string {
   if (records.length === 0) return ''
 
-  const fixedPrefix = ['recordId', 'planName', 'recordedAt', 'User']
+  const includeTestColumn = Boolean(options?.testName) || records.some((r) => r.testName)
+  const fixedPrefix = includeTestColumn
+    ? ['recordId', 'planName', 'Test', 'recordedAt', 'User']
+    : ['recordId', 'planName', 'recordedAt', 'User']
   const fieldOrder = options?.fieldOrder ?? []
 
   // When fieldOrder is provided, use it as the exclusive list of data columns (plan fields only).
@@ -37,12 +44,15 @@ export function recordsToCsv(
         })()
 
   const headers = [...fixedPrefix, ...orderedDataKeys]
+  const singleTestName = options?.testName ?? ''
 
   const rows = records.map((r) => {
     const row: string[] = []
+    const rowTestName = singleTestName || r.testName || ''
     headers.forEach((h) => {
       if (h === 'recordId') row.push(r.id)
       else if (h === 'planName') row.push(escapeCsv(r.planName))
+      else if (h === 'Test') row.push(escapeCsv(rowTestName))
       else if (h === 'recordedAt') row.push(escapeCsv(formatDateTime(r.recordedAt)))
       else if (h === 'User') row.push(escapeCsv(r.enteredByName ?? r.enteredBy ?? ''))
       else {

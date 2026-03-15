@@ -2,10 +2,13 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import { testsRouter } from './tests.js'
 
 const router = Router()
 
 router.use(authMiddleware)
+
+router.use('/:planId/tests', testsRouter)
 
 function parseFormLayoutOrder(formLayout: string | null): string[] {
   try {
@@ -82,6 +85,7 @@ router.get('/', (_, res) => {
     field_layout: string | null
     form_layout: string | null
     created_at: string
+    updated_at?: string | null
   }>
   const counts = db
     .prepare(
@@ -110,6 +114,7 @@ router.get('/', (_, res) => {
         (r as { default_visible_columns?: string | null }).default_visible_columns ?? null
       ),
       createdAt: r.created_at,
+      updatedAt: (r as { updated_at?: string | null }).updated_at ?? null,
       recordCount: countByPlan.get(r.id) ?? 0,
     }))
   )
@@ -477,6 +482,7 @@ router.put('/:id', requireAdmin, (req, res) => {
   }
   if (updates.length === 0) {
     const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
+      updated_at?: string | null
       id: string
       name: string
       description: string | null
@@ -511,8 +517,10 @@ router.put('/:id', requireAdmin, (req, res) => {
         (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
       ),
       createdAt: row.created_at,
+      updatedAt: (row as { updated_at?: string | null }).updated_at ?? null,
     })
   }
+  updates.push('updated_at = datetime(\'now\')')
   values.push(id)
   db.prepare(`UPDATE test_plans SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
@@ -528,6 +536,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     field_defaults?: string | null
     key_field?: string | null
     created_at: string
+    updated_at?: string | null
     default_visible_columns?: string | null
   }
   res.json({
@@ -551,6 +560,7 @@ router.put('/:id', requireAdmin, (req, res) => {
       (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
     ),
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? null,
   })
 })
 
@@ -559,6 +569,7 @@ router.delete('/:id', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })
   db.prepare('DELETE FROM test_runs WHERE test_plan_id = ?').run(id)
+  db.prepare('DELETE FROM tests WHERE test_plan_id = ?').run(id)
   db.prepare('DELETE FROM test_plans WHERE id = ?').run(id)
   res.status(204).send()
 })

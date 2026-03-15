@@ -4,7 +4,7 @@ import {
   formatDecimalAsFractionWithScale,
   fractionToDecimal,
   getFractionOptions,
-  FRACTION_SCALES,
+  roundToFractionScale,
   type FractionScale,
 } from '../../utils/fraction'
 
@@ -16,20 +16,8 @@ interface FractionInputProps {
   defaultScale?: FractionScale
   /** Base storage unit for this field: 'in' for inches, 'mm' for millimetres. Defaults to 'in'. */
   storageUnit?: 'in' | 'mm'
-}
-
-function inferScale(value: number, defaultScale: FractionScale): FractionScale {
-  const remainder = value - Math.floor(value)
-  if (remainder === 0) return defaultScale
-  // Prefer defaultScale if the value can be represented in it
-  const defaultParts = remainder * defaultScale
-  if (Math.abs(defaultParts - Math.round(defaultParts)) < 1e-10) return defaultScale
-  // Otherwise find the coarsest scale that fits (prefer simpler denominators)
-  for (const scale of [...FRACTION_SCALES].reverse()) {
-    const parts = remainder * scale
-    if (Math.abs(parts - Math.round(parts)) < 1e-10) return scale
-  }
-  return 128
+  /** Default unit when opening the keypad. If not set, uses storageUnit. */
+  entryUnit?: 'in' | 'mm'
 }
 
 export function FractionInput({
@@ -38,12 +26,15 @@ export function FractionInput({
   className = '',
   defaultScale = 16,
   storageUnit = 'in',
+  entryUnit,
 }: FractionInputProps) {
   const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<'in' | 'mm'>(storageUnit === 'mm' ? 'mm' : 'in')
+  const [mode, setMode] = useState<'in' | 'mm'>((entryUnit ?? storageUnit) === 'mm' ? 'mm' : 'in')
   const [wholePart, setWholePart] = useState('')
   const [fracPart, setFracPart] = useState<{ num: number; denom: number } | null>(null)
   const [scale, setScale] = useState<FractionScale>(defaultScale)
+  /** When set, use this exact remainder (in inches) for getCurrentValue() in 'in' mode so unit switch preserves value. */
+  const [exactRemainder, setExactRemainder] = useState<number | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -54,27 +45,28 @@ export function FractionInput({
     return () => window.removeEventListener('keydown', handler)
   }, [open])
 
-  // Initialize keypad from a storage value (used when opening the modal).
+  // Initialize keypad from a storage value (used when opening the modal or switching unit).
   const syncInputsFromStorage = (nextMode: 'in' | 'mm', storage: number) => {
     if (nextMode === 'mm') {
       const mmValue = storageUnit === 'in' ? storage * 25.4 : storage
       const rounded = Number.isFinite(mmValue) ? mmValue : 0
       setWholePart(rounded ? String(rounded) : '')
       setFracPart(null)
+      setExactRemainder(null)
     } else {
       const baseInches = storageUnit === 'mm' ? storage / 25.4 : storage
       const whole = Math.floor(baseInches)
       const remainder = baseInches - whole
-      const inferredScale = remainder > 0 ? inferScale(baseInches, defaultScale) : defaultScale
-      setScale(inferredScale)
-      const parts = Math.round(remainder * inferredScale)
+      setScale(defaultScale)
+      const parts = Math.round(remainder * defaultScale)
       setWholePart(whole > 0 ? String(whole) : '')
-      setFracPart(parts > 0 ? { num: parts, denom: inferredScale } : null)
+      setFracPart(parts > 0 ? { num: parts, denom: defaultScale } : null)
+      setExactRemainder(remainder)
     }
   }
 
   const openKeypad = () => {
-    const initialMode: 'in' | 'mm' = storageUnit === 'mm' ? 'mm' : 'in'
+    const initialMode: 'in' | 'mm' = (entryUnit ?? storageUnit) === 'mm' ? 'mm' : 'in'
     setMode(initialMode)
     const storage = Number.isFinite(value) ? value : 0
     syncInputsFromStorage(initialMode, storage)
@@ -88,7 +80,8 @@ export function FractionInput({
       return storageUnit === 'in' ? mm / 25.4 : mm
     }
     const whole = parseFloat(wholePart || '0') || 0
-    const frac = fracPart ? fractionToDecimal(fracPart.num, fracPart.denom) : 0
+    const frac =
+      exactRemainder !== null ? exactRemainder : fracPart ? fractionToDecimal(fracPart.num, fracPart.denom) : 0
     const inches = whole + frac
     if (storageUnit === 'mm') {
       return inches * 25.4
@@ -101,10 +94,12 @@ export function FractionInput({
   }
 
   const handleDigit = (d: string) => {
+    setExactRemainder(null)
     setWholePart((p) => (p === '0' && d === '0' ? '0' : p + d))
   }
 
   const handleDot = () => {
+    setExactRemainder(null)
     setWholePart((p) => {
       const current = p || '0'
       return current.includes('.') ? current : current + '.'
@@ -112,16 +107,19 @@ export function FractionInput({
   }
 
   const handleBackspace = () => {
+    setExactRemainder(null)
     setWholePart((p) => p.slice(0, -1))
   }
 
   const handleClear = () => {
     setWholePart('')
     setFracPart(null)
+    setExactRemainder(null)
   }
 
   const handleFraction = (num: number, denom: number) => {
     setFracPart(num === denom ? null : { num, denom })
+    setExactRemainder(null)
   }
 
   const handleDone = () => {
@@ -132,6 +130,17 @@ export function FractionInput({
   const storageVal = Number.isFinite(value) ? value : 0
   const inchesVal = storageUnit === 'in' ? storageVal : storageVal / 25.4
   const mmVal = storageUnit === 'mm' ? storageVal : storageVal * 25.4
+
+  // Only show "~" when we display inches and the value is rounded to the field's fraction scale.
+  // Never show "~" when storage is mm or when the modal is displaying in mm.
+  const isRoundedInInches =
+    storageUnit === 'in' &&
+    Math.abs(inchesVal - roundToFractionScale(inchesVal, defaultScale)) > 1e-10
+  const isRounded = isRoundedInInches
+  const isRoundedInModal = isRoundedInInches && (mode === 'in' || !open)
+  const exactTooltip = isRounded
+    ? `Exact: ${Number(storageVal.toFixed(10))} ${storageUnit === 'mm' ? 'mm' : 'in'}`
+    : ''
 
   const formatMm = (n: number) => {
     if (!Number.isFinite(n)) return ''
@@ -172,9 +181,10 @@ export function FractionInput({
         type="button"
         onClick={openKeypad}
         className="min-h-[44px] w-full min-w-0 rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        title={exactTooltip || undefined}
       >
         <span className="inline-block max-w-full truncate align-middle">
-          {!open && value === 0 ? 'Click to enter' : (displayValueStorage || '0')}
+          {isRounded && value !== 0 && '~ '}{!open && value === 0 ? 'Click to enter' : (displayValueStorage || '0')}
           {value === 0 && !open ? '' : storageUnitLabel}
         </span>
       </button>
@@ -195,8 +205,11 @@ export function FractionInput({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between gap-2">
-              <span className="text-lg font-medium text-foreground">
-                {displayValueModal || '0'} {mode === 'mm' ? 'mm' : 'in'}
+              <span
+                className="text-lg font-medium text-foreground"
+                title={exactTooltip || undefined}
+              >
+                {isRoundedInModal ? '~ ' : ''}{displayValueModal || '0'} {mode === 'mm' ? 'mm' : 'in'}
               </span>
               <div className="flex items-center gap-1 rounded-full border border-border bg-background px-1 py-0.5 text-xs">
                 <button

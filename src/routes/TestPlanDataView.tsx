@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import { useUserPreference } from '../hooks/useUserPreference'
-import { format, addDays } from 'date-fns'
 import { formatDate, formatDateTime } from '../lib/dateTimeConfig'
 import { api } from '../api/client'
+import { getTests, getTest, updateTest } from '../api/tests'
 import { formatDecimalAsFraction } from '../utils/fraction'
 import { useAuthStore } from '../store/authStore'
 import { EditRecordModal } from '../components/data/EditRecordModal'
@@ -23,7 +23,7 @@ import {
   parseFieldEntry,
   truncateFormRowsForCompact,
 } from '../utils/formLayout'
-import type { DataField, TestPlan, TimerValue } from '../types'
+import type { DataField, Test, TestPlan, TimerValue } from '../types'
 import { getStatusOptions } from '../types'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from '../utils/timer'
 import { getDefaultValueForField } from '../utils/fieldDefaults'
@@ -95,9 +95,10 @@ function getDefaultData(
 }
 
 export function TestPlanDataView() {
-  const { planId } = useParams<{ planId: string }>()
+  const { planId, testId } = useParams<{ planId: string; testId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const [plan, setPlan] = useState<TestPlan | null>(null)
+  const [currentTest, setCurrentTest] = useState<Test | null>(null)
   const [fields, setFields] = useState<DataField[]>([])
   const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
@@ -106,25 +107,14 @@ export function TestPlanDataView() {
   const [editData, setEditData] = useState<Record<string, string | number | boolean | string[] | TimerValue>>({})
   const [addData, setAddData] = useState<Record<string, string | number | boolean | string[] | TimerValue>>({})
   const [submitting, setSubmitting] = useState(false)
-  const [archiving, setArchiving] = useState(false)
-  const [reinstatingRun, setReinstatingRun] = useState<{ startDate: string; endDate: string } | null>(null)
-  const [deletingRun, setDeletingRun] = useState<{ startDate: string; endDate: string } | null>(null)
-  const [deleteArchivePending, setDeleteArchivePending] = useState<{ startDate: string; endDate: string } | null>(null)
-  const [reinstateChoicePending, setReinstateChoicePending] = useState<{ startDate: string; endDate: string } | null>(null)
-  const [showArchiveModal, setShowArchiveModal] = useState(false)
-  const [archiveConfirmPending, setArchiveConfirmPending] = useState<{ runStart: string; runEnd: string } | null>(null)
   const [deleteRecordPending, setDeleteRecordPending] = useState<string | null>(null)
-  const [showAddRowDatesModal, setShowAddRowDatesModal] = useState(false)
-  const [addRowStartDate, setAddRowStartDate] = useState('')
-  const [addRowEndDate, setAddRowEndDate] = useState('')
-  const [archiveStartDate, setArchiveStartDate] = useState('')
-  const [archiveEndDate, setArchiveEndDate] = useState('')
-  const [viewingArchivedRun, setViewingArchivedRun] = useState<{ startDate: string; endDate: string } | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
-  const [planInfoCollapsed, setPlanInfoCollapsed] = useState(() =>
-    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false
-  )
-  const [searchQuery, setSearchQuery] = useState('')
+  const [persistTableFilters] = useUserPreference('atlas-persist-table-filters', false)
+  const searchPrefKey = `atlas-data-search-${planId ?? 'default'}`
+  const [prefSearch, setPrefSearch] = useUserPreference(searchPrefKey, '')
+  const [localSearch, setLocalSearch] = useState('')
+  const searchQuery = persistTableFilters ? prefSearch : localSearch
+  const setSearchQuery = persistTableFilters ? setPrefSearch : setLocalSearch
   type ViewMode = 'table' | 'card' | 'compact-card' | 'responsive'
   const [viewMode, setViewMode] = useUserPreference<ViewMode>('atlas-data-view-mode', 'responsive')
   const [isMobile, setIsMobile] = useState(false)
@@ -144,7 +134,50 @@ export function TestPlanDataView() {
   const showTableView = effectiveViewMode === 'table'
   const showCardView = effectiveViewMode === 'card' || effectiveViewMode === 'compact-card'
   const compactCards = effectiveViewMode === 'compact-card'
-  const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({})
+  const columnFiltersPrefKey = `atlas-data-column-filters-${planId ?? 'default'}`
+  const serializeColumnFilters = (v: Record<string, string[]>) => JSON.stringify(v)
+  const deserializeColumnFilters = (s: string): Record<string, string[]> => {
+    try {
+      const o = JSON.parse(s)
+      if (typeof o !== 'object' || o === null) return {}
+      return Object.fromEntries(
+        Object.entries(o).map(([k, v]) => [k, Array.isArray(v) ? v.map(String) : []])
+      )
+    } catch {
+      return {}
+    }
+  }
+  const [prefColumnFiltersArr, setPrefColumnFiltersArr] = useUserPreference<Record<string, string[]>>(
+    columnFiltersPrefKey,
+    {},
+    serializeColumnFilters,
+    deserializeColumnFilters
+  )
+  const prefColumnFilters = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(prefColumnFiltersArr).map(([k, v]) => [k, new Set(v)] as const)
+      ),
+    [prefColumnFiltersArr]
+  )
+  const setPrefColumnFilters = useCallback(
+    (valueOrUpdater: Record<string, Set<string>> | ((prev: Record<string, Set<string>>) => Record<string, Set<string>>)) => {
+      setPrefColumnFiltersArr((prevArr) => {
+        const prevSets = Object.fromEntries(
+          Object.entries(prevArr).map(([k, v]) => [k, new Set(v)] as const)
+        )
+        const nextSets =
+          typeof valueOrUpdater === 'function' ? valueOrUpdater(prevSets) : valueOrUpdater
+        return Object.fromEntries(
+          Object.entries(nextSets).map(([k, v]) => [k, [...v]] as const)
+        )
+      })
+    },
+    [setPrefColumnFiltersArr]
+  )
+  const [localColumnFilters, setLocalColumnFilters] = useState<Record<string, Set<string>>>({})
+  const columnFilters = persistTableFilters ? prefColumnFilters : localColumnFilters
+  const setColumnFilters = persistTableFilters ? setPrefColumnFilters : setLocalColumnFilters
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
   const [showMobileFilterPanel, setShowMobileFilterPanel] = useState(false)
   const statusTabPrefKey = `atlas-data-status-tab-${planId ?? 'default'}`
@@ -154,18 +187,27 @@ export function TestPlanDataView() {
   const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const canEditData = useAuthStore((s) => s.canEditData())
-  const { showAlert } = useAlertConfirm()
+  const isArchived = currentTest?.archived === true
+  const editingAllowed = canEditData && (!testId || (currentTest != null && !currentTest.archived))
+  const { showAlert, showConfirm } = useAlertConfirm()
+  const navigate = useNavigate()
 
   const columnsPrefKey = planId ? `atlas-data-hidden-columns-${planId}` : 'atlas-data-hidden-columns-default'
   const [hiddenColumnKeys, setHiddenColumnKeys] = useUserPreference<string[]>(columnsPrefKey, [])
   const [directTableEdit, setDirectTableEdit] = useUserPreference('atlas-direct-table-edit', false)
   const [bulkSelectMode, setBulkSelectMode] = useUserPreference('atlas-bulk-select-mode', false)
+  const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
+  const [recordModalViewOnly, setRecordModalViewOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
   const [showBulkAddRowsModal, setShowBulkAddRowsModal] = useState(false)
   const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditFieldKey, setBulkEditFieldKey] = useState<string | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState<string | number | boolean | string[] | TimerValue | null>(null)
+  const [showMoveToTestModal, setShowMoveToTestModal] = useState(false)
+  const [otherTests, setOtherTests] = useState<Array<{ id: string; name: string }>>([])
+  const [moveToTestId, setMoveToTestId] = useState<string>('')
+  const [restoringFromArchive, setRestoringFromArchive] = useState(false)
   const visibleFields = useMemo(() => {
     const allTableFields = fields
     // If admin configured defaultVisibleColumnIds and user has not customized columns
@@ -203,185 +245,12 @@ export function TestPlanDataView() {
   }
 
   const loadRecords = useCallback(() => {
-    if (!planId) return
+    if (!planId || !testId) return
     api
-      .get<Record[]>('/records', { params: { testPlanId: planId, limit: 100 } })
+      .get<Record[]>('/records', { params: { testPlanId: planId, testId, limit: 100 } })
       .then((r) => setRecords(r.data))
       .catch(() => setRecords([]))
-  }, [planId])
-
-  const handleArchiveCurrent = useCallback(
-    (startDateStr: string, endDateStr: string) => {
-      if (!planId || !plan) return
-      setArchiving(true)
-      const startDate = startDateStr.trim() || format(new Date(), 'yyyy-MM-dd')
-      const endDate = endDateStr.trim() || format(new Date(), 'yyyy-MM-dd')
-      const archivedRuns = [...(plan.archivedRuns ?? []), { startDate, endDate }]
-      api
-        .put(`/test-plans/${planId}`, { archivedRuns, startDate: null, endDate: null })
-        .then(() =>
-          api.get<TestPlan>(`/test-plans/${planId}`).then((r) => {
-            setPlan(r.data)
-            setViewingArchivedRunAndUrl(null)
-            setShowArchiveModal(false)
-            loadRecords()
-          })
-        )
-        .catch((e: unknown) => {
-          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-          showAlert(msg || 'Failed to archive')
-        })
-        .finally(() => setArchiving(false))
-    },
-    [planId, plan, loadRecords]
-  )
-
-  /** Whether the current plan period has any records (so we can offer merge vs archive current). */
-  const currentPeriodHasRecords = useMemo(() => {
-    const start = plan?.startDate
-    const end = plan?.endDate
-    const startMs = start ? new Date(start + 'T00:00:00').getTime() : -Infinity
-    const endMs = end ? new Date(end + 'T23:59:59.999').getTime() : Infinity
-    return records.some((r) => {
-      if (r.runId) return false
-      const t = new Date(r.recordedAt).getTime()
-      return t >= startMs && t <= endMs
-    })
-  }, [records, plan?.startDate, plan?.endDate])
-
-  const handleReinstateRun = useCallback(
-    (run: { startDate: string; endDate: string }) => {
-      if (!planId || !plan) return
-      setReinstatingRun(run)
-      const archivedRuns = (plan.archivedRuns ?? []).filter(
-        (r) => !(r.startDate === run.startDate && r.endDate === run.endDate)
-      )
-      api
-        .put(`/test-plans/${planId}`, {
-          startDate: run.startDate,
-          endDate: run.endDate,
-          archivedRuns,
-        })
-        .then(() =>
-          api.get<TestPlan>(`/test-plans/${planId}`).then((r) => {
-            setPlan(r.data)
-            setViewingArchivedRunAndUrl(null)
-            setShowArchiveModal(false)
-            setReinstateChoicePending(null)
-            loadRecords()
-          })
-        )
-        .catch((e: unknown) => {
-          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-          showAlert(msg || 'Failed to reinstate run')
-        })
-        .finally(() => setReinstatingRun(null))
-    },
-    [planId, plan, loadRecords]
-  )
-
-  const handleReinstateMerge = useCallback(
-    (run: { startDate: string; endDate: string }) => {
-      if (!planId || !plan) return
-      setReinstatingRun(run)
-      const mergedStart =
-        [plan.startDate, run.startDate].filter(Boolean).length > 0
-          ? [plan.startDate, run.startDate].filter(Boolean).sort()[0]
-          : run.startDate
-      const mergedEnd =
-        [plan.endDate, run.endDate].filter(Boolean).length > 0
-          ? [plan.endDate, run.endDate].filter(Boolean).sort().reverse()[0]
-          : run.endDate
-      const archivedRuns = (plan.archivedRuns ?? []).filter(
-        (r) => !(r.startDate === run.startDate && r.endDate === run.endDate)
-      )
-      api
-        .put(`/test-plans/${planId}`, {
-          startDate: mergedStart,
-          endDate: mergedEnd,
-          archivedRuns,
-        })
-        .then(() =>
-          api.get<TestPlan>(`/test-plans/${planId}`).then((r) => {
-            setPlan(r.data)
-            setViewingArchivedRunAndUrl(null)
-            setShowArchiveModal(false)
-            setReinstateChoicePending(null)
-            loadRecords()
-          })
-        )
-        .catch((e: unknown) => {
-          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-          showAlert(msg || 'Failed to merge')
-        })
-        .finally(() => setReinstatingRun(null))
-    },
-    [planId, plan, loadRecords]
-  )
-
-  const handleDeleteArchivedRun = useCallback(
-    (run: { startDate: string; endDate: string }) => {
-      if (!planId || !plan) return
-      setDeletingRun(run)
-      const archivedRuns = (plan.archivedRuns ?? []).filter(
-        (r) => !(r.startDate === run.startDate && r.endDate === run.endDate)
-      )
-      api
-        .put(`/test-plans/${planId}`, { archivedRuns })
-        .then(() =>
-          api.get<TestPlan>(`/test-plans/${planId}`).then((r) => {
-            setPlan(r.data)
-            if (viewingArchivedRun?.startDate === run.startDate && viewingArchivedRun?.endDate === run.endDate) {
-              setViewingArchivedRunAndUrl(null)
-            }
-            setShowArchiveModal(false)
-            loadRecords()
-          })
-        )
-        .catch((e: unknown) => {
-          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-          showAlert(msg || 'Failed to delete archived run')
-        })
-        .finally(() => setDeletingRun(null))
-    },
-    [planId, plan, viewingArchivedRun, loadRecords]
-  )
-
-  const handleReinstateArchiveCurrent = useCallback(
-    (run: { startDate: string; endDate: string }) => {
-      if (!planId || !plan) return
-      setReinstatingRun(run)
-      const currentStart = plan.startDate ?? run.startDate
-      const currentEnd = plan.endDate ?? run.endDate
-      const archivedRuns = [
-        ...(plan.archivedRuns ?? []).filter(
-          (r) => !(r.startDate === run.startDate && r.endDate === run.endDate)
-        ),
-        { startDate: currentStart, endDate: currentEnd },
-      ]
-      api
-        .put(`/test-plans/${planId}`, {
-          startDate: run.startDate,
-          endDate: run.endDate,
-          archivedRuns,
-        })
-        .then(() =>
-          api.get<TestPlan>(`/test-plans/${planId}`).then((r) => {
-            setPlan(r.data)
-            setViewingArchivedRunAndUrl(null)
-            setShowArchiveModal(false)
-            setReinstateChoicePending(null)
-            loadRecords()
-          })
-        )
-        .catch((e: unknown) => {
-          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-          showAlert(msg || 'Failed to reinstate')
-        })
-        .finally(() => setReinstatingRun(null))
-    },
-    [planId, plan, loadRecords]
-  )
+  }, [planId, testId])
 
   useEffect(() => {
     if (!planId) return
@@ -416,6 +285,13 @@ export function TestPlanDataView() {
   }, [planId, loadRecords])
 
   useEffect(() => {
+    if (!planId || !testId) return
+    getTest(planId, testId)
+      .then((t) => setCurrentTest(t))
+      .catch(() => setCurrentTest(null))
+  }, [planId, testId])
+
+  useEffect(() => {
     if (!planId) return
     const onVisible = () => {
       if (document.visibilityState === 'visible') loadRecords()
@@ -433,62 +309,21 @@ export function TestPlanDataView() {
     return () => clearInterval(id)
   }, [planId, loadRecords])
 
-  const runParam = searchParams.get('run')
-  useEffect(() => {
-    if (!plan?.archivedRuns?.length || !runParam) return
-    const parts = runParam.split('_')
-    if (parts.length !== 2) return
-    const [startDate, endDate] = parts
-    const run = plan.archivedRuns.find((r) => r.startDate === startDate && r.endDate === endDate)
-    if (run) setViewingArchivedRun(run)
-  }, [plan?.archivedRuns, runParam])
-
-  const setViewingArchivedRunAndUrl = useCallback(
-    (run: { startDate: string; endDate: string } | null) => {
-      setViewingArchivedRun(run)
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          if (run) next.set('run', `${run.startDate}_${run.endDate}`)
-          else next.delete('run')
-          const s = next.toString()
-          return s ? next : new URLSearchParams()
-        },
-        { replace: true }
-      )
-    },
-    [setSearchParams]
-  )
-
   const hasModalOpen =
-    showArchiveModal ||
-    !!reinstateChoicePending ||
-    !!deleteArchivePending ||
-    !!archiveConfirmPending ||
     !!deleteRecordPending ||
-    showAddRowDatesModal ||
     showExportModal ||
     !!editingId ||
     isAdding ||
     showBulkEditModal ||
     bulkDeletePending ||
-    showBulkAddRowsModal
+    showBulkAddRowsModal ||
+    showMoveToTestModal
 
   const closeTopmostModal = useCallback(() => {
-    if (reinstateChoicePending) {
-      setReinstateChoicePending(null)
-      setShowArchiveModal(true)
-    } else if (deleteArchivePending) {
-      setDeleteArchivePending(null)
-    } else if (archiveConfirmPending) {
-      setArchiveConfirmPending(null)
-      setShowArchiveModal(true)
-    } else if (deleteRecordPending) {
+    if (deleteRecordPending) {
       setDeleteRecordPending(null)
-    } else if (showAddRowDatesModal) {
-      setShowAddRowDatesModal(false)
-    } else if (showArchiveModal) {
-      setShowArchiveModal(false)
+    } else if (showMoveToTestModal) {
+      setShowMoveToTestModal(false)
     } else if (showBulkEditModal) {
       setShowBulkEditModal(false)
     } else if (bulkDeletePending) {
@@ -507,14 +342,10 @@ export function TestPlanDataView() {
       setIsAdding(false)
     }
   }, [
-    reinstateChoicePending,
-    deleteArchivePending,
-    archiveConfirmPending,
     deleteRecordPending,
-    showAddRowDatesModal,
-    showArchiveModal,
     showBulkEditModal,
     bulkDeletePending,
+    showMoveToTestModal,
     showExportModal,
     editingId,
     isAdding,
@@ -582,40 +413,9 @@ export function TestPlanDataView() {
   }, [editingIdFromUrl, records])
 
   const startAdd = () => {
-    if (!plan?.startDate?.trim()) {
-      setAddRowStartDate(plan?.startDate || format(new Date(), 'yyyy-MM-dd'))
-      setAddRowEndDate(plan?.endDate || '')
-      setShowAddRowDatesModal(true)
-      return
-    }
     setIsAdding(true)
-    if (fields.length > 0) setAddData(getDefaultData(fields, plan))
+    if (fields.length > 0 && plan) setAddData(getDefaultData(fields, plan))
   }
-
-  const confirmAddRowDates = useCallback(async () => {
-    if (!planId || !plan) return
-    const start = addRowStartDate.trim()
-    if (!start) {
-      showAlert('Enter a start date.')
-      return
-    }
-    setSubmitting(true)
-    try {
-      const res = await api.put<TestPlan>(`/test-plans/${planId}`, {
-        startDate: start,
-        endDate: addRowEndDate.trim() || null,
-      })
-      setPlan(res.data)
-      setShowAddRowDatesModal(false)
-      setIsAdding(true)
-      if (fields.length > 0) setAddData(getDefaultData(fields, res.data))
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      showAlert(msg || 'Failed to set dates')
-    } finally {
-      setSubmitting(false)
-    }
-  }, [planId, plan, addRowStartDate, addRowEndDate, fields])
 
   useEffect(() => {
     if (isAdding && fields.length > 0) {
@@ -626,12 +426,12 @@ export function TestPlanDataView() {
   const cancelAdd = () => setIsAdding(false)
 
   const saveAdd = async () => {
-    if (!planId) return
+    if (!planId || !testId) return
     setSubmitting(true)
     try {
-      // New rows always use server "now" and go to the current period, never into an archived run
       await api.post('/records', {
         testPlanId: planId,
+        testId,
         data: computeFormulaValues(fields, addData),
         status: 'partial',
       })
@@ -648,6 +448,7 @@ export function TestPlanDataView() {
   const startEdit = (record: Record) => {
     setEditingId(record.id)
     setEditData(computeFormulaValues(fields, record.data))
+    setRecordModalViewOnly(openRecordsViewOnly)
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       next.set('editing', record.id)
@@ -666,7 +467,25 @@ export function TestPlanDataView() {
 
   const cancelEdit = () => {
     setEditingId(null)
+    setRecordModalViewOnly(false)
     clearEditingParam()
+  }
+
+  const handleRestoreFromArchive = async () => {
+    if (!planId || !testId) return
+    const ok = await showConfirm(
+      'Restore this test? It will appear in the main test list again and you can edit data.'
+    )
+    if (!ok) return
+    setRestoringFromArchive(true)
+    try {
+      await updateTest(planId, testId, { archived: false })
+      navigate(`/test-plans/${planId}`)
+    } catch {
+      showAlert('Failed to restore test.')
+    } finally {
+      setRestoringFromArchive(false)
+    }
   }
 
   const deleteRecord = async (recordId: string) => {
@@ -740,6 +559,32 @@ export function TestPlanDataView() {
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
       showAlert(err || 'Failed to update some rows')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const openMoveToTestModal = useCallback(() => {
+    if (!planId || !testId) return
+    getTests(planId)
+      .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
+      .catch(() => setOtherTests([]))
+    setMoveToTestId('')
+    setShowMoveToTestModal(true)
+  }, [planId, testId])
+
+  const handleMoveToTest = async () => {
+    if (!moveToTestId || selectedIds.size === 0) return
+    const ids = [...selectedIds]
+    setSubmitting(true)
+    try {
+      await Promise.all(ids.map((id) => api.put(`/records/${id}`, { testId: moveToTestId })))
+      loadRecords()
+      setShowMoveToTestModal(false)
+      setSelectedIds(new Set())
+    } catch (e: unknown) {
+      const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showAlert(err || 'Failed to move some rows')
     } finally {
       setSubmitting(false)
     }
@@ -885,21 +730,8 @@ export function TestPlanDataView() {
     return dir === 'asc' ? cmp : -cmp
   }
 
-  /** When viewing an archived run, show only that run; otherwise show all current-run records (no date filter). */
-  const displayRecords = useMemo(() => {
-    if (viewingArchivedRun) {
-      if (viewingArchivedRun.runId) {
-        return recordsWithComputed.filter((r) => r.runId === viewingArchivedRun.runId)
-      }
-      const startMs = new Date(viewingArchivedRun.startDate + 'T00:00:00').getTime()
-      const endMs = new Date(viewingArchivedRun.endDate + 'T23:59:59.999').getTime()
-      return recordsWithComputed.filter((r) => {
-        const t = new Date(r.recordedAt).getTime()
-        return t >= startMs && t <= endMs
-      })
-    }
-    return recordsWithComputed.filter((r) => !r.runId)
-  }, [recordsWithComputed, plan?.archivedRuns, viewingArchivedRun])
+  /** Records for the current test (loaded by testId). */
+  const displayRecords = useMemo(() => recordsWithComputed, [recordsWithComputed])
 
   const sortedRecords = useMemo(() => {
     const copy = [...displayRecords]
@@ -1052,157 +884,73 @@ export function TestPlanDataView() {
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
-      <div className="mb-2 flex min-h-[44px] shrink-0 items-center justify-between gap-2 sm:min-h-0">
-        <Link
-          to="/test-plans"
-          className="w-fit text-sm text-foreground/60 hover:text-foreground"
-        >
-          ← Back to plans
-        </Link>
-        {isAdmin && (
-          <div className="flex shrink-0 items-center gap-2">
-            <Link
-              to={`/test-plans/${plan.id}/edit`}
-              state={{ returnTo: `/test-plans/${planId}/data` }}
-              className="min-h-[44px] flex min-w-[44px] items-center justify-center rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-            >
-              Edit plan
-            </Link>
-            <button
-              type="button"
-              onClick={() => {
-                setArchiveStartDate(plan.startDate || '')
-                setArchiveEndDate(plan.endDate || format(new Date(), 'yyyy-MM-dd'))
-                setShowArchiveModal(true)
-              }}
-              className="min-h-[44px] shrink-0 rounded-lg border border-amber-500/50 px-4 py-2 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400 sm:min-h-0"
-              title="View archived runs or archive current testing"
-            >
-              Archive
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="mb-4 flex min-w-0 shrink-0 flex-col">
-        <h1 className="text-2xl font-semibold text-foreground">{plan.name}</h1>
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-end sm:gap-x-5 sm:gap-y-1">
-            {plan.description && (
-              <p className="min-w-0 truncate text-sm text-foreground/80 leading-relaxed sm:overflow-visible sm:whitespace-normal">
-                <span className="font-medium text-foreground/80">Description:</span>{' '}
-                {plan.description}
-              </p>
-            )}
-            {(plan.startDate || plan.endDate) && (
-              <p className="shrink-0 text-sm text-foreground/70">
-                <span className="font-medium text-foreground/80">Current Run:</span>{' '}
-                {plan.startDate && plan.endDate
-                  ? `${formatDate(plan.startDate + 'T00:00:00')} – ${formatDate(plan.endDate + 'T00:00:00')}`
-                  : plan.startDate
-                    ? `From ${formatDate(plan.startDate + 'T00:00:00')}`
-                    : `Through ${formatDate(plan.endDate! + 'T00:00:00')}`}
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowExportModal(true)}
-              className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-            >
-              Export
-            </button>
-            {hasFields && canEditData && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowBulkAddRowsModal(true)}
-                  className="min-h-[44px] shrink-0 rounded-lg border border-primary/60 px-4 py-2 text-sm text-primary hover:bg-primary/5 sm:min-h-0"
-                  title="Bulk add rows by entering a value and optional shared fields"
-                >
-                  Bulk add
-                </button>
-                <button
-                  type="button"
-                  onClick={startAdd}
-                  className="min-h-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:bg-background sm:min-h-0"
-                >
-                  + Add row
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      {(plan.testPlan || plan.constraints) && (
-        <div className="mb-6 w-full min-w-0">
-          {planInfoCollapsed ? (
-            <div className="rounded-lg border border-border bg-card/50">
-              <button
-                type="button"
-                onClick={() => setPlanInfoCollapsed(false)}
-                className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left text-sm font-medium text-foreground hover:bg-background/30"
-                aria-expanded={false}
-              >
-                <span className="text-xs font-semibold uppercase tracking-wider text-foreground/70">
-                  Test plan & criteria
-                </span>
-                <svg
-                  className="h-4 w-4 shrink-0 text-foreground/50"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-border bg-card/50">
-              <button
-                type="button"
-                onClick={() => setPlanInfoCollapsed(true)}
-                className="relative flex w-full cursor-pointer flex-col gap-6 p-5 text-left hover:bg-background/30 sm:grid sm:grid-cols-2"
-                aria-expanded={true}
-                aria-label="Collapse test plan & criteria"
-              >
-                <div className="pointer-events-none absolute right-3 top-3 z-[1] rounded p-1 text-foreground/50">
-                  <svg
-                    className="h-4 w-4 rotate-180"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-                {plan.testPlan && (
-                  <div className="min-w-0 order-1 sm:order-none">
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                      Test plan
-                    </h3>
-                    <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
-                      {plan.testPlan}
-                    </p>
-                  </div>
-                )}
-                {plan.constraints && (
-                  <div className="min-w-0 order-2 sm:order-none">
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground/50">
-                      Test criteria
-                    </h3>
-                    <p className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed">
-                      {plan.constraints}
-                    </p>
-                  </div>
-                )}
-              </button>
-            </div>
-          )}
+      {isArchived && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+          <span className="font-medium">This test is archived.</span>
+          <span className="text-foreground/80">View-only.</span>
+          <button
+            type="button"
+            onClick={handleRestoreFromArchive}
+            disabled={restoringFromArchive}
+            className="shrink-0 rounded border border-amber-600/60 bg-amber-500/20 px-3 py-1.5 font-medium text-foreground hover:bg-amber-500/30 disabled:opacity-50 dark:border-amber-400/50 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
+          >
+            {restoringFromArchive ? 'Restoring…' : 'Restore'}
+          </button>
         </div>
       )}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/70">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to="/test-plans" className="hover:text-foreground hover:underline">
+            Test plans
+          </Link>
+          <span>/</span>
+          <Link to={`/test-plans/${planId}`} className="text-foreground hover:underline">
+            {plan.name}
+          </Link>
+          {currentTest && (
+            <>
+              <span>/</span>
+              <span className="text-foreground/80">{currentTest.name}</span>
+            </>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowExportModal(true)}
+            className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
+          >
+            Export
+          </button>
+          {hasFields && editingAllowed && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowBulkAddRowsModal(true)}
+                className="rounded-lg border border-primary/60 px-4 py-2 text-sm text-primary hover:bg-primary/5"
+                title="Bulk add rows by entering a value and optional shared fields"
+              >
+                Bulk add
+              </button>
+              <button
+                type="button"
+                onClick={startAdd}
+                className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
+              >
+                + Add row
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-foreground">{plan.name}</h1>
+        {plan.description && (
+          <p className="mt-1 max-w-2xl whitespace-pre-wrap text-sm text-foreground/80 leading-relaxed">
+            {plan.description}
+          </p>
+        )}
+      </div>
       {isAdding && (
         <AddRecordModal
           fields={fields}
@@ -1215,10 +963,11 @@ export function TestPlanDataView() {
           plan={plan ?? undefined}
         />
       )}
-      {showBulkAddRowsModal && plan && (
+      {showBulkAddRowsModal && plan && testId && (
         <BulkAddRowsModal
           fields={fields}
           plan={plan}
+          testId={testId}
           onClose={() => setShowBulkAddRowsModal(false)}
           onCreated={() => {
             setShowBulkAddRowsModal(false)
@@ -1232,6 +981,7 @@ export function TestPlanDataView() {
           planName={plan.name}
           onClose={() => setShowExportModal(false)}
           filteredRecords={filteredRecords}
+          testName={currentTest?.name}
           defaultSortOrder={defaultSortOrder}
           keyField={plan.keyField}
           fields={fields}
@@ -1256,275 +1006,9 @@ export function TestPlanDataView() {
           formLayoutOrder={plan?.formLayoutOrder}
           plan={plan ?? undefined}
           isAdmin={isAdmin}
-          readOnly={!canEditData}
+          readOnly={!editingAllowed || recordModalViewOnly}
+          onStartEdit={editingAllowed ? () => setRecordModalViewOnly(false) : undefined}
         />
-      )}
-      {showArchiveModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowArchiveModal(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-4 text-lg font-semibold text-foreground">Archive</h2>
-            <div className="space-y-4">
-              {(plan?.archivedRuns?.length ?? 0) > 0 && (
-                <div>
-                  <p className="mb-2 text-sm font-medium text-foreground/80">Archived runs</p>
-                  <div className="flex flex-col gap-2">
-                    {plan!.archivedRuns!.map((run) => {
-                      const isReinstating = reinstatingRun?.startDate === run.startDate && reinstatingRun?.endDate === run.endDate
-                      const isDeleting = deletingRun?.startDate === run.startDate && deletingRun?.endDate === run.endDate
-                      return (
-                        <div
-                          key={`${run.startDate}-${run.endDate}`}
-                          className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2"
-                        >
-                          <span className="min-w-0 flex-1 text-sm text-foreground">
-                            {run.startDate} – {run.endDate}
-                          </span>
-                          <div className="flex shrink-0 gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setViewingArchivedRunAndUrl(run)
-                                setShowArchiveModal(false)
-                              }}
-                              className="rounded border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-background/80"
-                            >
-                              View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (currentPeriodHasRecords) {
-                                  setReinstateChoicePending(run)
-                                  setShowArchiveModal(false)
-                                } else {
-                                  handleReinstateRun(run)
-                                }
-                              }}
-                              disabled={!!reinstatingRun || !!deletingRun}
-                              className="rounded border border-primary/50 bg-primary/10 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
-                            >
-                              {isReinstating ? 'Reinstating…' : 'Reinstate'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDeleteArchivePending(run)}
-                              disabled={!!reinstatingRun || !!deletingRun}
-                              className="rounded border border-red-500/50 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50 dark:text-red-400"
-                            >
-                              {isDeleting ? 'Deleting…' : 'Delete'}
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-              <div className="border-t border-border pt-4">
-                <p className="mb-3 text-sm text-foreground/80">Save the current period as an archived run and clear plan dates for the next period.</p>
-                {!plan?.startDate && (
-                  <div className="mb-3">
-                    <label className="mb-1 block text-sm font-medium text-foreground">Test start date (required)</label>
-                    <input
-                      type="date"
-                      value={archiveStartDate}
-                      onChange={(e) => setArchiveStartDate(e.target.value)}
-                      className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
-                    />
-                  </div>
-                )}
-                {!plan?.endDate && (
-                  <div className="mb-3">
-                    <label className="mb-1 block text-sm font-medium text-foreground">Test end date (required)</label>
-                    <input
-                      type="date"
-                      value={archiveEndDate}
-                      onChange={(e) => setArchiveEndDate(e.target.value)}
-                      className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
-                    />
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const runStart = plan?.startDate?.trim() || archiveStartDate.trim()
-                    const runEnd = plan?.endDate?.trim() || archiveEndDate.trim()
-                    if (!runStart) {
-                      showAlert('Please enter the test start date.')
-                      return
-                    }
-                    if (!runEnd) {
-                      showAlert('Please enter the test end date.')
-                      return
-                    }
-                    setArchiveConfirmPending({ runStart, runEnd })
-                    setShowArchiveModal(false)
-                  }}
-                  disabled={archiving || (!plan?.startDate && !archiveStartDate.trim()) || (!plan?.endDate && !archiveEndDate.trim())}
-                  className="w-full rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm font-medium text-amber-700 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
-                >
-                  {archiving ? 'Archiving...' : 'Archive current testing'}
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowArchiveModal(false)}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {reinstateChoicePending && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => {
-            setReinstateChoicePending(null)
-            setShowArchiveModal(true)
-          }}
-        >
-          <div
-            className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-2 text-lg font-semibold text-foreground">Current period has data</h3>
-            <p className="mb-4 text-sm text-foreground/80">
-              Reinstating <strong>{reinstateChoicePending.startDate} – {reinstateChoicePending.endDate}</strong>. How do you want to handle the current period?
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  handleReinstateMerge(reinstateChoicePending)
-                }}
-                className="w-full rounded-lg border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/20"
-              >
-                Merge into current range
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  handleReinstateArchiveCurrent(reinstateChoicePending)
-                }}
-                className="w-full rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
-              >
-                Archive current, then reinstate
-              </button>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setReinstateChoicePending(null)
-                  setShowArchiveModal(true)
-                }}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {deleteArchivePending && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setDeleteArchivePending(null)}
-        >
-          <div
-            className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-2 text-lg font-semibold text-foreground">Remove archived run?</h3>
-            <p className="mb-4 text-sm text-foreground/80">
-              <strong>{deleteArchivePending.startDate} – {deleteArchivePending.endDate}</strong> will be removed from the archive. The records will become current (unarchived).
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeleteArchivePending(null)}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-background"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const run = deleteArchivePending
-                  setDeleteArchivePending(null)
-                  if (run) handleDeleteArchivedRun(run)
-                }}
-                disabled={!!deletingRun}
-                className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50 dark:text-red-400"
-              >
-                {deletingRun ? 'Removing…' : 'Remove'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {showAddRowDatesModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowAddRowDatesModal(false)}
-        >
-          <div
-            className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-2 text-lg font-semibold text-foreground">Set plan dates to add rows</h3>
-            <p className="mb-4 text-sm text-foreground/80">
-              Enter start and end dates for this testing period.
-            </p>
-            <div className="mb-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">Start date (required)</label>
-                <input
-                  type="date"
-                  value={addRowStartDate}
-                  onChange={(e) => setAddRowStartDate(e.target.value)}
-                  className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">End date (optional)</label>
-                <input
-                  type="date"
-                  value={addRowEndDate}
-                  onChange={(e) => setAddRowEndDate(e.target.value)}
-                  className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowAddRowDatesModal(false)}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-background"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmAddRowDates}
-                disabled={!addRowStartDate.trim() || submitting}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                {submitting ? 'Saving…' : 'Set dates & add row'}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
       {deleteRecordPending && (
         <div
@@ -1669,43 +1153,44 @@ export function TestPlanDataView() {
           </div>
         </div>
       )}
-      {archiveConfirmPending && (
+      {showMoveToTestModal && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => {
-            setArchiveConfirmPending(null)
-            setShowArchiveModal(true)
-          }}
+          onClick={() => setShowMoveToTestModal(false)}
         >
           <div
             className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="mb-2 text-lg font-semibold text-foreground">Archive this period?</h3>
+            <h3 className="mb-2 text-lg font-semibold text-foreground">Move {selectedIds.size} row(s) to test</h3>
             <p className="mb-4 text-sm text-foreground/80">
-              This will save the run <strong>{archiveConfirmPending.runStart} – {archiveConfirmPending.runEnd}</strong> as an archived run and clear plan dates. You can view or reinstate it later from Archive.
+              Select the destination test. Rows will remain in this plan.
             </p>
+            <div className="mb-4">
+              <label className="mb-1 block text-sm font-medium text-foreground">Test</label>
+              <PopupSelect
+                label=""
+                value={moveToTestId}
+                onChange={(id) => setMoveToTestId(id || '')}
+                emptyOption="Select a test"
+                options={otherTests.map((t) => ({ value: t.id, label: t.name }))}
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setArchiveConfirmPending(null)
-                  setShowArchiveModal(true)
-                }}
+                onClick={() => setShowMoveToTestModal(false)}
                 className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-background"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  const { runStart, runEnd } = archiveConfirmPending
-                  setArchiveConfirmPending(null)
-                  handleArchiveCurrent(runStart, runEnd)
-                }}
-                className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
+                onClick={handleMoveToTest}
+                disabled={submitting || !moveToTestId}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
-                Archive
+                {submitting ? 'Moving…' : 'Move'}
               </button>
             </div>
           </div>
@@ -1714,17 +1199,14 @@ export function TestPlanDataView() {
       {!hasFields ? (
         <div className="rounded-lg border border-border bg-card p-8 text-center">
           <p className="text-foreground/70">
-            No fields configured. Edit the plan to add fields, then you can collect data.
+            No fields configured. Go to the plan page to edit the plan and add fields, then you can collect data.
           </p>
-          {isAdmin && (
-            <Link
-              to={`/test-plans/${plan.id}/edit`}
-              state={{ returnTo: `/test-plans/${planId}/data` }}
-              className="mt-4 inline-flex min-h-[44px] shrink-0 items-center rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
-            >
-              Edit plan
-            </Link>
-          )}
+          <Link
+            to={`/test-plans/${planId}`}
+            className="mt-4 inline-flex min-h-[44px] shrink-0 items-center rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
+          >
+            ← Back to plan
+          </Link>
         </div>
       ) : (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3">
@@ -1809,8 +1291,8 @@ export function TestPlanDataView() {
                 )
               })}
             </div>
-            {canEditData && (
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+{editingAllowed && (
+                          <div className="ml-auto flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => setDirectTableEdit((d) => !d)}
@@ -1914,37 +1396,6 @@ export function TestPlanDataView() {
             </div>
             )}
           </div>
-          {viewingArchivedRun && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-              <span className="text-sm text-amber-800 dark:text-amber-200">
-                Viewing archived run: {viewingArchivedRun.startDate} – {viewingArchivedRun.endDate}
-              </span>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (currentPeriodHasRecords) {
-                      setReinstateChoicePending(viewingArchivedRun)
-                      setViewingArchivedRunAndUrl(null)
-                    } else {
-                      handleReinstateRun(viewingArchivedRun)
-                    }
-                  }}
-                  disabled={!!reinstatingRun}
-                  className="rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
-                >
-                  {reinstatingRun?.startDate === viewingArchivedRun.startDate && reinstatingRun?.endDate === viewingArchivedRun.endDate ? 'Reinstating…' : 'Reinstate'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewingArchivedRunAndUrl(null)}
-                  className="rounded-lg border border-amber-600/50 bg-amber-500/20 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-500/30 dark:text-amber-200"
-                >
-                  Back to current
-                </button>
-              </div>
-            </div>
-          )}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
             {statusTabs.length > 0 ? (
               <div className="flex flex-wrap items-center gap-1">
@@ -1974,7 +1425,7 @@ export function TestPlanDataView() {
               <div />
             )}
           </div>
-          {canEditData && bulkSelectMode && (
+          {editingAllowed && bulkSelectMode && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2">
               <span className="text-sm font-medium text-foreground">
                 {selectedIds.size} selected
@@ -1997,6 +1448,14 @@ export function TestPlanDataView() {
                 className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-background/80 disabled:opacity-50"
               >
                 Edit field
+              </button>
+              <button
+                type="button"
+                onClick={openMoveToTestModal}
+                disabled={submitting || selectedIds.size === 0}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-background/80 disabled:opacity-50"
+              >
+                Move to test
               </button>
               <button
                 type="button"
@@ -2136,7 +1595,7 @@ export function TestPlanDataView() {
                     onClick={(e) => handleRowClick(record, e)}
                     className={`w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70 ${bulkSelectMode && selectedIds.has(record.id) ? 'border-primary ring-1 ring-primary/50' : 'border-border'}`}
                   >
-                    {canEditData && bulkSelectMode ? (
+                    {editingAllowed && bulkSelectMode ? (
                       <div className="mb-2 flex items-start gap-2" onClick={(e) => e.stopPropagation()}>
                         <label className="flex shrink-0 cursor-pointer pt-0.5">
                           <input
@@ -2251,8 +1710,8 @@ export function TestPlanDataView() {
                           )
                         })()
                       ) : null}
-                      {canEditData && (
-                      <div className="flex shrink-0 gap-2">
+{editingAllowed && (
+                          <div className="flex shrink-0 gap-2">
                         <button
                           type="button"
                           onClick={() => startEdit(record)}
@@ -2285,7 +1744,7 @@ export function TestPlanDataView() {
             style={{ tableLayout: 'fixed' }}
           >
             <colgroup>
-              {canEditData && bulkSelectMode && <col style={{ width: '2.5rem' }} />}
+              {editingAllowed && bulkSelectMode && <col style={{ width: '2.5rem' }} />}
               <col style={{ width: '14rem' }} />
               {visibleFields.map((f) => (
                 <col key={f.id} style={{ width: hasFieldLayout ? (fieldLayout[f.id] || getColumnWidth(f)) : getColumnWidth(f) }} />
@@ -2294,7 +1753,7 @@ export function TestPlanDataView() {
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card">
               <tr>
-                {canEditData && bulkSelectMode && (
+                {editingAllowed && bulkSelectMode && (
                   <th className="w-10 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                     <label className="flex cursor-pointer justify-center">
                       <input
@@ -2417,9 +1876,9 @@ export function TestPlanDataView() {
                   <tr
                     key={record.id}
                     onClick={(e) => handleRowClick(record, e)}
-                    className={`cursor-pointer bg-background transition-colors hover:bg-card ${canEditData && bulkSelectMode && selectedIds.has(record.id) ? 'ring-1 ring-primary/50' : ''}`}
+                    className={`cursor-pointer bg-background transition-colors hover:bg-card ${editingAllowed && bulkSelectMode && selectedIds.has(record.id) ? 'ring-1 ring-primary/50' : ''}`}
                   >
-                    {canEditData && bulkSelectMode && (
+                    {editingAllowed && bulkSelectMode && (
                       <td className="w-10 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <label className="flex cursor-pointer justify-center">
                           <input
@@ -2443,7 +1902,7 @@ export function TestPlanDataView() {
                       {formatDateTime(record.recordedAt)}
                     </td>
                     {visibleFields.map((f) => {
-                      const cellEditable = canEditData && (directTableEdit || f.type === 'status') && f.type !== 'formula' && !(f.type === 'status' && f.config?.formula)
+                      const cellEditable = editingAllowed && (directTableEdit || f.type === 'status') && f.type !== 'formula' && !(f.type === 'status' && f.config?.formula)
                       return (
                       <td
                         key={f.id}
@@ -2511,8 +1970,8 @@ export function TestPlanDataView() {
                       </td>
                     ); })}
                     <td className="whitespace-nowrap px-2 py-3 text-right align-middle sm:px-3" onClick={(e) => e.stopPropagation()}>
-                      {canEditData && (
-                      <div className="flex shrink-0 justify-end gap-2">
+{editingAllowed && (
+                          <div className="flex shrink-0 justify-end gap-2">
                         <button
                           type="button"
                           onClick={() => startEdit(record)}

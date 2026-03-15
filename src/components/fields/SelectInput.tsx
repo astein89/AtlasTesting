@@ -131,7 +131,7 @@ export function SelectInput({
 
       {open && (
         <div
-          className={`absolute left-0 right-0 z-[60] max-h-64 overflow-y-auto rounded-lg border border-border shadow-lg ${
+          className={`absolute left-0 right-0 z-[60] max-h-64 overflow-y-auto rounded-lg border border-border shadow-xl ring-1 ring-black/5 dark:ring-white/10 ${
             openUpward ? 'bottom-full mb-1' : 'top-full mt-1'
           }`}
           style={{ backgroundColor: 'var(--dropdown-list)' }}

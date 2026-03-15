@@ -32,6 +32,7 @@ interface Record {
   status: string
   data: Record<string, string | number | boolean | string[] | TimerValue>
   runId?: string
+  testName?: string
 }
 
 type SortLevel = { key: string; dir: 'asc' | 'desc' }
@@ -44,6 +45,8 @@ interface ExportPlanModalProps {
   onClose: () => void
   /** When provided (e.g. from data view), user can choose to export only these filtered records */
   filteredRecords?: Record[] | null
+  /** When provided (e.g. from a test's data view), include test name in CSV and in export filename */
+  testName?: string
   /** When provided, export order uses this sort (e.g. plan default sort). */
   defaultSortOrder?: SortLevel[] | null
   /** Optional field key; when exporting a single record, its value is used in the filename */
@@ -160,6 +163,7 @@ export function ExportPlanModal({
   planName,
   onClose,
   filteredRecords,
+  testName,
   defaultSortOrder,
   keyField,
   fields,
@@ -200,9 +204,8 @@ export function ExportPlanModal({
         params: { ...baseParams, testPlanId: planId },
       })
       .then((r) => {
-        // Export never includes archived data unless user is viewing/reinstating that run (handled via filteredRecords)
-        const currentOnly = (r.data as Record[]).filter((rec) => !rec.runId)
-        setRecords(currentOnly)
+        // When no filteredRecords (plan-level export), use all plan records. When filteredRecords provided (e.g. data view), that set is used for "filtered" scope.
+        setRecords(r.data as Record[])
       })
       .catch(() => setRecords([]))
       .finally(() => setLoading(false))
@@ -222,10 +225,13 @@ export function ExportPlanModal({
   }, [onClose])
 
   const dateStr = new Date().toISOString().slice(0, 10)
+  const planNameSlug = planName.replace(/[^a-z0-9]/gi, '-')
   const exportBaseName =
     keyField && sortedForExport.length === 1
       ? sanitizeForFilename(String(sortedForExport[0].data[keyField] ?? planName))
-      : planName.replace(/[^a-z0-9]/gi, '-')
+      : testName
+        ? `${planNameSlug}-${sanitizeForFilename(testName)}`
+        : planNameSlug
 
   const uploadsPath = getBasePath() + '/api/uploads/'
   const hasPhotos = sortedForExport.some((r) =>
@@ -256,6 +262,7 @@ export function ExportPlanModal({
 
           const csv = recordsToCsv(sortedForExport, {
             fieldOrder: orderedFieldKeys,
+            testName: testName ?? undefined,
           })
           const blob = new Blob([csv], { type: 'text/csv' })
           const url = URL.createObjectURL(blob)
@@ -295,7 +302,7 @@ export function ExportPlanModal({
       } else {
         const zip = new JSZip()
         if (includeCsv) {
-          zip.file('data.csv', recordsToCsv(sortedForExport))
+          zip.file('data.csv', recordsToCsv(sortedForExport, { testName: testName ?? undefined }))
         }
         if (includePhotos && hasPhotos) {
           const usedPaths = new Set<string>()

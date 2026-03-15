@@ -72,7 +72,10 @@ export function FieldsList() {
       return 'status (In Progress, Complete, Passed, …)'
     }
     if (f.type === 'fraction' && f.config?.fractionScale) {
-      return `${f.type} (${f.config.fractionScale})`
+      return `Dimension (${f.config.fractionScale})`
+    }
+    if (f.type === 'fraction') {
+      return 'Dimension'
     }
     if (f.type === 'image') {
       return f.config?.imageMultiple ? 'image (multiple)' : 'image (single)'

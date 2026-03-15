@@ -9,6 +9,7 @@ import { Dashboard } from './routes/Dashboard'
 import { FieldsList } from './routes/FieldsList'
 import { FieldEditor } from './routes/FieldEditor'
 import { TestPlansList } from './routes/TestPlansList'
+import { TestPlanOverview } from './routes/TestPlanOverview'
 import { TestPlanDataRedirect } from './routes/TestPlanDataRedirect'
 import { TestPlanEditor } from './routes/TestPlanEditor'
 import { ResultsList } from './routes/ResultsList'
@@ -128,8 +129,9 @@ function App() {
           />
           <Route path="test-plans" element={<TestPlansList />} />
           <Route path="test-plans/new" element={<AdminGuard><ErrorBoundary fallbackTitle="Could not load plan editor" backTo="/test-plans" backLabel="Back to Test plans"><TestPlanEditor /></ErrorBoundary></AdminGuard>} />
-          <Route path="test-plans/:planId" element={<Navigate to="data" replace />} />
+          <Route path="test-plans/:planId" element={<TestPlanOverview />} />
           <Route path="test-plans/:planId/data" element={<TestPlanDataRedirect />} />
+          <Route path="test-plans/:planId/tests/:testId/data" element={<TestPlanDataRedirect />} />
           <Route path="test-plans/:planId/edit" element={<AdminGuard><ErrorBoundary fallbackTitle="Could not load plan editor" backTo="/test-plans" backLabel="Back to Test plans"><TestPlanEditor /></ErrorBoundary></AdminGuard>} />
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
