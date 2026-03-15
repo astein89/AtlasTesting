@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
+import { getBasePath } from '../../lib/basePath'
 import { ThemeToggle } from './ThemeToggle'
 
 interface NavbarProps {
@@ -30,7 +31,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
             </svg>
           </button>
           <Link to="/" className="flex min-w-0 items-center gap-2 truncate text-base font-semibold text-foreground sm:text-lg">
-            <img src="/icon.png" alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
+            <img src={`${getBasePath()}/icon.png`} alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
             <span className="truncate">Automation Testing</span>
           </Link>
         </div>
