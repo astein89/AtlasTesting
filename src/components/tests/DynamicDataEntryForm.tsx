@@ -145,6 +145,8 @@ export function DynamicDataEntryForm({
                 value={Number(watch(f.key)) || 0}
                 onChange={(v) => setValue(f.key, v)}
                 defaultScale={parseFractionScale(f.config?.fractionScale)}
+                storageUnit={f.config?.unit === 'mm' ? 'mm' : 'in'}
+                entryUnit={f.config?.entryUnit === 'mm' ? 'mm' : f.config?.entryUnit === 'in' ? 'in' : undefined}
                 className="w-full"
               />
             )}

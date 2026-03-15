@@ -14,11 +14,12 @@ type FieldValue = string | number | boolean | string[] | TimerValue
 interface BulkAddRowsModalProps {
   fields: DataField[]
   plan: TestPlan
+  testId: string
   onClose: () => void
   onCreated: () => void
 }
 
-export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRowsModalProps) {
+export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: BulkAddRowsModalProps) {
   const { showAlert } = useAlertConfirm()
   const [targetFieldKey, setTargetFieldKey] = useState<string>(() => plan.keyField || fields[0]?.key || '')
   const [entryValue, setEntryValue] = useState<FieldValue | ''>('')
@@ -204,6 +205,7 @@ export function BulkAddRowsModal({ fields, plan, onClose, onCreated }: BulkAddRo
         }
         return {
           testPlanId: plan.id,
+          testId,
           data: computeFormulaValues(fields, row),
           status: 'partial',
         }

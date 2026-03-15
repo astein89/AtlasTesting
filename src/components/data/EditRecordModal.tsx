@@ -59,6 +59,8 @@ interface EditRecordModalProps {
   isAdmin?: boolean
   /** When true, show record as read-only (e.g. for viewer role) */
   readOnly?: boolean
+  /** When set and readOnly, show an Edit button that calls this to switch to edit mode */
+  onStartEdit?: () => void
 }
 
 function dataChanged(
@@ -96,6 +98,7 @@ export function EditRecordModal({
   plan,
   isAdmin = false,
   readOnly = false,
+  onStartEdit,
 }: EditRecordModalProps) {
   const [showSavePrompt, setShowSavePrompt] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Array<{ fieldKey: string; message: string }>>([])
@@ -401,13 +404,24 @@ export function EditRecordModal({
           </div>
           <div className="flex shrink-0 justify-end gap-2">
             {readOnly ? (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-              >
-                Close
-              </button>
+              <>
+                {onStartEdit && (
+                  <button
+                    type="button"
+                    onClick={onStartEdit}
+                    className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-primary bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0 sm:min-w-0"
+                  >
+                    Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+                >
+                  Close
+                </button>
+              </>
             ) : (
               <>
                 <button
