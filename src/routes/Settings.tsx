@@ -1,4 +1,5 @@
 import { useDateTimeConfig } from '../hooks/useDateTimeConfig'
+import { useUserPreference } from '../hooks/useUserPreference'
 import {
   DATE_TIME_PRESETS,
   formatDateWithConfig,
@@ -11,6 +12,8 @@ const EXAMPLE_DATE = new Date('2025-03-15T14:30:00')
 
 export function Settings() {
   const [config, setConfig] = useDateTimeConfig()
+  const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
+  const [persistTableFilters, setPersistTableFilters] = useUserPreference('atlas-persist-table-filters', false)
 
   const currentPresetIndex = DATE_TIME_PRESETS.findIndex(
     (p) =>
@@ -54,6 +57,33 @@ export function Settings() {
         </div>
         <p className="mt-3 text-sm text-foreground/70">
           Date: {formatDateWithConfig(EXAMPLE_DATE, config)} · Time: {formatTimeWithConfig(EXAMPLE_DATE, config)} · Date and time: {formatDateTimeWithConfig(EXAMPLE_DATE, config)}
+        </p>
+      </section>
+      <section className="mb-8 rounded-lg border border-border bg-card/50 p-5">
+        <h2 className="mb-3 text-lg font-medium text-foreground">Data</h2>
+        <p className="mb-4 text-sm text-foreground/80">
+          When enabled, clicking a data row opens it in view-only; use the Edit button in the modal to edit.
+        </p>
+        <label className="flex cursor-pointer items-center gap-3">
+          <input
+            type="checkbox"
+            checked={openRecordsViewOnly}
+            onChange={(e) => setOpenRecordsViewOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+          />
+          <span className="text-sm font-medium text-foreground">Open data rows in view-only</span>
+        </label>
+        <label className="mt-4 flex cursor-pointer items-center gap-3">
+          <input
+            type="checkbox"
+            checked={persistTableFilters}
+            onChange={(e) => setPersistTableFilters(e.target.checked)}
+            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+          />
+          <span className="text-sm font-medium text-foreground">Persist table filters between devices</span>
+        </label>
+        <p className="mt-1 text-sm text-foreground/70">
+          When enabled, search and column filters are saved to your account and sync across devices.
         </p>
       </section>
     </div>

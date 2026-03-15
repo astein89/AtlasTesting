@@ -120,22 +120,86 @@ router.post('/', requireAdmin, (req: AuthRequest, res) => {
 })
 
 router.put('/:id', requireAdmin, (req: AuthRequest, res) => {
-  const { key, label, type, config } = req.body
+  const { key: newKey, label, type, config } = req.body
   const { id } = req.params
 
-  const existing = db.prepare('SELECT id FROM fields WHERE id = ?').get(id)
+  const existing = db.prepare('SELECT id, key FROM fields WHERE id = ?').get(id) as
+    | { id: string; key: string }
+    | undefined
   if (!existing) return res.status(404).json({ error: 'Field not found' })
 
-  if (key) {
-    const dup = db.prepare('SELECT id FROM fields WHERE key = ? AND id != ?').get(key, id)
+  const oldKey = (existing.key ?? '').trim()
+  const newKeyTrimmed = typeof newKey === 'string' ? newKey.trim() : undefined
+
+  if (newKeyTrimmed) {
+    const dup = db.prepare('SELECT id FROM fields WHERE key = ? AND id != ?').get(newKeyTrimmed, id)
     if (dup) return res.status(409).json({ error: 'Field key already exists' })
+  }
+
+  // When key is being changed: migrate record data and plan field_defaults/key_field so stored data is preserved
+  if (newKeyTrimmed !== undefined && newKeyTrimmed !== '' && newKeyTrimmed !== oldKey) {
+    const runs = db.prepare('SELECT id, data FROM test_runs WHERE data IS NOT NULL').all() as Array<{
+      id: string
+      data: string | null
+    }>
+    const updateStmt = db.prepare('UPDATE test_runs SET data = ? WHERE id = ?')
+    for (const row of runs) {
+      if (!row.data || typeof row.data !== 'string') continue
+      try {
+        const data = JSON.parse(row.data) as Record<string, unknown>
+        if (!Object.prototype.hasOwnProperty.call(data, oldKey)) continue
+        const newData: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(data)) {
+          if (k === oldKey) newData[newKeyTrimmed] = v
+          else newData[k] = v
+        }
+        updateStmt.run(JSON.stringify(newData), row.id)
+      } catch {
+        // Skip malformed data
+      }
+    }
+    const plans = db.prepare('SELECT id, field_defaults, key_field FROM test_plans').all() as Array<{
+      id: string
+      field_defaults: string | null
+      key_field: string | null
+    }>
+    for (const plan of plans) {
+      let updateDefaults: string | null = null
+      if (plan.field_defaults) {
+        try {
+          const defaults = JSON.parse(plan.field_defaults) as Record<string, unknown>
+          if (Object.prototype.hasOwnProperty.call(defaults, oldKey)) {
+            defaults[newKeyTrimmed] = defaults[oldKey]
+            delete defaults[oldKey]
+            updateDefaults = JSON.stringify(defaults)
+          }
+        } catch {
+          // Skip malformed JSON
+        }
+      }
+      const planKeyFieldNew = plan.key_field === oldKey ? newKeyTrimmed : plan.key_field
+      const keyFieldChanged = plan.key_field === oldKey
+      if (updateDefaults !== null || keyFieldChanged) {
+        if (updateDefaults !== null && keyFieldChanged) {
+          db.prepare('UPDATE test_plans SET field_defaults = ?, key_field = ? WHERE id = ?').run(
+            updateDefaults,
+            planKeyFieldNew,
+            plan.id
+          )
+        } else if (updateDefaults !== null) {
+          db.prepare('UPDATE test_plans SET field_defaults = ? WHERE id = ?').run(updateDefaults, plan.id)
+        } else {
+          db.prepare('UPDATE test_plans SET key_field = ? WHERE id = ?').run(planKeyFieldNew, plan.id)
+        }
+      }
+    }
   }
 
   const updates: string[] = []
   const values: unknown[] = []
-  if (key !== undefined) {
+  if (newKey !== undefined) {
     updates.push('key = ?')
-    values.push(key)
+    values.push(newKeyTrimmed ?? newKey)
   }
   if (label !== undefined) {
     updates.push('label = ?')

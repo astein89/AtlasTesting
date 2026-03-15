@@ -122,7 +122,7 @@ export function ColumnFilterDropdown({
   const dropdown = (
     <div
       ref={ref}
-      className="fixed z-[100] min-w-[200px] max-w-[280px] rounded-lg border border-border py-2 shadow-lg"
+      className="fixed z-[100] min-w-[200px] max-w-[280px] rounded-lg border border-border py-2 shadow-xl ring-1 ring-black/5 dark:ring-white/10"
       style={{
         backgroundColor: 'var(--dropdown-list)',
         top: position.top,

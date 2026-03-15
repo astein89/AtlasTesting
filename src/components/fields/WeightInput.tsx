@@ -6,17 +6,22 @@ interface WeightInputProps {
   className?: string
   /** Base storage unit for this field: default 'lb'. Supports kg, g, lb, oz. */
   storageUnit?: 'kg' | 'g' | 'lb' | 'oz'
+  /** Default unit when opening the modal. If not set, uses storageUnit. */
+  entryUnit?: 'kg' | 'g' | 'lb' | 'oz'
 }
 
 const LB_TO_KG = 0.45359237
 
-type WeightMode = 'kg' | 'g' | 'lb'
+type WeightMode = 'kg' | 'g' | 'lb' | 'oz'
 
-export function WeightInput({ value, onChange, className = '', storageUnit = 'lb' }: WeightInputProps) {
+function resolveInitialWeightMode(storageUnit: 'kg' | 'g' | 'lb' | 'oz', entryUnit?: 'kg' | 'g' | 'lb' | 'oz'): WeightMode {
+  const u = entryUnit ?? storageUnit
+  return u === 'kg' ? 'kg' : u === 'g' ? 'g' : u === 'oz' ? 'oz' : 'lb'
+}
+
+export function WeightInput({ value, onChange, className = '', storageUnit = 'lb', entryUnit }: WeightInputProps) {
   const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<WeightMode>(
-    storageUnit === 'kg' ? 'kg' : storageUnit === 'g' ? 'g' : 'lb'
-  )
+  const [mode, setMode] = useState<WeightMode>(() => resolveInitialWeightMode(storageUnit, entryUnit))
   const [text, setText] = useState('')
   // Live numeric value in the configured storage unit (kg/g/lb/oz), kept at full precision.
   const [currentStorage, setCurrentStorage] = useState<number | null>(null)
@@ -37,6 +42,13 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
       if (storageUnit === 'kg') return s * 1000
       if (storageUnit === 'lb') return s * LB_TO_KG * 1000
       if (storageUnit === 'oz') return (s / 16) * LB_TO_KG * 1000
+      return s
+    }
+    if (m === 'oz') {
+      if (storageUnit === 'oz') return s
+      if (storageUnit === 'lb') return s * 16
+      if (storageUnit === 'kg') return (s / LB_TO_KG) * 16
+      if (storageUnit === 'g') return (s / 1000 / LB_TO_KG) * 16
       return s
     }
     // m === 'lb'
@@ -89,12 +101,14 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
     if (storageUnit === 'kg') {
       if (m === 'kg') return entered
       if (m === 'g') return entered / 1000
+      if (m === 'oz') return (entered / 16) * LB_TO_KG
       // lb → kg
       return entered * LB_TO_KG
     }
     if (storageUnit === 'lb') {
       if (m === 'lb') return entered
       if (m === 'kg') return entered / LB_TO_KG
+      if (m === 'oz') return entered / 16
       // g → kg → lb
       const kgVal = entered / 1000
       return kgVal / LB_TO_KG
@@ -102,17 +116,17 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
     if (storageUnit === 'g') {
       if (m === 'g') return entered
       if (m === 'kg') return entered * 1000
+      if (m === 'oz') return (entered / 16) * LB_TO_KG * 1000
       // lb → kg → g
       const kgVal = entered * LB_TO_KG
       return kgVal * 1000
     }
     if (storageUnit === 'oz') {
-      // First normalize from mode to lb, then to oz.
+      if (m === 'oz') return entered
       let lbVal: number
       if (m === 'lb') lbVal = entered
       else if (m === 'kg') lbVal = entered / LB_TO_KG
       else {
-        // g → kg → lb
         const kgVal = entered / 1000
         lbVal = kgVal / LB_TO_KG
       }
@@ -127,8 +141,7 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
   }
 
   const openModal = () => {
-    const initialMode: WeightMode =
-      storageUnit === 'kg' ? 'kg' : storageUnit === 'g' ? 'g' : 'lb'
+    const initialMode: WeightMode = resolveInitialWeightMode(storageUnit, entryUnit)
     setMode(initialMode)
     setCurrentStorage(storageVal)
     syncFromStorage(storageVal, initialMode)
@@ -238,7 +251,7 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
                 {displayModal()} {mode}
               </span>
               <div className="flex items-center gap-1 rounded-full border border-border bg-background px-1 py-0.5 text-xs">
-                {(['kg', 'g', 'lb'] as WeightMode[]).map((m) => (
+                {(['kg', 'g', 'lb', 'oz'] as WeightMode[]).map((m) => (
                   <button
                     key={m}
                     type="button"

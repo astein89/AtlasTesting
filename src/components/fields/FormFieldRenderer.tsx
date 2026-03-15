@@ -269,12 +269,14 @@ export function renderFormField(
     )
   }
   if (f.type === 'fraction') {
+    const entryUnit = f.config?.entryUnit === 'mm' ? 'mm' : f.config?.entryUnit === 'in' ? 'in' : undefined
     const content = (
       <FractionInput
         value={Number(value) || 0}
         onChange={(v) => onChange(f.key, v)}
         defaultScale={parseFractionScale(f.config?.fractionScale)}
         storageUnit={f.config?.unit === 'mm' ? 'mm' : 'in'}
+        entryUnit={entryUnit}
         className="w-full"
       />
     )
@@ -284,11 +286,16 @@ export function renderFormField(
     const unit = typeof f.config?.unit === 'string' ? f.config.unit : 'lb'
     const storageUnit: 'kg' | 'g' | 'lb' | 'oz' =
       unit === 'kg' || unit === 'g' || unit === 'lb' || unit === 'oz' ? unit : 'lb'
+    const entryUnit =
+      f.config?.entryUnit === 'kg' || f.config?.entryUnit === 'g' || f.config?.entryUnit === 'lb' || f.config?.entryUnit === 'oz'
+        ? f.config.entryUnit
+        : undefined
     const content = (
       <WeightInput
         value={Number(value) || 0}
         onChange={(v) => onChange(f.key, v)}
         storageUnit={storageUnit}
+        entryUnit={entryUnit}
         className="w-full"
       />
     )

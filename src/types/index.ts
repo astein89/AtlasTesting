@@ -36,6 +36,8 @@ export const STATUS_OPTIONS = [
 
 export interface FieldConfig {
   unit?: string
+  /** Default unit when opening the keypad/modal. For fraction: 'in' | 'mm'. For weight: 'kg' | 'g' | 'lb' | 'oz'. Omit or same as unit = use storage unit. */
+  entryUnit?: string
   min?: number
   max?: number
   options?: string[]

@@ -109,7 +109,12 @@ export function TestPlanDataView() {
   const [submitting, setSubmitting] = useState(false)
   const [deleteRecordPending, setDeleteRecordPending] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [persistTableFilters] = useUserPreference('atlas-persist-table-filters', false)
+  const searchPrefKey = `atlas-data-search-${planId ?? 'default'}`
+  const [prefSearch, setPrefSearch] = useUserPreference(searchPrefKey, '')
+  const [localSearch, setLocalSearch] = useState('')
+  const searchQuery = persistTableFilters ? prefSearch : localSearch
+  const setSearchQuery = persistTableFilters ? setPrefSearch : setLocalSearch
   type ViewMode = 'table' | 'card' | 'compact-card' | 'responsive'
   const [viewMode, setViewMode] = useUserPreference<ViewMode>('atlas-data-view-mode', 'responsive')
   const [isMobile, setIsMobile] = useState(false)
@@ -129,7 +134,50 @@ export function TestPlanDataView() {
   const showTableView = effectiveViewMode === 'table'
   const showCardView = effectiveViewMode === 'card' || effectiveViewMode === 'compact-card'
   const compactCards = effectiveViewMode === 'compact-card'
-  const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({})
+  const columnFiltersPrefKey = `atlas-data-column-filters-${planId ?? 'default'}`
+  const serializeColumnFilters = (v: Record<string, string[]>) => JSON.stringify(v)
+  const deserializeColumnFilters = (s: string): Record<string, string[]> => {
+    try {
+      const o = JSON.parse(s)
+      if (typeof o !== 'object' || o === null) return {}
+      return Object.fromEntries(
+        Object.entries(o).map(([k, v]) => [k, Array.isArray(v) ? v.map(String) : []])
+      )
+    } catch {
+      return {}
+    }
+  }
+  const [prefColumnFiltersArr, setPrefColumnFiltersArr] = useUserPreference<Record<string, string[]>>(
+    columnFiltersPrefKey,
+    {},
+    serializeColumnFilters,
+    deserializeColumnFilters
+  )
+  const prefColumnFilters = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(prefColumnFiltersArr).map(([k, v]) => [k, new Set(v)] as const)
+      ),
+    [prefColumnFiltersArr]
+  )
+  const setPrefColumnFilters = useCallback(
+    (valueOrUpdater: Record<string, Set<string>> | ((prev: Record<string, Set<string>>) => Record<string, Set<string>>)) => {
+      setPrefColumnFiltersArr((prevArr) => {
+        const prevSets = Object.fromEntries(
+          Object.entries(prevArr).map(([k, v]) => [k, new Set(v)] as const)
+        )
+        const nextSets =
+          typeof valueOrUpdater === 'function' ? valueOrUpdater(prevSets) : valueOrUpdater
+        return Object.fromEntries(
+          Object.entries(nextSets).map(([k, v]) => [k, [...v]] as const)
+        )
+      })
+    },
+    [setPrefColumnFiltersArr]
+  )
+  const [localColumnFilters, setLocalColumnFilters] = useState<Record<string, Set<string>>>({})
+  const columnFilters = persistTableFilters ? prefColumnFilters : localColumnFilters
+  const setColumnFilters = persistTableFilters ? setPrefColumnFilters : setLocalColumnFilters
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
   const [showMobileFilterPanel, setShowMobileFilterPanel] = useState(false)
   const statusTabPrefKey = `atlas-data-status-tab-${planId ?? 'default'}`
@@ -148,6 +196,8 @@ export function TestPlanDataView() {
   const [hiddenColumnKeys, setHiddenColumnKeys] = useUserPreference<string[]>(columnsPrefKey, [])
   const [directTableEdit, setDirectTableEdit] = useUserPreference('atlas-direct-table-edit', false)
   const [bulkSelectMode, setBulkSelectMode] = useUserPreference('atlas-bulk-select-mode', false)
+  const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
+  const [recordModalViewOnly, setRecordModalViewOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
   const [showBulkAddRowsModal, setShowBulkAddRowsModal] = useState(false)
@@ -398,6 +448,7 @@ export function TestPlanDataView() {
   const startEdit = (record: Record) => {
     setEditingId(record.id)
     setEditData(computeFormulaValues(fields, record.data))
+    setRecordModalViewOnly(openRecordsViewOnly)
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       next.set('editing', record.id)
@@ -416,6 +467,7 @@ export function TestPlanDataView() {
 
   const cancelEdit = () => {
     setEditingId(null)
+    setRecordModalViewOnly(false)
     clearEditingParam()
   }
 
@@ -954,7 +1006,8 @@ export function TestPlanDataView() {
           formLayoutOrder={plan?.formLayoutOrder}
           plan={plan ?? undefined}
           isAdmin={isAdmin}
-          readOnly={!editingAllowed}
+          readOnly={!editingAllowed || recordModalViewOnly}
+          onStartEdit={editingAllowed ? () => setRecordModalViewOnly(false) : undefined}
         />
       )}
       {deleteRecordPending && (
