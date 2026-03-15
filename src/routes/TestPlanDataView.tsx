@@ -10,6 +10,7 @@ import { useAuthStore } from '../store/authStore'
 import { EditRecordModal } from '../components/data/EditRecordModal'
 import { AddRecordModal } from '../components/data/AddRecordModal'
 import { BulkAddRowsModal } from '../components/data/BulkAddRowsModal'
+import { ImportDataModal } from '../components/data/ImportDataModal'
 import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { renderFormField } from '../components/fields/FormFieldRenderer'
@@ -201,6 +202,7 @@ export function TestPlanDataView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
   const [showBulkAddRowsModal, setShowBulkAddRowsModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditFieldKey, setBulkEditFieldKey] = useState<string | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState<string | number | boolean | string[] | TimerValue | null>(null)
@@ -255,6 +257,34 @@ export function TestPlanDataView() {
       .then((r) => setRecords(r.data))
       .catch(() => setRecords([]))
   }, [planId, testId])
+
+  const loadPlanAndFields = useCallback(() => {
+    if (!planId) return
+    api
+      .get<TestPlan>(`/test-plans/${planId}`)
+      .then((r) => {
+        const planData = r.data
+        setPlan(planData)
+        const fieldIds = planData.fieldIds?.length ? planData.fieldIds : []
+        if (fieldIds.length === 0) {
+          setFields([])
+          setAddData({})
+          return
+        }
+        return Promise.allSettled(
+          fieldIds.map((fid: string) =>
+            api.get<DataField>(`/fields/${fid}`).then((fr) => fr.data)
+          )
+        ).then((results) => {
+          const f = results
+            .filter((res): res is PromiseFulfilledResult<DataField> => res.status === 'fulfilled' && res.value != null)
+            .map((res) => res.value)
+          setFields(f)
+          setAddData(getDefaultData(f, planData))
+        })
+      })
+      .catch(() => setPlan(null))
+  }, [planId])
 
   useEffect(() => {
     if (!planId) return
@@ -321,6 +351,7 @@ export function TestPlanDataView() {
     showBulkEditModal ||
     bulkDeletePending ||
     showBulkAddRowsModal ||
+    showImportModal ||
     showMoveToTestModal
 
   const closeTopmostModal = useCallback(() => {
@@ -334,6 +365,10 @@ export function TestPlanDataView() {
       setBulkDeletePending(false)
     } else if (showExportModal) {
       setShowExportModal(false)
+    } else if (showImportModal) {
+      setShowImportModal(false)
+    } else if (showBulkAddRowsModal) {
+      setShowBulkAddRowsModal(false)
     } else if (editingId) {
       setEditingId(null)
       setSearchParams((prev) => {
@@ -351,6 +386,8 @@ export function TestPlanDataView() {
     bulkDeletePending,
     showMoveToTestModal,
     showExportModal,
+    showImportModal,
+    showBulkAddRowsModal,
     editingId,
     isAdding,
     setSearchParams,
@@ -930,20 +967,6 @@ export function TestPlanDataView() {
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
-      {isArchived && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
-          <span className="font-medium">This test is archived.</span>
-          <span className="text-foreground/80">View-only.</span>
-          <button
-            type="button"
-            onClick={handleRestoreFromArchive}
-            disabled={restoringFromArchive}
-            className="shrink-0 rounded border border-amber-600/60 bg-amber-500/20 px-3 py-1.5 font-medium text-foreground hover:bg-amber-500/30 disabled:opacity-50 dark:border-amber-400/50 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
-          >
-            {restoringFromArchive ? 'Restoring…' : 'Restore'}
-          </button>
-        </div>
-      )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/70">
         <div className="flex flex-wrap items-center gap-2">
           <Link to="/test-plans" className="hover:text-foreground hover:underline">
@@ -968,6 +991,16 @@ export function TestPlanDataView() {
           >
             Export
           </button>
+          {editingAllowed && (
+            <button
+              type="button"
+              onClick={() => setShowImportModal(true)}
+              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
+              title="Import rows from CSV or XLSX file"
+            >
+              Import
+            </button>
+          )}
           {hasFields && editingAllowed && (
             <>
               <button
@@ -1018,6 +1051,19 @@ export function TestPlanDataView() {
           onCreated={() => {
             setShowBulkAddRowsModal(false)
             loadRecords()
+          }}
+        />
+      )}
+      {showImportModal && plan && testId && (
+        <ImportDataModal
+          planId={planId!}
+          plan={plan}
+          testId={testId}
+          fields={fields}
+          onClose={() => setShowImportModal(false)}
+          onImported={() => {
+            loadRecords()
+            loadPlanAndFields()
           }}
         />
       )}
@@ -1851,6 +1897,21 @@ export function TestPlanDataView() {
           )}
           {/* Table view: main scroll area. On small screens, ensure enough vertical space for many rows. */}
           {showTableView && (
+          <>
+          {isArchived && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+              <span className="font-medium">This test is archived.</span>
+              <span className="text-foreground/80">View-only.</span>
+              <button
+                type="button"
+                onClick={handleRestoreFromArchive}
+                disabled={restoringFromArchive}
+                className="shrink-0 rounded border border-amber-600/60 bg-amber-500/20 px-3 py-1.5 font-medium text-foreground hover:bg-amber-500/30 disabled:opacity-50 dark:border-amber-400/50 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
+              >
+                {restoringFromArchive ? 'Restoring…' : 'Restore'}
+              </button>
+            </div>
+          )}
           <div className="flex min-h-[60vh] min-w-0 flex-1 flex-col overflow-y-auto overflow-x-auto rounded-lg border border-border">
           <table
             className="w-full"
@@ -2109,6 +2170,7 @@ export function TestPlanDataView() {
             </tbody>
           </table>
           </div>
+          </>
           )}
         </div>
       )}
