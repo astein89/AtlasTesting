@@ -346,58 +346,7 @@ function migrateTestRunsRunId(db: DbWrapper) {
 }
 
 /** Create tests table (first-class tests under a plan), add test_id to test_runs, backfill one Legacy test per plan. */
-<<<<<<< HEAD
 function migrateTestsTableAndBackfill(db: DbWrapper) {
-=======
-function migrateTestsTableAndBackfill(db: SqlDb) {
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS tests (
-        id TEXT PRIMARY KEY,
-        test_plan_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        start_date TEXT,
-        end_date TEXT,
-        archived INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (test_plan_id) REFERENCES test_plans(id)
-      )
-    `)
-    const trRows = db.prepare('PRAGMA table_info(test_runs)').all() as Array<{ name: string }>
-    const trCols = trRows.map((r) => r.name)
-    if (!trCols.includes('test_id')) {
-      db.run('ALTER TABLE test_runs ADD COLUMN test_id TEXT REFERENCES tests(id)')
-    }
-    // Ensure every plan that has records has a Legacy test and backfill records to it
-    const planIdsWithRecords = db.prepare('SELECT DISTINCT test_plan_id FROM test_runs').all() as Array<{ test_plan_id: string }>
-    for (const { test_plan_id: planId } of planIdsWithRecords) {
-      const legacyId = `legacy-${planId}`
-      const existing = db.prepare('SELECT id FROM tests WHERE id = ?').get(legacyId) as { id: string } | undefined
-      if (!existing) {
-        db.prepare(
-          'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
-        ).run(legacyId, planId, 'Legacy')
-      }
-      db.prepare('UPDATE test_runs SET test_id = ? WHERE test_plan_id = ? AND (test_id IS NULL OR test_id = \'\')').run(legacyId, planId)
-    }
-    // Ensure every plan has at least one test (so overview always shows something)
-    const allPlanIds = db.prepare('SELECT id FROM test_plans').all() as Array<{ id: string }>
-    for (const { id: planId } of allPlanIds) {
-      const legacyId = `legacy-${planId}`
-      const hasTest = db.prepare('SELECT 1 FROM tests WHERE test_plan_id = ? LIMIT 1').get(planId)
-      if (!hasTest) {
-        db.prepare(
-          'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
-        ).run(legacyId, planId, 'Legacy')
-      }
-    }
-  } catch {
-    // Ignore
-  }
-}
-
-function migratePlanFieldIds(db: SqlDb) {
->>>>>>> d1dcd782f21706ad179e64ed0a039e05a9ee0448
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS tests (
@@ -503,11 +452,7 @@ function migrateFieldsAudit(db: DbWrapper) {
   }
 }
 
-<<<<<<< HEAD
 function migrateTestPlansAndTestsUpdatedAt(db: DbWrapper) {
-=======
-function migrateTestPlansAndTestsUpdatedAt(db: SqlDb) {
->>>>>>> d1dcd782f21706ad179e64ed0a039e05a9ee0448
   try {
     const planRows = db.prepare('PRAGMA table_info(test_plans)').all() as Array<{ name: string }>
     if (!planRows.some((r) => r.name === 'updated_at')) {
@@ -522,11 +467,7 @@ function migrateTestPlansAndTestsUpdatedAt(db: SqlDb) {
   }
 }
 
-<<<<<<< HEAD
 function migrateTestsToPlans(db: DbWrapper) {
-=======
-function migrateTestsToPlans(db: SqlDb) {
->>>>>>> d1dcd782f21706ad179e64ed0a039e05a9ee0448
   try {
     db.run('CREATE TABLE IF NOT EXISTS test_plans (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT DEFAULT (datetime(\'now\')))')
     const info = db.execQuery('PRAGMA table_info(tests)')
