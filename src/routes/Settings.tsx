@@ -1,5 +1,5 @@
-import { useDateTimeConfig } from '../hooks/useDateTimeConfig'
 import { useUserPreference } from '../hooks/useUserPreference'
+import { useDateTimeConfigContext } from '../contexts/DateTimeConfigContext'
 import {
   DATE_TIME_PRESETS,
   formatDateWithConfig,
@@ -11,7 +11,7 @@ import { PopupSelect } from '../components/ui/PopupSelect'
 const EXAMPLE_DATE = new Date('2025-03-15T14:30:00')
 
 export function Settings() {
-  const [config, setConfig] = useDateTimeConfig()
+  const [config, setConfig] = useDateTimeConfigContext()
   const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
   const [persistTableFilters, setPersistTableFilters] = useUserPreference('atlas-persist-table-filters', false)
 
@@ -53,6 +53,7 @@ export function Settings() {
               }
             }}
             options={presetOptions}
+            className="min-w-[220px] max-w-full"
           />
         </div>
         <p className="mt-3 text-sm text-foreground/70">

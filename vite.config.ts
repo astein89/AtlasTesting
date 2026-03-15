@@ -1,12 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import os from 'os'
 
 const base = process.env.VITE_BASE_PATH ? `${process.env.VITE_BASE_PATH.replace(/\/$/, '')}/` : '/'
+
+// Cache outside project to avoid EBUSY when project is in Dropbox (Windows file locking)
+const cacheDir = path.join(os.tmpdir(), 'vite-automation-testing')
 
 export default defineConfig({
   appType: 'spa',
   base,
+  cacheDir,
   plugins: [
     react(),
     // Fix favicon and apple-touch-icon paths when served under a base path (e.g. /automation-testing on Pi)
