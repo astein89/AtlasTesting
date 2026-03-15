@@ -4,7 +4,7 @@ import { useSortableHeader } from '../hooks/useSortableHeader'
 import { useUserPreference } from '../hooks/useUserPreference'
 import { formatDate, formatDateTime } from '../lib/dateTimeConfig'
 import { api } from '../api/client'
-import { getTests, getTest, updateTest } from '../api/tests'
+import { getTests, getTest, updateTest, createTest } from '../api/tests'
 import { formatDecimalAsFraction } from '../utils/fraction'
 import { useAuthStore } from '../store/authStore'
 import { EditRecordModal } from '../components/data/EditRecordModal'
@@ -195,7 +195,7 @@ export function TestPlanDataView() {
   const columnsPrefKey = planId ? `atlas-data-hidden-columns-${planId}` : 'atlas-data-hidden-columns-default'
   const [hiddenColumnKeys, setHiddenColumnKeys] = useUserPreference<string[]>(columnsPrefKey, [])
   const [directTableEdit, setDirectTableEdit] = useUserPreference('atlas-direct-table-edit', false)
-  const [bulkSelectMode, setBulkSelectMode] = useUserPreference('atlas-bulk-select-mode', false)
+  const [bulkSelectMode, setBulkSelectMode] = useState(false)
   const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
   const [recordModalViewOnly, setRecordModalViewOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -207,6 +207,10 @@ export function TestPlanDataView() {
   const [showMoveToTestModal, setShowMoveToTestModal] = useState(false)
   const [otherTests, setOtherTests] = useState<Array<{ id: string; name: string }>>([])
   const [moveToTestId, setMoveToTestId] = useState<string>('')
+  const [showAddTestInMoveModal, setShowAddTestInMoveModal] = useState(false)
+  const [newTestName, setNewTestName] = useState('')
+  const [newTestStart, setNewTestStart] = useState('')
+  const [newTestEnd, setNewTestEnd] = useState('')
   const [restoringFromArchive, setRestoringFromArchive] = useState(false)
   const visibleFields = useMemo(() => {
     const allTableFields = fields
@@ -570,8 +574,41 @@ export function TestPlanDataView() {
       .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
       .catch(() => setOtherTests([]))
     setMoveToTestId('')
+    setShowAddTestInMoveModal(false)
+    setNewTestName('')
+    setNewTestStart('')
+    setNewTestEnd('')
     setShowMoveToTestModal(true)
   }, [planId, testId])
+
+  const refreshOtherTests = useCallback(() => {
+    if (!planId || !testId) return
+    getTests(planId)
+      .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
+      .catch(() => setOtherTests([]))
+  }, [planId, testId])
+
+  const handleAddTestFromMoveModal = async () => {
+    if (!planId || !newTestName.trim() || !newTestStart.trim()) return
+    setSubmitting(true)
+    try {
+      const test = await createTest(planId, {
+        name: newTestName.trim(),
+        startDate: newTestStart.trim() || undefined,
+        endDate: newTestEnd.trim() || undefined,
+      })
+      await refreshOtherTests()
+      setMoveToTestId(test.id)
+      setShowAddTestInMoveModal(false)
+      setNewTestName('')
+      setNewTestStart('')
+      setNewTestEnd('')
+    } catch {
+      showAlert('Failed to add test.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const handleMoveToTest = async () => {
     if (!moveToTestId || selectedIds.size === 0) return
@@ -875,6 +912,15 @@ export function TestPlanDataView() {
 
   const handleRowClick = (record: Record, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return
+    if (editingAllowed && bulkSelectMode) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(record.id)) next.delete(record.id)
+        else next.add(record.id)
+        return next
+      })
+      return
+    }
     startEdit(record)
   }
 
@@ -1176,6 +1222,73 @@ export function TestPlanDataView() {
                 options={otherTests.map((t) => ({ value: t.id, label: t.name }))}
               />
             </div>
+            {!showAddTestInMoveModal ? (
+              <div className="mb-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTestStart(new Date().toISOString().slice(0, 10))
+                    setShowAddTestInMoveModal(true)
+                  }}
+                  className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-background"
+                >
+                  Add new test
+                </button>
+              </div>
+            ) : (
+              <div className="mb-4 rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-foreground/80">Name</label>
+                  <input
+                    type="text"
+                    value={newTestName}
+                    onChange={(e) => setNewTestName(e.target.value)}
+                    placeholder="Test name"
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-foreground/80">Start date</label>
+                  <input
+                    type="date"
+                    value={newTestStart}
+                    onChange={(e) => setNewTestStart(e.target.value)}
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-foreground/80">End date (optional)</label>
+                  <input
+                    type="date"
+                    value={newTestEnd}
+                    onChange={(e) => setNewTestEnd(e.target.value)}
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddTestInMoveModal(false)
+                      setNewTestName('')
+                      setNewTestStart('')
+                      setNewTestEnd('')
+                    }}
+                    className="rounded border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-background"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddTestFromMoveModal}
+                    disabled={submitting || !newTestName.trim() || !newTestStart.trim()}
+                    className="rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {submitting ? 'Creating…' : 'Create test'}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -1593,7 +1706,7 @@ export function TestPlanDataView() {
                   <div
                     key={record.id}
                     onClick={(e) => handleRowClick(record, e)}
-                    className={`w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70 ${bulkSelectMode && selectedIds.has(record.id) ? 'border-primary ring-1 ring-primary/50' : 'border-border'}`}
+                    className={`w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70 ${bulkSelectMode && selectedIds.has(record.id) ? 'border-border bg-blue-600/20 dark:bg-blue-500/20' : 'border-border bg-card'}`}
                   >
                     {editingAllowed && bulkSelectMode ? (
                       <div className="mb-2 flex items-start gap-2" onClick={(e) => e.stopPropagation()}>
@@ -1876,7 +1989,7 @@ export function TestPlanDataView() {
                   <tr
                     key={record.id}
                     onClick={(e) => handleRowClick(record, e)}
-                    className={`cursor-pointer bg-background transition-colors hover:bg-card ${editingAllowed && bulkSelectMode && selectedIds.has(record.id) ? 'ring-1 ring-primary/50' : ''}`}
+                    className={`cursor-pointer transition-colors hover:bg-card ${editingAllowed && bulkSelectMode && selectedIds.has(record.id) ? 'bg-blue-600/20 dark:bg-blue-500/20' : 'bg-background'}`}
                   >
                     {editingAllowed && bulkSelectMode && (
                       <td className="w-10 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
