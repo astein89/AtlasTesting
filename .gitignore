@@ -1,7 +1,7 @@
 node_modules
 dist
 # SQLite DBs (may contain credentials, test data, app state — do not commit)
-*.db
+*.db*
 db_backup
 uploads
 .env
