@@ -1483,12 +1483,12 @@ export function TestPlanDataView() {
                     ? 'border-primary bg-primary/15 text-primary ring-2 ring-primary/30'
                     : 'border-border text-foreground hover:bg-background'
                 }`}
-                title={bulkSelectMode ? 'Turn off row selection' : 'Select rows for bulk edit or delete'}
+                title={bulkSelectMode ? 'Turn off row selection' : 'Select rows'}
               >
                 <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-xs font-medium">Bulk edit</span>
+                <span className="text-xs font-medium">Select</span>
                 {bulkSelectMode && (
                   <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                     On
