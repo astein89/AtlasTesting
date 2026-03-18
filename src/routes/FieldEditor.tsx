@@ -364,7 +364,8 @@ export function FieldEditor() {
         const { data: created } = await api.post<{ id: string }>('/fields', {
           ...data,
           config,
-          ownerTestPlanId: navState.fromPlan ? navState.ownerTestPlanId ?? null : undefined,
+          // For new fields, respect the current ownerPlanId selection (plan-specific vs global)
+          ownerTestPlanId: ownerPlanId,
         })
         if (navState.fromPlan && navState.returnTo) {
           navigate(navState.returnTo, {
@@ -615,24 +616,41 @@ export function FieldEditor() {
         className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6"
       >
         <div>
-          {!isNew && ownerPlanId && (
+          {/* When opened from a Test Plan, show scope toggle (plan-specific vs global) above the key. */}
+          {navState.ownerTestPlanId && (
             <div className="mb-2 flex items-center justify-between gap-2 text-[11px]">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-[10px] text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
-                  Plan-specific
-                </span>
+                {ownerPlanId && (
+                  <span className="inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-[10px] text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
+                    Plan-specific
+                  </span>
+                )}
                 <span className="text-foreground/70">
-                  Owner plan:{' '}
-                  <span className="font-medium">{ownerPlanName ?? ownerPlanId}</span>
+                  {ownerPlanId ? (
+                    <>
+                      Owner plan:{' '}
+                      <span className="font-medium">{ownerPlanName ?? ownerPlanId}</span>
+                    </>
+                  ) : (
+                    <span className="font-medium text-foreground/80">Global field</span>
+                  )}
                 </span>
               </div>
               <button
                 type="button"
-                onClick={() => setOwnerPlanId(null)}
+                onClick={() =>
+                  setOwnerPlanId((prev) =>
+                    prev ? null : navState.ownerTestPlanId ?? null
+                  )
+                }
                 className="shrink-0 rounded border border-yellow-600 bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-900 hover:bg-yellow-200 dark:border-yellow-400 dark:bg-yellow-700/60 dark:text-yellow-50 dark:hover:bg-yellow-600/70"
-                title="Convert this field to global so it can be reused in other test plans."
+                title={
+                  ownerPlanId
+                    ? 'Convert this field to global so it can be reused in other test plans.'
+                    : 'Limit this field to this test plan only.'
+                }
               >
-                Make global
+                {ownerPlanId ? 'Make global' : 'Limit to this plan'}
               </button>
             </div>
           )}
@@ -2243,7 +2261,13 @@ export function FieldEditor() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/fields')}
+            onClick={() => {
+              if (navState.fromPlan && navState.returnTo) {
+                navigate(navState.returnTo, { replace: true })
+              } else {
+                navigate('/fields')
+              }
+            }}
             className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
           >
             Cancel

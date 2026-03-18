@@ -49,6 +49,7 @@ export function TestPlanEditor() {
   const [submitting, setSubmitting] = useState(false)
   const { showAlert, showConfirm } = useAlertConfirm()
   const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const handledNewFieldIdRef = useRef<string | null>(null)
 
   /** Move entries for hidden fields to the end of the form layout order. */
   function moveHiddenFieldsToEnd(order: string[], hiddenIds: string[]): string[] {
@@ -112,11 +113,15 @@ export function TestPlanEditor() {
   }, [planId, navigate])
 
   // When returning from FieldEditor after creating a new field for this plan,
-  // wire the new field into the plan layout.
+  // wire the new field into the plan layout. Guard against React StrictMode
+  // double-invoking effects in dev by tracking the last handled id.
   useEffect(() => {
-    if (!navState.newFieldId) return
-    handleCreateField(navState.newFieldId)
-    // Clear newFieldId from navigation state to avoid double-adding on refresh.
+    const newFieldId = navState.newFieldId
+    if (!newFieldId) return
+    if (handledNewFieldIdRef.current === newFieldId) return
+    handledNewFieldIdRef.current = newFieldId
+    handleCreateField(newFieldId)
+    // Clear newFieldId from navigation state to avoid re-adding on refresh.
     navigate(location.pathname, {
       replace: true,
       state: { returnTo, createdInline },
