@@ -678,7 +678,10 @@ export function FieldEditor() {
                 {decimalPlaces !== '' && (
                   <div className="mt-2 space-y-1">
                     <label className="block text-xs font-medium text-foreground/80">Rounding</label>
-                    <label className="flex cursor-pointer items-center gap-2">
+                    <label
+                      className="flex cursor-pointer items-center gap-2"
+                      title="Tables & read-only use this precision; entry keeps full precision"
+                    >
                       <input
                         type="radio"
                         name="decimalPlacesModeNum"
@@ -687,10 +690,13 @@ export function FieldEditor() {
                         className="h-4 w-4"
                       />
                       <span className="text-sm text-foreground">
-                        Display only — tables & read-only; entry keeps full precision
+                        Display only
                       </span>
                     </label>
-                    <label className="flex cursor-pointer items-center gap-2">
+                    <label
+                      className="flex cursor-pointer items-center gap-2"
+                      title="Round on entry; stored value matches decimal places"
+                    >
                       <input
                         type="radio"
                         name="decimalPlacesModeNum"
@@ -699,7 +705,7 @@ export function FieldEditor() {
                         className="h-4 w-4"
                       />
                       <span className="text-sm text-foreground">
-                        Enforce — round on entry; stored value matches decimal places
+                        Enforce
                       </span>
                     </label>
                   </div>
@@ -1136,7 +1142,10 @@ export function FieldEditor() {
                 {decimalPlaces !== '' && (
                   <div className="mt-2 space-y-1">
                     <label className="block text-xs font-medium text-foreground/80">Rounding</label>
-                    <label className="flex cursor-pointer items-center gap-2">
+                    <label
+                      className="flex cursor-pointer items-center gap-2"
+                      title="Tables & read-only; result keeps full precision internally"
+                    >
                       <input
                         type="radio"
                         name="decimalPlacesModeFormula"
@@ -1145,10 +1154,13 @@ export function FieldEditor() {
                         className="h-4 w-4"
                       />
                       <span className="text-sm text-foreground">
-                        Display only — tables & read-only; result keeps full precision internally
+                        Display only
                       </span>
                     </label>
-                    <label className="flex cursor-pointer items-center gap-2">
+                    <label
+                      className="flex cursor-pointer items-center gap-2"
+                      title="Round formula result to this many decimal places"
+                    >
                       <input
                         type="radio"
                         name="decimalPlacesModeFormula"
@@ -1157,7 +1169,7 @@ export function FieldEditor() {
                         className="h-4 w-4"
                       />
                       <span className="text-sm text-foreground">
-                        Enforce — round formula result to this many decimal places
+                        Enforce
                       </span>
                     </label>
                   </div>

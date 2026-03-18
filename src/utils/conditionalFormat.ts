@@ -143,7 +143,7 @@ export function getConditionalFormatStyle(
     if (match) {
       anyMatch = true
       if (Object.keys(css).length > 0) return css
-    } else if (!anyMatch && rule.appliesToOthers) {
+    } else if (!anyMatch && (rule.mode === 'fallback' || rule.appliesToOthers)) {
       if (Object.keys(css).length > 0 && !fallbackCss) {
         fallbackCss = css
       }
