@@ -29,6 +29,19 @@ function migrateEmailToUsername(db: DbWrapper) {
   }
 }
 
+function migrateFieldsOwnerTestPlanId(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(fields)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasOwner = rows.some((r) => r[1] === 'owner_test_plan_id')
+    if (hasOwner) return
+    db.run('ALTER TABLE fields ADD COLUMN owner_test_plan_id TEXT')
+  } catch {
+    // Ignore migration errors (older DBs may not support ALTER in some environments)
+  }
+}
+
 export function initSchema(db: DbWrapper) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -83,6 +96,7 @@ export function initSchema(db: DbWrapper) {
     );
   `)
   migrateEmailToUsername(db)
+  migrateFieldsOwnerTestPlanId(db)
   migrateTestsToPlans(db)
   migratePlanFieldIds(db)
   migratePlanFieldLayout(db)
@@ -365,28 +379,24 @@ function migrateTestsTableAndBackfill(db: DbWrapper) {
     if (!trCols.includes('test_id')) {
       db.run('ALTER TABLE test_runs ADD COLUMN test_id TEXT REFERENCES tests(id)')
     }
-    // Ensure every plan that has records has a Legacy test and backfill records to it
-    const planIdsWithRecords = db.prepare('SELECT DISTINCT test_plan_id FROM test_runs').all() as Array<{ test_plan_id: string }>
+    // Ensure every legacy plan that already has records gets a Legacy test and backfill records to it.
+    // New plans created after this migration should manage their own tests explicitly.
+    const planIdsWithRecords = db
+      .prepare('SELECT DISTINCT test_plan_id FROM test_runs')
+      .all() as Array<{ test_plan_id: string }>
     for (const { test_plan_id: planId } of planIdsWithRecords) {
       const legacyId = `legacy-${planId}`
-      const existing = db.prepare('SELECT id FROM tests WHERE id = ?').get(legacyId) as { id: string } | undefined
+      const existing = db
+        .prepare('SELECT id FROM tests WHERE id = ?')
+        .get(legacyId) as { id: string } | undefined
       if (!existing) {
         db.prepare(
           'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
         ).run(legacyId, planId, 'Legacy')
       }
-      db.prepare('UPDATE test_runs SET test_id = ? WHERE test_plan_id = ? AND (test_id IS NULL OR test_id = \'\')').run(legacyId, planId)
-    }
-    // Ensure every plan has at least one test (so overview always shows something)
-    const allPlanIds = db.prepare('SELECT id FROM test_plans').all() as Array<{ id: string }>
-    for (const { id: planId } of allPlanIds) {
-      const legacyId = `legacy-${planId}`
-      const hasTest = db.prepare('SELECT 1 FROM tests WHERE test_plan_id = ? LIMIT 1').get(planId)
-      if (!hasTest) {
-        db.prepare(
-          'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
-        ).run(legacyId, planId, 'Legacy')
-      }
+      db.prepare(
+        'UPDATE test_runs SET test_id = ? WHERE test_plan_id = ? AND (test_id IS NULL OR test_id = \'\')'
+      ).run(legacyId, planId)
     }
   } catch {
     // Ignore

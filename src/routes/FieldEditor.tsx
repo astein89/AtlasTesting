@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -106,6 +106,8 @@ function cfHexMatches(a: string, b: string): boolean {
 export function FieldEditor() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const navState = (location.state as { fromPlan?: boolean; ownerTestPlanId?: string | null; returnTo?: string; createdInlinePlanId?: string } | null) ?? {}
   const isNew = id === 'new'
   const { showAlert, showConfirm } = useAlertConfirm()
   const { presets: cfPresets } = useConditionalFormatPresets()
@@ -148,6 +150,8 @@ export function FieldEditor() {
   const [cfRules, setCfRules] = useState<ConditionalFormatRule[]>([])
   const [cfHelpOpen, setCfHelpOpen] = useState(false)
   const [cfCfPopover, setCfCfPopover] = useState<{ ruleId: string; kind: 'fill' | 'text' } | null>(null)
+  const [ownerPlanId, setOwnerPlanId] = useState<string | null>(navState.ownerTestPlanId ?? null)
+  const [ownerPlanName, setOwnerPlanName] = useState<string | null>(null)
   const [formulaTestData, setFormulaTestData] = useState<Record<string, string>>({})
   const [formulaTestResult, setFormulaTestResult] = useState<string | number | boolean | null | undefined>(undefined)
   const [availableFieldsForFormula, setAvailableFieldsForFormula] = useState<DataField[]>([])
@@ -357,11 +361,37 @@ export function FieldEditor() {
 
     try {
       if (isNew) {
-        await api.post('/fields', { ...data, config })
+        const { data: created } = await api.post<{ id: string }>('/fields', {
+          ...data,
+          config,
+          ownerTestPlanId: navState.fromPlan ? navState.ownerTestPlanId ?? null : undefined,
+        })
+        if (navState.fromPlan && navState.returnTo) {
+          navigate(navState.returnTo, {
+            replace: true,
+            state: {
+              returnTo: navState.returnTo.startsWith('/test-plans')
+                ? '/test-plans'
+                : undefined,
+              createdInline: !!navState.createdInlinePlanId,
+              newFieldId: created.id,
+            },
+          })
+        } else {
+          navigate('/fields')
+        }
       } else {
-        await api.put(`/fields/${id}`, { ...data, config })
+        await api.put(`/fields/${id}`, {
+          ...data,
+          config,
+          ownerTestPlanId: ownerPlanId,
+        })
+        if (navState.fromPlan && navState.returnTo) {
+          navigate(navState.returnTo, { replace: true })
+        } else {
+          navigate('/fields')
+        }
       }
-      navigate('/fields')
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
       showAlert(err || 'Failed to save')
@@ -478,6 +508,15 @@ export function FieldEditor() {
             setNegativeStyle((r.data.config?.negativeStyle as 'minus' | 'parentheses') ?? 'minus')
             setCurrencySymbol(typeof r.data.config?.currencySymbol === 'string' ? r.data.config.currencySymbol : '')
           }
+          setOwnerPlanId(r.data.ownerTestPlanId ?? null)
+          if (r.data.ownerTestPlanId) {
+            api
+              .get<TestPlan>(`/test-plans/${r.data.ownerTestPlanId}`)
+              .then((resp) => setOwnerPlanName(resp.data.name))
+              .catch(() => setOwnerPlanName(null))
+          } else {
+            setOwnerPlanName(null)
+          }
           setNumberMin(r.data.config?.min != null ? (r.data.config.min as number) : '')
           setNumberMax(r.data.config?.max != null ? (r.data.config.max as number) : '')
           setMinLength(r.data.config?.minLength != null ? (r.data.config.minLength as number) : '')
@@ -576,6 +615,27 @@ export function FieldEditor() {
         className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6"
       >
         <div>
+          {!isNew && ownerPlanId && (
+            <div className="mb-2 flex items-center justify-between gap-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-[10px] text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
+                  Plan-specific
+                </span>
+                <span className="text-foreground/70">
+                  Owner plan:{' '}
+                  <span className="font-medium">{ownerPlanName ?? ownerPlanId}</span>
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOwnerPlanId(null)}
+                className="shrink-0 rounded border border-yellow-600 bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-900 hover:bg-yellow-200 dark:border-yellow-400 dark:bg-yellow-700/60 dark:text-yellow-50 dark:hover:bg-yellow-600/70"
+                title="Convert this field to global so it can be reused in other test plans."
+              >
+                Make global
+              </button>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2">
             <label className="block text-sm font-medium text-foreground">Key</label>
             {!isNew && !keyEditable && (
@@ -2219,7 +2279,13 @@ export function FieldEditor() {
                   await api.delete(`/fields/${id}`)
                   navigate('/fields', { replace: true })
                 } catch (e: unknown) {
-                  const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                  const errObj = e as { response?: { status?: number; data?: { error?: string } } }
+                  // If the field is already gone (404), treat as success and just go back to list.
+                  if (errObj.response?.status === 404) {
+                    navigate('/fields', { replace: true })
+                    return
+                  }
+                  const err = errObj.response?.data?.error
                   showAlert(err || 'Failed to delete field')
                   navigate('/fields', { replace: true })
                 }

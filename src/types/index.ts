@@ -161,6 +161,8 @@ export interface DataField {
   updatedBy?: string | null
   createdByName?: string | null
   updatedByName?: string | null
+  /** When set, this field is owned by a specific test plan and is plan-specific. When null/undefined, the field is global. */
+  ownerTestPlanId?: string | null
 }
 
 export interface TestPlan {

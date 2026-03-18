@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -22,10 +22,13 @@ export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
+  const navState = (location.state as { returnTo?: string; createdInline?: boolean; newFieldId?: string } | null) ?? {}
+  const returnTo = navState.returnTo
+  const [createdInline] = useState<boolean>(navState.createdInline === true)
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const isNew = !planId
   const [name, setName] = useState('')
+  const [nameError, setNameError] = useState<string | null>(null)
   const [description, setDescription] = useState('')
   const [testPlan, setTestPlan] = useState('')
   const [constraints, setConstraints] = useState('')
@@ -42,10 +45,10 @@ export function TestPlanEditor() {
   const [defaultVisibleColumnIds, setDefaultVisibleColumnIds] = useState<string[]>([])
   const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
   const [planFields, setPlanFields] = useState<DataField[]>([])
-  const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
   const { showAlert, showConfirm } = useAlertConfirm()
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
 
   /** Move entries for hidden fields to the end of the form layout order. */
   function moveHiddenFieldsToEnd(order: string[], hiddenIds: string[]): string[] {
@@ -71,34 +74,61 @@ export function TestPlanEditor() {
   }
 
   useEffect(() => {
-    if (!isNew && planId) {
-      api
-        .get<TestPlan>(`/test-plans/${planId}`)
-        .then((r) => {
-          setName(r.data.name)
-          setDescription(r.data.description || '')
-          setTestPlan(r.data.testPlan || '')
-          setConstraints(r.data.constraints || '')
-          setFieldIds(r.data.fieldIds || [])
-          const order =
-            Array.isArray(r.data.formLayoutOrder) && r.data.formLayoutOrder.length > 0
-              ? r.data.formLayoutOrder
-              : r.data.fieldIds || []
-          const hiddenIds = r.data.hiddenFieldIds ?? []
-          setFormLayoutOrder(moveHiddenFieldsToEnd(order, hiddenIds))
-          setDefaultSortOrder(
-            r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
-          )
-          setFieldDefaults(r.data.fieldDefaults && typeof r.data.fieldDefaults === 'object' ? r.data.fieldDefaults : {})
-          setKeyField(r.data.keyField ?? '')
-          setHiddenFieldIds(hiddenIds)
-          setRequiredFieldIds(r.data.requiredFieldIds ?? [])
-          setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
-        })
-        .catch(() => navigate('/test-plans'))
-        .finally(() => setLoading(false))
+    if (!planId) return
+    api
+      .get<TestPlan>(`/test-plans/${planId}`)
+      .then((r) => {
+        setName(r.data.name)
+        setDescription(r.data.description || '')
+        setTestPlan(r.data.testPlan || '')
+        setConstraints(r.data.constraints || '')
+        setFieldIds(r.data.fieldIds || [])
+        const order =
+          Array.isArray(r.data.formLayoutOrder) && r.data.formLayoutOrder.length > 0
+            ? r.data.formLayoutOrder
+            : r.data.fieldIds || []
+        const hiddenIds = r.data.hiddenFieldIds ?? []
+        setFormLayoutOrder(moveHiddenFieldsToEnd(order, hiddenIds))
+        setDefaultSortOrder(
+          r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
+        )
+        setFieldDefaults(
+          r.data.fieldDefaults && typeof r.data.fieldDefaults === 'object' ? r.data.fieldDefaults : {}
+        )
+        setKeyField(r.data.keyField ?? '')
+        setHiddenFieldIds(hiddenIds)
+        setRequiredFieldIds(r.data.requiredFieldIds ?? [])
+        setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
+        if (!r.data.name) {
+          // New/unnamed plan: focus name field
+          setTimeout(() => {
+            nameInputRef.current?.focus()
+            nameInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }, 0)
+        }
+      })
+      .catch(() => navigate('/test-plans'))
+      .finally(() => setLoading(false))
+  }, [planId, navigate])
+
+  // When returning from FieldEditor after creating a new field for this plan,
+  // wire the new field into the plan layout.
+  useEffect(() => {
+    if (!navState.newFieldId) return
+    handleCreateField(navState.newFieldId)
+    // Clear newFieldId from navigation state to avoid double-adding on refresh.
+    navigate(location.pathname, {
+      replace: true,
+      state: { returnTo, createdInline },
+    })
+  }, [navState.newFieldId])
+
+  useEffect(() => {
+    if (nameError && nameInputRef.current) {
+      nameInputRef.current.focus()
+      nameInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-  }, [planId, isNew, navigate])
+  }, [nameError])
 
   const handleCreateField = (newFieldId: string) => {
     api
@@ -183,7 +213,10 @@ export function TestPlanEditor() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return
+    if (!name.trim()) {
+      setNameError('Name must be entered')
+      return
+    }
     if (fieldIds.length < 1) {
       showAlert('Add at least one field to the plan before saving.')
       return
@@ -236,19 +269,7 @@ export function TestPlanEditor() {
     }
   }
 
-  if (loading) return <p className="text-foreground/60">Loading...</p>
-
-  if (showCreateField) {
-    return (
-      <div>
-        <h1 className="mb-6 text-2xl font-semibold text-foreground">Edit Test Plan</h1>
-        <CreateFieldForm
-          onSave={handleCreateField}
-          onCancel={() => setShowCreateField(false)}
-        />
-      </div>
-    )
-  }
+  if (!planId && loading) return <p className="text-foreground/60">Loading…</p>
 
   return (
     <div className="flex h-full flex-col min-h-0">
@@ -267,7 +288,16 @@ export function TestPlanEditor() {
           </button>
           <button
             type="button"
-            onClick={() => navigate(returnTo ?? '/test-plans')}
+            onClick={async () => {
+              if (createdInline && planId) {
+                try {
+                  await api.delete(`/test-plans/${planId}`)
+                } catch {
+                  // Ignore delete errors on cancel; still navigate away
+                }
+              }
+              navigate(returnTo ?? '/test-plans')
+            }}
             className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
           >
             Cancel
@@ -298,11 +328,15 @@ export function TestPlanEditor() {
         <div>
           <label className="block text-sm font-medium text-foreground">Name</label>
           <input
+            ref={nameInputRef}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (nameError) setNameError(null)
+            }}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            required
           />
+          {nameError && <p className="mt-1 text-sm text-red-500">{nameError}</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
@@ -485,7 +519,55 @@ export function TestPlanEditor() {
               onHiddenFieldIdsChange={setHiddenFieldIdsAndReorder}
               requiredFieldIds={requiredFieldIds}
               onRequiredFieldIdsChange={setRequiredFieldIds}
-              onCreateNew={() => setShowCreateField(true)}
+              planId={planId ?? undefined}
+              onCreateNew={async () => {
+                if (!planId) {
+                  if (!name.trim()) {
+                    setNameError('Name must be entered')
+                    return
+                  }
+                  // First create the plan, then go to FieldEditor with context
+                  try {
+                    const { data } = await api.post<{ id: string }>('/test-plans', {
+                      name: name.trim(),
+                      description: description.trim() || undefined,
+                      testPlan: testPlan.trim() || undefined,
+                      constraints: constraints.trim() || undefined,
+                      fieldIds,
+                      formLayoutOrder: formLayoutOrder.length > 0 ? formLayoutOrder : undefined,
+                      defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
+                      fieldDefaults: Object.keys(fieldDefaults).length > 0 ? fieldDefaults : undefined,
+                      keyField: keyField.trim() || undefined,
+                      hiddenFieldIds: hiddenFieldIds.length > 0 ? hiddenFieldIds : undefined,
+                      requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
+                      defaultVisibleColumnIds:
+                        defaultVisibleColumnIds.length > 0 ? defaultVisibleColumnIds : undefined,
+                    })
+                    navigate('/fields/new', {
+                      replace: true,
+                      state: {
+                        fromPlan: true,
+                        ownerTestPlanId: data.id,
+                        returnTo: `/test-plans/${data.id}/edit`,
+                        createdInline: true,
+                      },
+                    })
+                    return
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    showAlert(msg || 'Failed to start a new test plan')
+                    return
+                  }
+                }
+                navigate('/fields/new', {
+                  state: {
+                    fromPlan: true,
+                    ownerTestPlanId: planId,
+                    returnTo: `/test-plans/${planId}/edit`,
+                    createdInline,
+                  },
+                })
+              }}
               fieldDefaults={fieldDefaults}
               renderAbovePreview={
                 planFields.length > 0 ? (

@@ -28,6 +28,7 @@ const schema = z.object({
     'atlas_location',
     'image',
     'timer',
+    'formula',
   ]),
 })
 
@@ -36,6 +37,16 @@ type FormData = z.infer<typeof schema>
 interface CreateFieldFormProps {
   onSave: (id: string) => void
   onCancel: () => void
+  /**
+   * When true, this form was opened from a Test Plan editor (as opposed to the global Data Fields list).
+   * In that context we show the \"Create Global Field\" toggle.
+   */
+  fromPlan?: boolean
+  /**
+   * When set, this form is creating a field for an existing test plan (plan has a real id, not 'new').
+   * Plan-specific fields are saved by sending ownerTestPlanId to the backend.
+   */
+  ownerTestPlanId?: string | null
 }
 
 const TYPES: FieldType[] = [
@@ -53,6 +64,7 @@ const TYPES: FieldType[] = [
   'atlas_location',
   'image',
   'timer',
+  'formula',
 ]
 const TYPE_LABELS: Record<FieldType, string> = {
   number: 'Number',
@@ -72,7 +84,7 @@ const TYPE_LABELS: Record<FieldType, string> = {
   formula: 'Formula',
 }
 
-export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
+export function CreateFieldForm({ onSave, onCancel, fromPlan, ownerTestPlanId }: CreateFieldFormProps) {
   const { showAlert } = useAlertConfirm()
   const [options, setOptions] = useState<string[]>([''])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
@@ -82,6 +94,10 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   const [integerDigits, setIntegerDigits] = useState<number | ''>('')
   const [decimalPlaces, setDecimalPlaces] = useState<number | ''>('')
   const [decimalPlacesMode, setDecimalPlacesMode] = useState<'display' | 'enforce'>('display')
+  const [numberFormat, setNumberFormat] = useState<'number' | 'percent' | 'currency'>('number')
+  const [thousandsSeparator, setThousandsSeparator] = useState(false)
+  const [negativeStyle, setNegativeStyle] = useState<'minus' | 'parentheses'>('minus')
+  const [currencySymbol, setCurrencySymbol] = useState('')
   const [numberMin, setNumberMin] = useState<number | ''>('')
   const [numberMax, setNumberMax] = useState<number | ''>('')
   const [minLength, setMinLength] = useState<number | ''>('')
@@ -91,6 +107,9 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   const [radioLayoutCustom, setRadioLayoutCustom] = useState<number>(5)
   const [checkboxLayoutPreset, setCheckboxLayoutPreset] = useState<string>('auto')
   const [checkboxLayoutCustom, setCheckboxLayoutCustom] = useState<number>(5)
+  // When opened from a Test Plan, default to plan-specific (createGlobalField = false).
+  // From the global Data Fields screen, there is no scope toggle and everything is global.
+  const [createGlobalField, setCreateGlobalField] = useState<boolean>(fromPlan ? false : true)
 
   const {
     register,
@@ -155,16 +174,37 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
         config.decimalPlaces = decimalPlaces
         config.decimalPlacesMode = decimalPlacesMode
       }
+      config.numberFormat = numberFormat
+      config.thousandsSeparator = thousandsSeparator
+      config.negativeStyle = negativeStyle
+      config.currencySymbol = currencySymbol.trim()
+    }
+    if (fieldType === 'formula') {
+      // Start with an empty formula; user can edit details in the main Field Editor.
+      config.formula = ''
+      if (integerDigits !== '') config.integerDigits = integerDigits
+      if (decimalPlaces !== '') {
+        config.decimalPlaces = decimalPlaces
+        config.decimalPlacesMode = decimalPlacesMode
+      }
+      config.numberFormat = numberFormat
+      config.thousandsSeparator = thousandsSeparator
+      config.negativeStyle = negativeStyle
+      config.currencySymbol = currencySymbol.trim()
     }
     if (fieldType === 'text' || fieldType === 'longtext') {
       if (minLength !== '') config.minLength = minLength
       if (maxLength !== '') config.maxLength = maxLength
     }
     try {
-      const { data: created } = await api.post<{ id: string }>('/fields', {
+      const payload: Record<string, unknown> = {
         ...data,
         config,
-      })
+      }
+      if (ownerTestPlanId && !createGlobalField) {
+        payload.ownerTestPlanId = ownerTestPlanId
+      }
+      const { data: created } = await api.post<{ id: string }>('/fields', payload)
       onSave(created.id)
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -177,7 +217,21 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
       onSubmit={handleSubmit(onSubmit)}
       className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6"
     >
-      <h2 className="text-lg font-medium text-foreground">Create New Field</h2>
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <h2 className="text-lg font-medium text-foreground">Create New Field</h2>
+        {fromPlan && (
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
+            <span>Create global field</span>
+            <input
+              type="checkbox"
+              checked={createGlobalField}
+              onChange={(e) => setCreateGlobalField(e.target.checked)}
+              disabled={!ownerTestPlanId}
+              className="h-4 w-4 rounded border-border disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+        )}
+      </div>
       <div>
         <label className="block text-sm font-medium text-foreground">Key</label>
         <input
@@ -210,7 +264,7 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
           />
         )}
       />
-      {fieldType === 'number' && (
+      {(fieldType === 'number' || fieldType === 'formula') && (
         <>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -261,33 +315,92 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
               {decimalPlaces !== '' && (
                 <div className="mt-2 space-y-1">
                   <label className="block text-xs font-medium text-foreground/80">Rounding</label>
-                  <label className="flex cursor-pointer items-center gap-2">
+                  <label
+                    className="flex cursor-pointer items-center gap-2"
+                    title="Tables & read-only use this precision; entry keeps full precision"
+                  >
                     <input
                       type="radio"
-                      name="decimalPlacesMode"
+                      name="decimalPlacesModeNumCreate"
                       checked={decimalPlacesMode === 'display'}
                       onChange={() => setDecimalPlacesMode('display')}
                       className="h-4 w-4"
                     />
                     <span className="text-sm text-foreground">
-                      Display only — tables & read-only use this precision; entry keeps full precision
+                      Display only
                     </span>
                   </label>
-                  <label className="flex cursor-pointer items-center gap-2">
+                  <label
+                    className="flex cursor-pointer items-center gap-2"
+                    title="Round on entry; stored value matches decimal places"
+                  >
                     <input
                       type="radio"
-                      name="decimalPlacesMode"
+                      name="decimalPlacesModeNumCreate"
                       checked={decimalPlacesMode === 'enforce'}
                       onChange={() => setDecimalPlacesMode('enforce')}
                       className="h-4 w-4"
                     />
                     <span className="text-sm text-foreground">
-                      Enforce — round on entry; stored value matches decimal places
+                      Enforce
                     </span>
                   </label>
                 </div>
               )}
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground">Format</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Excel-style</p>
+              <PopupSelect
+                label=""
+                value={numberFormat}
+                onChange={(v) => setNumberFormat(v as 'number' | 'percent' | 'currency')}
+                options={[
+                  { value: 'number', label: 'Number' },
+                  { value: 'percent', label: 'Percent' },
+                  { value: 'currency', label: 'Currency' },
+                ]}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground">Negative numbers</label>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Display style</p>
+              <PopupSelect
+                label=""
+                value={negativeStyle}
+                onChange={(v) => setNegativeStyle(v as 'minus' | 'parentheses')}
+                options={[
+                  { value: 'minus', label: '-1234' },
+                  { value: 'parentheses', label: '(1234)' },
+                ]}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={thousandsSeparator}
+                onChange={(e) => setThousandsSeparator(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span className="text-sm text-foreground">Use thousands separator (1,234.56)</span>
+            </label>
+            {numberFormat === 'currency' && (
+              <div>
+                <label className="block text-sm font-medium text-foreground">Currency symbol</label>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
+                <input
+                  type="text"
+                  value={currencySymbol}
+                  onChange={(e) => setCurrencySymbol(e.target.value)}
+                  className="mt-1 w-24 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                  placeholder="$"
+                />
+              </div>
+            )}
           </div>
         </>
       )}
