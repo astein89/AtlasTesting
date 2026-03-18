@@ -42,7 +42,8 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
         f.type === 'text' ||
         f.type === 'longtext' ||
         f.type === 'number' ||
-        f.type === 'select'
+        f.type === 'select' ||
+        f.type === 'radio_select'
       ),
     [visibleFields]
   )

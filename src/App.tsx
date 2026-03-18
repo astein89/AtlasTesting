@@ -10,6 +10,7 @@ import { useAuthStore } from './store/authStore'
 import { api } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
 import { DateTimeConfigProvider } from './contexts/DateTimeConfigContext'
+import { ConditionalFormatPresetsProvider } from './contexts/ConditionalFormatPresetsContext'
 
 const FieldsList = lazy(() => import('./routes/FieldsList').then((m) => ({ default: m.FieldsList })))
 const FieldEditor = lazy(() => import('./routes/FieldEditor').then((m) => ({ default: m.FieldEditor })))
@@ -116,7 +117,9 @@ function App() {
           element={
             <AuthGuard>
               <DateTimeConfigProvider>
-                <Layout />
+                <ConditionalFormatPresetsProvider>
+                  <Layout />
+                </ConditionalFormatPresetsProvider>
               </DateTimeConfigProvider>
             </AuthGuard>
           }

@@ -11,6 +11,7 @@ type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
 
 export function FieldsList() {
   const [fields, setFields] = useState<DataField[]>([])
+  const [testPlans, setTestPlans] = useState<TestPlan[]>([])
   const [loading, setLoading] = useState(true)
   const [sortOrder, setSortOrder] = useState<SortLevel[]>([{ key: 'key', dir: 'asc' }])
   const navigate = useNavigate()
@@ -88,12 +89,30 @@ export function FieldsList() {
     navigate(`/fields/${f.id}`)
   }
 
+  const plansByFieldId = useMemo(() => {
+    const map = new Map<string, TestPlan[]>()
+    for (const plan of testPlans) {
+      const ids = plan.fieldIds ?? []
+      for (const fid of ids) {
+        if (!fid) continue
+        const list = map.get(fid) ?? []
+        list.push(plan)
+        map.set(fid, list)
+      }
+    }
+    return map
+  }, [testPlans])
+
   const loadFields = useCallback(() => {
     setLoading(true)
-    api
-      .get<DataField[]>('/fields')
-      .then((r) => setFields(r.data))
-      .catch(() => setFields([]))
+    Promise.all([
+      api.get<DataField[]>('/fields').then((r) => r.data).catch(() => [] as DataField[]),
+      api.get<TestPlan[]>('/test-plans').then((r) => r.data).catch(() => [] as TestPlan[]),
+    ])
+      .then(([fieldList, planList]) => {
+        setFields(fieldList)
+        setTestPlans(planList)
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -111,8 +130,7 @@ export function FieldsList() {
       )
       return
     }
-    const plansRes = await api.get<TestPlan[]>('/test-plans').catch(() => ({ data: [] as TestPlan[] }))
-    const plansUsingField = (plansRes.data ?? []).filter((p) => p.fieldIds?.includes(id))
+    const plansUsingField = testPlans.filter((p) => p.fieldIds?.includes(id))
     if (plansUsingField.length > 0) {
       const names = plansUsingField.map((p) => p.name).join(', ')
       showAlert(`Cannot delete this field. It is used in the test plan(s): ${names}. Remove it from the plan(s) first.`)
@@ -161,6 +179,26 @@ export function FieldsList() {
                   <p className="truncate font-medium text-foreground">{f.key}</p>
                   <p className="mt-0.5 truncate text-sm text-foreground">{f.label}</p>
                   <p className="mt-0.5 truncate text-sm text-foreground/70">{formatType(f)}</p>
+                  <div className="mt-0.5 min-w-0 text-xs text-foreground/70">
+                    <span className="font-medium text-foreground/80">Plans: </span>
+                    {plansByFieldId.get(f.id)?.length ? (
+                      <div className="mt-0.5 space-y-0">
+                        {(plansByFieldId.get(f.id) ?? []).map((p) => (
+                          <div key={p.id} className="min-w-0 truncate" title={p.name}>
+                            <Link
+                              to={`/test-plans/${p.id}`}
+                              className="block truncate text-primary hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {p.name}
+                            </Link>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-foreground/50">—</span>
+                    )}
+                  </div>
                   <p className="mt-0.5 truncate text-xs text-foreground/60">
                     {f.updatedAt
                       ? `${new Date(f.updatedAt).toLocaleDateString()}${f.updatedByName ? ` by ${f.updatedByName}` : ''}`
@@ -189,7 +227,7 @@ export function FieldsList() {
           </div>
           {/* Desktop: table */}
           <div className="hidden w-full min-w-0 overflow-x-auto rounded-lg border border-border md:block">
-          <table className="w-full">
+          <table className="w-full table-fixed">
             <thead className="bg-card">
               <tr>
                 <th
@@ -228,6 +266,9 @@ export function FieldsList() {
                     </span>
                   )}
                 </th>
+                <th className="w-[12rem] max-w-[14rem] px-4 py-2 text-left text-sm font-medium text-foreground">
+                  Test plans
+                </th>
                 <th
                   className="cursor-pointer select-none px-4 py-2 text-left text-sm font-medium text-foreground hover:bg-background/50"
                   {...getSortHandlers('updatedAt')}
@@ -248,7 +289,7 @@ export function FieldsList() {
             <tbody className="divide-y divide-border">
               {sortedFields.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-foreground/60">
+                  <td colSpan={6} className="p-6 text-center text-foreground/60">
                     No data fields yet.
                   </td>
                 </tr>
@@ -262,6 +303,29 @@ export function FieldsList() {
                   <td className="px-4 py-2 text-foreground">{f.key}</td>
                   <td className="px-4 py-2 text-foreground">{f.label}</td>
                   <td className="px-4 py-2 text-foreground">{formatType(f)}</td>
+                  <td
+                    className="w-[12rem] max-w-[14rem] min-w-0 px-4 py-2 align-top text-sm text-foreground/80"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {plansByFieldId.get(f.id)?.length ? (
+                      <ul className="list-none space-y-0">
+                        {(plansByFieldId.get(f.id) ?? []).map((p) => (
+                          <li key={p.id} className="min-w-0 max-w-full overflow-hidden">
+                            <Link
+                              to={`/test-plans/${p.id}`}
+                              className="block truncate whitespace-nowrap text-primary hover:underline"
+                              title={p.name}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {p.name}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="text-foreground/50">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-foreground/70">
                     {f.updatedAt
                       ? `${new Date(f.updatedAt).toLocaleDateString()}${f.updatedByName ? ` by ${f.updatedByName}` : ''}`

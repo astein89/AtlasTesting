@@ -29,7 +29,9 @@ import { getStatusOptions } from '../types'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from '../utils/timer'
 import { getDefaultValueForField } from '../utils/fieldDefaults'
 import { computeFormulaValues } from '../utils/formulaEvaluator'
+import { getConditionalFormatStyle } from '../utils/conditionalFormat'
 import { formatFieldValue } from '../utils/formatFieldValue'
+import type { FormulaData } from '../utils/formulaEvaluator'
 import { getContrastTextColor } from '../utils/colorContrast'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 
@@ -38,6 +40,8 @@ interface Record {
   testPlanId: string
   planName: string
   recordedAt: string
+  /** When present, last edit time from record_history (falls back to recordedAt). */
+  lastEditedAt?: string
   enteredBy: string
   status: string
   data: Record<string, string | number | boolean | string[] | TimerValue>
@@ -56,6 +60,12 @@ function getDefaultData(
       if (f.type === 'number' && (typeof planDefault === 'number' || planDefault === '')) out[f.key] = planDefault
       else if (f.type === 'boolean' && typeof planDefault === 'boolean') out[f.key] = planDefault
       else if (f.type === 'select' && typeof planDefault === 'string') out[f.key] = planDefault
+      else if (f.type === 'radio_select' && typeof planDefault === 'string') out[f.key] = planDefault
+      else if (f.type === 'checkbox_select' && Array.isArray(planDefault)) {
+        const opts = f.config?.options ?? []
+        const set = new Set(opts.map(String))
+        out[f.key] = planDefault.filter((x): x is string => typeof x === 'string' && set.has(x))
+      }
       else if (f.type === 'status' && typeof planDefault === 'string') out[f.key] = planDefault
       else if ((f.type === 'text' || f.type === 'longtext') && typeof planDefault === 'string') out[f.key] = planDefault
       else if (f.type === 'fraction' && typeof planDefault === 'number') out[f.key] = planDefault
@@ -81,6 +91,8 @@ function getDefaultData(
       else if (f.type === 'boolean') out[f.key] = false
       else if (f.type === 'longtext') out[f.key] = ''
       else if (f.type === 'select') out[f.key] = ''
+      else if (f.type === 'radio_select') out[f.key] = ''
+      else if (f.type === 'checkbox_select') out[f.key] = []
       else if (f.type === 'status') {
         const opts = getStatusOptions(f)
         out[f.key] = opts[0] ?? 'In Progress'
@@ -214,6 +226,10 @@ export function TestPlanDataView() {
   const [newTestStart, setNewTestStart] = useState('')
   const [newTestEnd, setNewTestEnd] = useState('')
   const [restoringFromArchive, setRestoringFromArchive] = useState(false)
+  const [showLastEditedColumn, setShowLastEditedColumn] = useUserPreference<boolean>(
+    planId ? `atlas-data-show-last-edited-${planId}` : 'atlas-data-show-last-edited-default',
+    false
+  )
   const visibleFields = useMemo(() => {
     const allTableFields = fields
     // If admin configured defaultVisibleColumnIds and user has not customized columns
@@ -719,6 +735,12 @@ export function TestPlanDataView() {
     if (f.type === 'select' && Array.isArray(f.config?.options)) {
       optionLen = Math.max(0, ...f.config.options.map((o) => String(o).length))
     }
+    if (f.type === 'radio_select' && Array.isArray(f.config?.options)) {
+      optionLen = Math.max(0, ...f.config.options.map((o) => String(o).length))
+    }
+    if (f.type === 'checkbox_select' && Array.isArray(f.config?.options)) {
+      optionLen = Math.max(0, ...f.config.options.map((o) => String(o).length))
+    }
     if (f.type === 'status') {
       const opts = getStatusOptions(f)
       optionLen = Math.max(0, ...opts.map((o) => String(o).length))
@@ -737,6 +759,8 @@ export function TestPlanDataView() {
         return '12rem'
       case 'status':
       case 'select':
+      case 'radio_select':
+      case 'checkbox_select':
         return `${fromContent}rem`
       case 'datetime':
         return `${Math.max(11, fromContent)}rem`
@@ -753,7 +777,7 @@ export function TestPlanDataView() {
     }
   }
 
-  type SortKey = 'date' | string
+  type SortKey = 'date' | 'lastEdited' | string
   type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
   const sortStorageKey = planId ? `automation-data-sort-${planId}` : 'automation-data-sort-default'
   const defaultSortOrder = useMemo<SortLevel[]>(
@@ -780,6 +804,7 @@ export function TestPlanDataView() {
 
   const getVal = (record: Record, key: SortKey): string | number | boolean | string[] | TimerValue => {
     if (key === 'date') return record.recordedAt
+    if (key === 'lastEdited') return record.lastEditedAt ?? record.recordedAt
     return record.data[key] ?? ''
   }
 
@@ -1534,6 +1559,15 @@ export function TestPlanDataView() {
                         <input type="checkbox" checked disabled className="h-4 w-4" />
                         <span className="text-sm text-foreground">Date</span>
                       </label>
+                      <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background">
+                        <input
+                          type="checkbox"
+                          checked={showLastEditedColumn}
+                          onChange={(e) => setShowLastEditedColumn(e.target.checked)}
+                          className="h-4 w-4"
+                        />
+                        <span className="text-sm text-foreground">Last edited</span>
+                      </label>
                       {fields.map((f) => (
                         <label
                           key={f.id}
@@ -1920,6 +1954,7 @@ export function TestPlanDataView() {
             <colgroup>
               {editingAllowed && bulkSelectMode && <col style={{ width: '2.5rem' }} />}
               <col style={{ width: '14rem' }} />
+              {showLastEditedColumn && <col style={{ width: '14rem' }} />}
               {visibleFields.map((f) => (
                 <col key={f.id} style={{ width: hasFieldLayout ? (fieldLayout[f.id] || getColumnWidth(f)) : getColumnWidth(f) }} />
               ))}
@@ -1981,6 +2016,22 @@ export function TestPlanDataView() {
                     />
                   )}
                 </th>
+                {showLastEditedColumn && (
+                  <th
+                    className="min-w-0 cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
+                    {...getSortHandlers('lastEdited')}
+                    title="Tap to sort. Long-press or Shift+click to add secondary sort."
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="whitespace-nowrap">Last edited</span>
+                      {getSortIndex('lastEdited') >= 0 && (
+                        <span className="shrink-0 text-foreground/60">
+                          {getSortIndex('lastEdited') + 1}{getSortDir('lastEdited') === 'asc' ? '↓' : '↑'}
+                        </span>
+                      )}
+                    </span>
+                  </th>
+                )}
                 {visibleFields.map((f) => (
                   <th
                     key={f.id}
@@ -2030,7 +2081,7 @@ export function TestPlanDataView() {
               {sortedRecords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2)}
+                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2) + (showLastEditedColumn ? 1 : 0)}
                     className="p-6 text-center text-foreground/60"
                   >
                     No data yet. Click &quot;+ Add row&quot; to add.
@@ -2039,7 +2090,7 @@ export function TestPlanDataView() {
               ) : filteredRecords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2)}
+                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2) + (showLastEditedColumn ? 1 : 0)}
                     className="p-6 text-center text-foreground/60"
                   >
                     No rows match the current filters.
@@ -2075,12 +2126,19 @@ export function TestPlanDataView() {
                     <td className="whitespace-nowrap min-w-0 px-4 py-3 text-sm text-foreground align-top">
                       {formatDateTime(record.recordedAt)}
                     </td>
+                    {showLastEditedColumn && (
+                      <td className="whitespace-nowrap min-w-0 px-4 py-3 text-sm text-foreground/80 align-top">
+                        {record.lastEditedAt ? formatDateTime(record.lastEditedAt) : '—'}
+                      </td>
+                    )}
                     {visibleFields.map((f) => {
                       const cellEditable = editingAllowed && (directTableEdit || f.type === 'status') && f.type !== 'formula' && !(f.type === 'status' && f.config?.formula)
+                      const cfStyle = getConditionalFormatStyle(f, record.data as FormulaData)
                       return (
                       <td
                         key={f.id}
                         className="min-w-0 px-2 py-2 text-foreground align-top"
+                        style={cfStyle}
                         onClick={cellEditable ? (e) => e.stopPropagation() : undefined}
                       >
                         {cellEditable ? (
@@ -2109,7 +2167,20 @@ export function TestPlanDataView() {
                             >
                               {renderFormField(
                                 f,
-                                record.data[f.key] ?? (f.type === 'number' ? '' : f.type === 'boolean' ? false : f.type === 'fraction' ? 0 : f.type === 'timer' ? { totalElapsedMs: 0 } : f.type === 'datetime' ? '' : ''),
+                                record.data[f.key] ??
+                                  (f.type === 'number'
+                                    ? ''
+                                    : f.type === 'boolean'
+                                      ? false
+                                      : f.type === 'fraction'
+                                        ? 0
+                                        : f.type === 'timer'
+                                          ? { totalElapsedMs: 0 }
+                                          : f.type === 'datetime'
+                                            ? ''
+                                            : f.type === 'checkbox_select'
+                                              ? []
+                                              : ''),
                                 (key, val) => updateRecordField(record, key, val),
                                 { disabled: submitting, compact: true }
                               )}

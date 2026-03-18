@@ -6,12 +6,15 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { api } from '../api/client'
 import { DraggableOptionList } from '../components/ui/DraggableOptionList'
 import { PopupSelect } from '../components/ui/PopupSelect'
+import { RadioInput } from '../components/fields/RadioInput'
+import { CheckboxGroupInput } from '../components/fields/CheckboxGroupInput'
 import { FRACTION_SCALES, type FractionScale } from '../utils/fraction'
 import { validateFormula, getFormulaTokensForHighlight, getFormulaReferencedFieldKeys, evaluateFormula, getFieldsReferencingKey } from '../utils/formulaEvaluator'
-import type { DataField, FieldType, TestPlan } from '../types'
+import type { ConditionalFormatRule, DataField, FieldType, TestPlan } from '../types'
 import { STATUS_OPTIONS } from '../types'
 import { formatDateTime, DATE_TIME_DISPLAY_OPTIONS, getExampleForDateTimeDisplay, type DateTimeDisplayKind } from '../lib/dateTimeConfig'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPresetsContext'
 
 const schema = z.object({
   key: z.string().min(1),
@@ -23,6 +26,8 @@ const schema = z.object({
     'boolean',
     'datetime',
     'select',
+    'radio_select',
+    'checkbox_select',
     'status',
     'fraction',
     'weight',
@@ -43,6 +48,8 @@ const TYPES: FieldType[] = [
   'boolean',
   'datetime',
   'select',
+  'radio_select',
+  'checkbox_select',
   'status',
   'fraction',
   'weight',
@@ -69,7 +76,9 @@ const TYPE_LABELS: Record<FieldType, string> = {
   longtext: 'Long text',
   boolean: 'Boolean',
   datetime: 'Date/time',
-  select: 'Select',
+  select: 'Select (Dropdown)',
+  radio_select: 'Select (Radio)',
+  checkbox_select: 'Select (Checkboxes)',
   status: 'Status',
   fraction: 'Dimension',
   weight: 'Weight',
@@ -79,11 +88,27 @@ const TYPE_LABELS: Record<FieldType, string> = {
   formula: 'Formula',
 }
 
+function normalizeCfHex(s: string): string {
+  let t = s.trim().toLowerCase()
+  if (!t.startsWith('#')) t = `#${t.replace(/^#/, '')}`
+  const m3 = /^#([0-9a-f]{3})$/.exec(t)
+  if (m3) {
+    const x = m3[1]
+    t = `#${x[0]}${x[0]}${x[1]}${x[1]}${x[2]}${x[2]}`
+  }
+  return t
+}
+
+function cfHexMatches(a: string, b: string): boolean {
+  return normalizeCfHex(a) === normalizeCfHex(b)
+}
+
 export function FieldEditor() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const isNew = id === 'new'
   const { showAlert, showConfirm } = useAlertConfirm()
+  const { presets: cfPresets } = useConditionalFormatPresets()
   const [keyEditable, setKeyEditable] = useState(false)
   const [options, setOptions] = useState<string[]>([])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
@@ -96,6 +121,7 @@ export function FieldEditor() {
   const [statusColors, setStatusColors] = useState<Record<string, string>>({})
   const [integerDigits, setIntegerDigits] = useState<number | ''>('')
   const [decimalPlaces, setDecimalPlaces] = useState<number | ''>('')
+  const [decimalPlacesMode, setDecimalPlacesMode] = useState<'display' | 'enforce'>('display')
   const [numberFormat, setNumberFormat] = useState<'number' | 'percent' | 'currency' | 'fraction'>('number')
   const [thousandsSeparator, setThousandsSeparator] = useState(false)
   const [negativeStyle, setNegativeStyle] = useState<'minus' | 'parentheses'>('minus')
@@ -110,11 +136,18 @@ export function FieldEditor() {
   const [textPatternMask, setTextPatternMask] = useState('')
   const [textCase, setTextCase] = useState<'none' | 'upper' | 'lower'>('none')
   const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplayKind>('dateTime')
+  const [radioLayoutPreset, setRadioLayoutPreset] = useState<string>('auto')
+  const [radioLayoutCustom, setRadioLayoutCustom] = useState<number>(5)
+  const [checkboxLayoutPreset, setCheckboxLayoutPreset] = useState<string>('auto')
+  const [checkboxLayoutCustom, setCheckboxLayoutCustom] = useState<number>(5)
   const [fieldType, setFieldType] = useState<FieldType>('text')
   const [statusUseFormula, setStatusUseFormula] = useState(false)
   const [formulaModalOpen, setFormulaModalOpen] = useState(false)
   const [formulaDraft, setFormulaDraft] = useState('')
   const [formulaHelpOpen, setFormulaHelpOpen] = useState(false)
+  const [cfRules, setCfRules] = useState<ConditionalFormatRule[]>([])
+  const [cfHelpOpen, setCfHelpOpen] = useState(false)
+  const [cfCfPopover, setCfCfPopover] = useState<{ ruleId: string; kind: 'fill' | 'text' } | null>(null)
   const [formulaTestData, setFormulaTestData] = useState<Record<string, string>>({})
   const [formulaTestResult, setFormulaTestResult] = useState<string | number | boolean | null | undefined>(undefined)
   const [availableFieldsForFormula, setAvailableFieldsForFormula] = useState<DataField[]>([])
@@ -184,11 +217,30 @@ export function FieldEditor() {
   useEffect(() => {
     if (typeVal) setFieldType(typeVal as FieldType)
     if (typeVal === 'status') setOptions((prev) => (prev.length ? prev : [...STATUS_OPTIONS]))
+    if (typeVal === 'select' || typeVal === 'radio_select' || typeVal === 'checkbox_select')
+      setOptions((prev) => (prev.length ? prev : ['']))
   }, [typeVal])
 
   const onSubmit = async (data: FormData) => {
     const config = { ...data.config }
-    if (fieldType === 'select') config.options = options.map((o) => (o == null ? '' : String(o)))
+    if (fieldType === 'select' || fieldType === 'radio_select' || fieldType === 'checkbox_select')
+      config.options = options.map((o) => (o == null ? '' : String(o)))
+    if (fieldType === 'radio_select') {
+      config.radioLayout =
+        radioLayoutPreset === 'custom'
+          ? radioLayoutCustom
+          : radioLayoutPreset === 'auto'
+            ? 'auto'
+            : Number(radioLayoutPreset)
+    }
+    if (fieldType === 'checkbox_select') {
+      config.checkboxLayout =
+        checkboxLayoutPreset === 'custom'
+          ? checkboxLayoutCustom
+          : checkboxLayoutPreset === 'auto'
+            ? 'auto'
+            : Number(checkboxLayoutPreset)
+    }
     if (fieldType === 'fraction') {
       config.fractionScale = fractionScale
       config.unit = fractionUnit
@@ -215,8 +267,13 @@ export function FieldEditor() {
     if (fieldType === 'number') {
       if (integerDigits === '') delete config.integerDigits
       else config.integerDigits = integerDigits
-      if (decimalPlaces === '') delete config.decimalPlaces
-      else config.decimalPlaces = decimalPlaces
+      if (decimalPlaces === '') {
+        delete config.decimalPlaces
+        delete config.decimalPlacesMode
+      } else {
+        config.decimalPlaces = decimalPlaces
+        config.decimalPlacesMode = decimalPlacesMode
+      }
       config.numberFormat = numberFormat
       config.thousandsSeparator = thousandsSeparator
       config.negativeStyle = negativeStyle
@@ -266,8 +323,13 @@ export function FieldEditor() {
       config.formula = (getValues('config') as { formula?: string })?.formula ?? ''
       if (numberFormat === 'fraction') config.fractionScale = formulaFractionScale || 16
       else if ('fractionScale' in config) delete config.fractionScale
-      if (decimalPlaces === '') delete config.decimalPlaces
-      else config.decimalPlaces = decimalPlaces
+      if (decimalPlaces === '') {
+        delete config.decimalPlaces
+        delete config.decimalPlacesMode
+      } else {
+        config.decimalPlaces = decimalPlaces
+        config.decimalPlacesMode = decimalPlacesMode
+      }
       if (integerDigits === '') delete config.integerDigits
       else config.integerDigits = integerDigits
       config.numberFormat = numberFormat === 'fraction' ? 'number' : numberFormat
@@ -275,6 +337,23 @@ export function FieldEditor() {
       config.negativeStyle = negativeStyle
       config.currencySymbol = currencySymbol.trim()
     }
+
+    const cfClean = cfRules
+      .filter((r) => {
+        if (r.mode === 'formula') return (r.formula?.trim() ?? '').length > 0
+        if (r.mode === 'standard') return !!r.standardOp
+        // 'fallback' has no condition – keep it as long as it has some formatting
+        const hasBg = !!r.backgroundColor?.trim()
+        const hasTxt = !!r.textColor?.trim()
+        const hasBold = r.fontBold === true
+        return hasBg || hasTxt || hasBold
+      })
+      .map((r) => ({
+        ...r,
+        id: r.id || `cf-${Math.random().toString(36).slice(2)}`,
+      }))
+    if (cfClean.length > 0) config.conditionalFormatting = cfClean
+    else delete config.conditionalFormatting
 
     try {
       if (isNew) {
@@ -321,6 +400,34 @@ export function FieldEditor() {
           }
           if (r.data.type === 'status' && (!r.data.config?.options || !Array.isArray(r.data.config.options) || r.data.config.options.length === 0))
             setOptions([...STATUS_OPTIONS])
+          const applyLayout = (
+            L: unknown,
+            setPreset: (s: string) => void,
+            setCustom: (n: number) => void
+          ) => {
+            if (L === 'vertical') {
+              setPreset('1')
+            } else if (L === 'horizontal' || L === 'auto') {
+              setPreset('auto')
+            } else {
+              const n = typeof L === 'number' ? L : parseInt(String(L), 10)
+              if (Number.isFinite(n) && n >= 1) {
+                const clamped = Math.min(24, Math.max(1, n))
+                if (clamped >= 1 && clamped <= 4) {
+                  setPreset(String(clamped))
+                } else {
+                  setPreset('custom')
+                  setCustom(clamped)
+                }
+              }
+            }
+          }
+          if (r.data.type === 'radio_select' && r.data.config?.radioLayout !== undefined) {
+            applyLayout(r.data.config.radioLayout, setRadioLayoutPreset, setRadioLayoutCustom)
+          }
+          if (r.data.type === 'checkbox_select' && r.data.config?.checkboxLayout !== undefined) {
+            applyLayout(r.data.config.checkboxLayout, setCheckboxLayoutPreset, setCheckboxLayoutCustom)
+          }
           if (r.data.config?.fractionScale && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
             setFractionScale(r.data.config.fractionScale as FractionScale)
           }
@@ -358,6 +465,8 @@ export function FieldEditor() {
           if (r.data.type === 'number' || r.data.type === 'formula') {
             setIntegerDigits(r.data.config?.integerDigits ?? '')
             setDecimalPlaces(r.data.config?.decimalPlaces ?? '')
+            const m = r.data.config?.decimalPlacesMode
+            setDecimalPlacesMode(m === 'enforce' ? 'enforce' : 'display')
             if (r.data.type === 'formula' && r.data.config?.fractionScale != null && FRACTION_SCALES.includes(r.data.config.fractionScale as FractionScale)) {
               setNumberFormat('fraction')
               setFormulaFractionScale(r.data.config.fractionScale as FractionScale)
@@ -395,10 +504,50 @@ export function FieldEditor() {
             createdByName: r.data.createdByName,
             updatedByName: r.data.updatedByName,
           })
+          const cf = r.data.config?.conditionalFormatting
+          if (Array.isArray(cf) && cf.length > 0) {
+            setCfRules(
+              cf.map((row: unknown) => {
+                const o = row as Record<string, unknown>
+                const rawMode = o.mode === 'formula' || o.mode === 'standard' || o.mode === 'fallback' ? o.mode : 'standard'
+                const legacyFallback = o.appliesToOthers === true && rawMode !== 'fallback'
+                return {
+                  id: String(o.id ?? `cf-${Math.random().toString(36).slice(2)}`),
+                  mode: legacyFallback ? 'fallback' : (rawMode as 'formula' | 'standard' | 'fallback'),
+                  formula: typeof o.formula === 'string' ? o.formula : '',
+                  standardOp: (o.standardOp as ConditionalFormatRule['standardOp']) ?? 'eq',
+                  standardValue: typeof o.standardValue === 'string' ? o.standardValue : '',
+                  standardValue2: typeof o.standardValue2 === 'string' ? o.standardValue2 : '',
+                  backgroundColor: typeof o.backgroundColor === 'string' ? o.backgroundColor : '',
+                  textColor: typeof o.textColor === 'string' ? o.textColor : '',
+                  fontBold: o.fontBold === true,
+                }
+              })
+            )
+          } else {
+            setCfRules([])
+          }
         })
         .catch(() => navigate('/fields'))
     }
   }, [id, isNew, setValue, navigate])
+
+  useEffect(() => {
+    if (isNew) setCfRules([])
+  }, [isNew])
+
+  useEffect(() => {
+    if (cfCfPopover == null) return
+    const attr =
+      cfCfPopover.kind === 'fill' ? 'data-cf-fill-anchor' : 'data-cf-text-anchor'
+    const onDown = (e: MouseEvent) => {
+      const el = document.querySelector(`[${attr}="${cfCfPopover.ruleId}"]`)
+      if (el?.contains(e.target as Node)) return
+      setCfCfPopover(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [cfCfPopover])
 
   const formatAudit = (date: string | null | undefined, name: string | null | undefined) => {
     if (!date && !name) return null
@@ -517,7 +666,7 @@ export function FieldEditor() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground">Decimal places</label>
-                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
+                <p className="mt-1 mb-1 text-xs text-foreground/60">Optional. Used for rounding (see below).</p>
                 <input
                   type="number"
                   min={0}
@@ -526,6 +675,35 @@ export function FieldEditor() {
                   onChange={(e) => setDecimalPlaces(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                 />
+                {decimalPlaces !== '' && (
+                  <div className="mt-2 space-y-1">
+                    <label className="block text-xs font-medium text-foreground/80">Rounding</label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="radio"
+                        name="decimalPlacesModeNum"
+                        checked={decimalPlacesMode === 'display'}
+                        onChange={() => setDecimalPlacesMode('display')}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm text-foreground">
+                        Display only — tables & read-only; entry keeps full precision
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="radio"
+                        name="decimalPlacesModeNum"
+                        checked={decimalPlacesMode === 'enforce'}
+                        onChange={() => setDecimalPlacesMode('enforce')}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm text-foreground">
+                        Enforce — round on entry; stored value matches decimal places
+                      </span>
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -955,6 +1133,35 @@ export function FieldEditor() {
                   onChange={(e) => setDecimalPlaces(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                 />
+                {decimalPlaces !== '' && (
+                  <div className="mt-2 space-y-1">
+                    <label className="block text-xs font-medium text-foreground/80">Rounding</label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="radio"
+                        name="decimalPlacesModeFormula"
+                        checked={decimalPlacesMode === 'display'}
+                        onChange={() => setDecimalPlacesMode('display')}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm text-foreground">
+                        Display only — tables & read-only; result keeps full precision internally
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="radio"
+                        name="decimalPlacesModeFormula"
+                        checked={decimalPlacesMode === 'enforce'}
+                        onChange={() => setDecimalPlacesMode('enforce')}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm text-foreground">
+                        Enforce — round formula result to this many decimal places
+                      </span>
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -1316,40 +1523,644 @@ export function FieldEditor() {
             )}
           </div>
         )}
-        {fieldType === 'select' && (
-          <div>
-            <label className="block text-sm font-medium text-foreground">
-              Options (drag to reorder)
-            </label>
-            <p className="mt-1 mb-2 text-xs text-foreground/60">
-              Drag to reorder. Add or remove options below.
-            </p>
-            <DraggableOptionList
-              items={options}
-              onReorder={setOptions}
-              renderRow={(opt, i) => (
-                <div className="flex min-w-0 items-center gap-2">
-                  <input
-                    value={opt}
-                    onChange={(e) => updateOption(i, e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+        {(fieldType === 'select' || fieldType === 'radio_select' || fieldType === 'checkbox_select') && (
+          <div className="space-y-4">
+            {fieldType === 'radio_select' && (
+              <>
+                <div className="space-y-2">
+                  <PopupSelect
+                    label="Options per line"
+                    value={radioLayoutPreset}
+                    onChange={(v) => setRadioLayoutPreset(v)}
+                    options={[
+                      { value: '1', label: 'One per line' },
+                      { value: '2', label: 'Two per line' },
+                      { value: '3', label: 'Three per line' },
+                      { value: '4', label: 'Four per line' },
+                      { value: 'auto', label: 'Auto (wrap as needed)' },
+                      { value: 'custom', label: 'Custom…' },
+                    ]}
                   />
+                  {radioLayoutPreset === 'custom' && (
+                    <div>
+                      <label className="block text-xs font-medium text-foreground/70">Custom amount per line</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={radioLayoutCustom}
+                        onChange={(e) => {
+                          const n = e.target.value === '' ? 1 : parseInt(e.target.value, 10)
+                          setRadioLayoutCustom(Number.isFinite(n) && n >= 1 ? Math.min(24, Math.max(1, n)) : 1)
+                        }}
+                        className="mt-1 w-24 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                      />
+                    </div>
+                  )}
+                </div>
+                {options.some((o) => o != null && String(o).trim() !== '') && (
+                  <div className="rounded-lg border border-border bg-card p-3">
+                    <p className="mb-2 text-xs font-medium text-foreground/70">Preview</p>
+                    <RadioInput
+                      value=""
+                      onChange={() => {}}
+                      options={options.map((o) => (o == null ? '' : String(o)))}
+                      layout={
+                        radioLayoutPreset === 'custom'
+                          ? radioLayoutCustom
+                          : radioLayoutPreset === 'auto'
+                            ? 'auto'
+                            : Number(radioLayoutPreset)
+                      }
+                      name="field-editor-radio-preview"
+                      className="w-full"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {fieldType === 'checkbox_select' && (
+              <>
+                <div className="space-y-2">
+                  <PopupSelect
+                    label="Options per line"
+                    value={checkboxLayoutPreset}
+                    onChange={(v) => setCheckboxLayoutPreset(v)}
+                    options={[
+                      { value: '1', label: 'One per line' },
+                      { value: '2', label: 'Two per line' },
+                      { value: '3', label: 'Three per line' },
+                      { value: '4', label: 'Four per line' },
+                      { value: 'auto', label: 'Auto (wrap as needed)' },
+                      { value: 'custom', label: 'Custom…' },
+                    ]}
+                  />
+                  {checkboxLayoutPreset === 'custom' && (
+                    <div>
+                      <label className="block text-xs font-medium text-foreground/70">Custom amount per line</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={checkboxLayoutCustom}
+                        onChange={(e) => {
+                          const n = e.target.value === '' ? 1 : parseInt(e.target.value, 10)
+                          setCheckboxLayoutCustom(Number.isFinite(n) && n >= 1 ? Math.min(24, Math.max(1, n)) : 1)
+                        }}
+                        className="mt-1 w-24 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                      />
+                    </div>
+                  )}
+                </div>
+                {options.some((o) => o != null && String(o).trim() !== '') && (
+                  <div className="rounded-lg border border-border bg-card p-3">
+                    <p className="mb-2 text-xs font-medium text-foreground/70">Preview</p>
+                    <CheckboxGroupInput
+                      value={[]}
+                      onChange={() => {}}
+                      options={options.map((o) => (o == null ? '' : String(o)))}
+                      layout={
+                        checkboxLayoutPreset === 'custom'
+                          ? checkboxLayoutCustom
+                          : checkboxLayoutPreset === 'auto'
+                            ? 'auto'
+                            : Number(checkboxLayoutPreset)
+                      }
+                      name="field-editor-checkbox-preview"
+                      className="w-full"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-foreground">
+                Options (drag to reorder)
+              </label>
+              <p className="mt-1 mb-2 text-xs text-foreground/60">
+                Drag to reorder. Add or remove options below.
+              </p>
+              <DraggableOptionList
+                items={options}
+                onReorder={setOptions}
+                renderRow={(opt, i) => (
+                  <div className="flex min-w-0 items-center gap-2">
+                    <input
+                      value={opt}
+                      onChange={(e) => updateOption(i, e.target.value)}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeOption(i)}
+                      className="shrink-0 rounded-lg px-3 text-red-500 hover:bg-red-500/10"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                onAdd={addOption}
+                addLabel="+ Add option"
+                onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
+                bulkAddLabel="Bulk add options"
+              />
+            </div>
+          </div>
+        )}
+        <div className="max-w-2xl space-y-3 rounded-lg border border-border bg-background/50 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-foreground">Conditional formatting (data table)</h3>
+            <button
+              type="button"
+              onClick={() => setCfHelpOpen(true)}
+              className="rounded-full border border-border bg-background px-2.5 py-0.5 text-xs font-medium text-foreground hover:bg-card"
+              title="How conditional formatting works"
+            >
+              How it works
+            </button>
+          </div>
+          {cfHelpOpen && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+              onClick={() => setCfHelpOpen(false)}
+            >
+              <div
+                className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-lg"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mb-4 flex items-start justify-between gap-2">
+                  <h4 className="text-base font-semibold text-foreground">Conditional formatting</h4>
                   <button
                     type="button"
-                    onClick={() => removeOption(i)}
-                    className="shrink-0 rounded-lg px-3 text-red-500 hover:bg-red-500/10"
+                    onClick={() => setCfHelpOpen(false)}
+                    className="shrink-0 rounded-lg px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="space-y-3 text-sm text-foreground/80">
+                  <p>
+                    Excel-style rules: the <strong>first</strong> matching rule wins. Click the <strong>background
+                    swatch</strong> for fill (<strong>No fill</strong> first in quick picks) or the <strong>text swatch</strong>{' '}
+                    (<strong>Aa</strong> = default text; first quick pick). Swatch colors are set under{' '}
+                    <strong>Settings → Conditional formatting</strong>. Optional <strong>Bold</strong>. Put the most specific
+                    rule first; use <strong>Move up</strong> to reorder.
+                  </p>
+                  <p>
+                    <strong>Formula</strong> uses the same syntax as computed fields — e.g.{' '}
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">[Status] = &quot;Fail&quot;</code>,{' '}
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">[Score] &gt; 80</code>. You can reference any
+                    column in the row. Nested <code className="rounded bg-muted px-1 text-xs">IF</code> works for multiple
+                    conditions.
+                  </p>
+                  <p>
+                    <strong>Cell value</strong> compares only <em>this</em> field&apos;s value (numbers or text), using the
+                    condition you pick (equals, contains, between, blank, etc.).
+                  </p>
+                </div>
+                <div className="mt-5 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setCfHelpOpen(false)}
+                    className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="space-y-3">
+            {cfRules.map((rule, idx) => (
+              <div
+                key={rule.id}
+                className="space-y-2 rounded-lg border border-border bg-card p-3 text-sm"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-foreground/60">Rule {idx + 1}</span>
+                  <select
+                    value={rule.mode}
+                    onChange={(e) => {
+                      const mode = e.target.value as 'formula' | 'standard' | 'fallback'
+                      setCfRules((prev) =>
+                        prev.map((r, i) =>
+                          i === idx
+                            ? {
+                                ...r,
+                                mode,
+                                // fallback has no condition: clear any existing condition inputs
+                                formula: mode === 'formula' ? (r.formula ?? '') : '',
+                                standardOp: mode === 'standard' ? (r.standardOp ?? 'eq') : undefined,
+                                standardValue: mode === 'standard' ? (r.standardValue ?? '') : undefined,
+                                standardValue2: mode === 'standard' ? (r.standardValue2 ?? '') : undefined,
+                                appliesToOthers: mode === 'fallback' ? true : undefined,
+                              }
+                            : r
+                        )
+                      )
+                    }}
+                    className="rounded border border-border bg-background px-2 py-1 text-foreground"
+                  >
+                    <option value="standard">Cell value</option>
+                    <option value="formula">Formula</option>
+                    {idx >= 1 && <option value="fallback">Else (all other rows)</option>}
+                  </select>
+                  <button
+                    type="button"
+                    className="text-red-500 text-xs hover:underline"
+                    onClick={() => setCfRules((prev) => prev.filter((_, i) => i !== idx))}
                   >
                     Remove
                   </button>
+                  {idx > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs text-foreground/70 hover:underline"
+                      onClick={() =>
+                        setCfRules((prev) => {
+                          const n = [...prev]
+                          ;[n[idx - 1], n[idx]] = [n[idx], n[idx - 1]]
+                          return n
+                        })
+                      }
+                    >
+                      Move up
+                    </button>
+                  )}
                 </div>
-              )}
-              onAdd={addOption}
-              addLabel="+ Add option"
-              onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
-              bulkAddLabel="Bulk add options"
-            />
+                {rule.mode === 'formula' ? (
+                  <input
+                    type="text"
+                    value={rule.formula ?? ''}
+                    onChange={(e) =>
+                      setCfRules((prev) => prev.map((r, i) => (i === idx ? { ...r, formula: e.target.value } : r)))
+                    }
+                    className="w-full rounded border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
+                    placeholder='e.g. [Result] = "Fail" OR [Score] < 60'
+                  />
+                ) : rule.mode === 'standard' ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={rule.standardOp ?? 'eq'}
+                      onChange={(e) =>
+                        setCfRules((prev) =>
+                          prev.map((r, i) =>
+                            i === idx ? { ...r, standardOp: e.target.value as ConditionalFormatRule['standardOp'] } : r
+                          )
+                        )
+                      }
+                      className="rounded border border-border bg-background px-2 py-1 text-foreground"
+                    >
+                      <option value="eq">equals</option>
+                      <option value="neq">not equal</option>
+                      <option value="gt">greater than</option>
+                      <option value="gte">greater or equal</option>
+                      <option value="lt">less than</option>
+                      <option value="lte">less or equal</option>
+                      <option value="between">between (numbers)</option>
+                      <option value="contains">contains text</option>
+                      <option value="not_contains">does not contain</option>
+                      <option value="begins_with">begins with</option>
+                      <option value="ends_with">ends with</option>
+                      <option value="blank">is blank</option>
+                      <option value="not_blank">is not blank</option>
+                    </select>
+                    {rule.standardOp !== 'blank' &&
+                      rule.standardOp !== 'not_blank' &&
+                      rule.standardOp !== 'between' && (
+                        <input
+                          type="text"
+                          value={rule.standardValue ?? ''}
+                          onChange={(e) =>
+                            setCfRules((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, standardValue: e.target.value } : r))
+                            )
+                          }
+                          className="min-w-[8rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          placeholder="Value"
+                        />
+                      )}
+                    {rule.standardOp === 'between' && (
+                      <>
+                        <input
+                          type="text"
+                          value={rule.standardValue ?? ''}
+                          onChange={(e) =>
+                            setCfRules((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, standardValue: e.target.value } : r))
+                            )
+                          }
+                          className="w-20 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          placeholder="Min"
+                        />
+                        <span>–</span>
+                        <input
+                          type="text"
+                          value={rule.standardValue2 ?? ''}
+                          onChange={(e) =>
+                            setCfRules((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, standardValue2: e.target.value } : r))
+                            )
+                          }
+                          className="w-20 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          placeholder="Max"
+                        />
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-foreground/70">
+                    This rule has no condition. When selected as{' '}
+                    <span className="font-semibold">Else (all other rows)</span>, its formatting is applied to any
+                    rows that do not match an earlier rule.
+                  </p>
+                )}
+                <div className="flex flex-col gap-3 border-t border-border pt-2 sm:flex-row sm:flex-wrap sm:items-end">
+                  <div className="flex min-w-[10rem] flex-col gap-1">
+                    <span className="text-xs font-medium text-foreground/80">Background</span>
+                    <div className="relative inline-block" data-cf-fill-anchor={rule.id}>
+                      <button
+                        type="button"
+                        aria-expanded={
+                          cfCfPopover?.ruleId === rule.id && cfCfPopover.kind === 'fill'
+                        }
+                        aria-haspopup="dialog"
+                        aria-label="Choose fill color"
+                        onClick={() =>
+                          setCfCfPopover((p) =>
+                            p?.ruleId === rule.id && p.kind === 'fill'
+                              ? null
+                              : { ruleId: rule.id, kind: 'fill' }
+                          )
+                        }
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border-2 border-border bg-background shadow-sm transition hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary"
+                      >
+                        {rule.backgroundColor?.trim() ? (
+                          <span
+                            className="block h-8 w-8 rounded-md border border-black/10 shadow-inner"
+                            style={{ backgroundColor: rule.backgroundColor.trim() }}
+                          />
+                        ) : (
+                          <span
+                            className="flex h-8 w-8 flex-col items-center justify-center rounded-md border border-dashed border-foreground/30 text-[8px] font-medium leading-tight text-foreground/45 dark:border-foreground/40"
+                            style={{
+                              background:
+                                'repeating-conic-gradient(#a1a1aa 0% 25%, #e4e4e7 0% 50%) 50% / 8px 8px',
+                            }}
+                            title="No fill"
+                          >
+                            ∅
+                          </span>
+                        )}
+                      </button>
+                      {cfCfPopover?.ruleId === rule.id && cfCfPopover.kind === 'fill' && (
+                        <div
+                          className="absolute left-0 top-full z-[80] mt-1 w-[min(18rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-3 shadow-xl"
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+                            Quick picks
+                          </p>
+                          <div className="mb-3 flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              title="No fill"
+                              onClick={() => {
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, backgroundColor: '' } : r))
+                                )
+                                setCfCfPopover(null)
+                              }}
+                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-2 text-[10px] font-bold text-foreground/50 shadow-sm transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary ${
+                                !rule.backgroundColor?.trim()
+                                  ? 'border-primary ring-2 ring-primary ring-offset-1'
+                                  : 'border-border hover:border-foreground/40'
+                              }`}
+                              style={{
+                                background:
+                                  'repeating-conic-gradient(#a1a1aa 0% 25%, #e4e4e7 0% 50%) 50% / 8px 8px',
+                              }}
+                            >
+                              ∅
+                            </button>
+                            {cfPresets.fill.map((p, pi) => {
+                              const selected = cfHexMatches(rule.backgroundColor ?? '', p.hex)
+                              return (
+                                <button
+                                  key={`f-${pi}-${p.hex}`}
+                                  type="button"
+                                  title={p.label}
+                                  onClick={() => {
+                                    setCfRules((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, backgroundColor: p.hex } : r))
+                                    )
+                                    setCfCfPopover(null)
+                                  }}
+                                  className={`h-8 w-8 shrink-0 rounded-md border-2 shadow-sm transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 ${
+                                    selected
+                                      ? 'border-primary ring-2 ring-primary ring-offset-1'
+                                      : 'border-border hover:border-foreground/40'
+                                  }`}
+                                  style={{ backgroundColor: p.hex }}
+                                />
+                              )
+                            })}
+                          </div>
+                          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+                            Custom
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="color"
+                              value={
+                                /^#[0-9A-Fa-f]{6}$/i.test((rule.backgroundColor ?? '').trim())
+                                  ? (rule.backgroundColor ?? '').trim().toLowerCase()
+                                  : '#fef08a'
+                              }
+                              onChange={(e) =>
+                                setCfRules((prev) =>
+                                  prev.map((r, i) =>
+                                    i === idx ? { ...r, backgroundColor: e.target.value } : r
+                                  )
+                                )
+                              }
+                              className="h-9 w-12 cursor-pointer rounded border border-border bg-background"
+                            />
+                            <input
+                              type="text"
+                              value={rule.backgroundColor ?? ''}
+                              onChange={(e) =>
+                                setCfRules((prev) =>
+                                  prev.map((r, i) =>
+                                    i === idx ? { ...r, backgroundColor: e.target.value } : r
+                                  )
+                                )
+                              }
+                              className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground"
+                              placeholder="#hex"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex min-w-[10rem] flex-col gap-1">
+                    <span className="text-xs font-medium text-foreground/80">Text</span>
+                    <div className="relative inline-block" data-cf-text-anchor={rule.id}>
+                      <button
+                        type="button"
+                        aria-expanded={
+                          cfCfPopover?.ruleId === rule.id && cfCfPopover.kind === 'text'
+                        }
+                        aria-haspopup="dialog"
+                        aria-label="Choose text color"
+                        onClick={() =>
+                          setCfCfPopover((p) =>
+                            p?.ruleId === rule.id && p.kind === 'text'
+                              ? null
+                              : { ruleId: rule.id, kind: 'text' }
+                          )
+                        }
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border-2 border-border bg-background shadow-sm transition hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary"
+                      >
+                        {rule.textColor?.trim() ? (
+                          <span
+                            className="block h-8 w-8 rounded-md border border-black/10 shadow-inner"
+                            style={{ backgroundColor: rule.textColor.trim() }}
+                          />
+                        ) : (
+                          <span
+                            className="flex h-8 w-8 items-center justify-center rounded-md border border-dashed border-foreground/35 bg-muted/50 text-sm font-semibold text-foreground/55"
+                            title="Default (table text)"
+                          >
+                            Aa
+                          </span>
+                        )}
+                      </button>
+                      {cfCfPopover?.ruleId === rule.id && cfCfPopover.kind === 'text' && (
+                        <div
+                          className="absolute left-0 top-full z-[80] mt-1 w-[min(18rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-3 shadow-xl"
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+                            Quick picks
+                          </p>
+                          <div className="mb-3 flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              title="Default (inherit table text)"
+                              onClick={() => {
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, textColor: '' } : r))
+                                )
+                                setCfCfPopover(null)
+                              }}
+                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-2 text-xs font-bold text-foreground/55 shadow-sm transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary ${
+                                !rule.textColor?.trim()
+                                  ? 'border-primary ring-2 ring-primary ring-offset-1'
+                                  : 'border-border bg-muted/50 hover:border-foreground/40'
+                              }`}
+                            >
+                              Aa
+                            </button>
+                            {cfPresets.text.map((p, pi) => {
+                              const selected = cfHexMatches(rule.textColor ?? '', p.hex)
+                              return (
+                                <button
+                                  key={`t-${pi}-${p.hex}`}
+                                  type="button"
+                                  title={p.label}
+                                  onClick={() => {
+                                    setCfRules((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, textColor: p.hex } : r))
+                                    )
+                                    setCfCfPopover(null)
+                                  }}
+                                  className={`h-8 w-8 shrink-0 rounded-md border-2 shadow-sm transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 ${
+                                    selected
+                                      ? 'border-primary ring-2 ring-primary ring-offset-1'
+                                      : 'border-border hover:border-foreground/40'
+                                  }`}
+                                  style={{ backgroundColor: p.hex }}
+                                />
+                              )
+                            })}
+                          </div>
+                          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-foreground/50">
+                            Custom
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="color"
+                              value={
+                                /^#[0-9A-Fa-f]{6}$/i.test((rule.textColor ?? '').trim())
+                                  ? (rule.textColor ?? '').trim().toLowerCase()
+                                  : '#b91c1c'
+                              }
+                              onChange={(e) =>
+                                setCfRules((prev) =>
+                                  prev.map((r, i) =>
+                                    i === idx ? { ...r, textColor: e.target.value } : r
+                                  )
+                                )
+                              }
+                              className="h-9 w-12 cursor-pointer rounded border border-border bg-background"
+                            />
+                            <input
+                              type="text"
+                              value={rule.textColor ?? ''}
+                              onChange={(e) =>
+                                setCfRules((prev) =>
+                                  prev.map((r, i) =>
+                                    i === idx ? { ...r, textColor: e.target.value } : r
+                                  )
+                                )
+                              }
+                              className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground"
+                              placeholder="#hex"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={rule.fontBold === true}
+                      onChange={(e) =>
+                        setCfRules((prev) => prev.map((r, i) => (i === idx ? { ...r, fontBold: e.target.checked } : r)))
+                      }
+                      className="h-4 w-4 rounded border-border"
+                    />
+                    Bold
+                  </label>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setCfRules((prev) => [
+                  ...prev,
+                  {
+                    id: `cf-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                    mode: 'standard',
+                    standardOp: 'gt',
+                    standardValue: '0',
+                    backgroundColor: '',
+                    textColor: '',
+                    fontBold: false,
+                    appliesToOthers: false,
+                  },
+                ])
+              }
+              className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-background"
+            >
+              + Add conditional format rule
+            </button>
           </div>
-        )}
+        </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"

@@ -20,6 +20,8 @@ const schema = z.object({
     'boolean',
     'datetime',
     'select',
+    'radio_select',
+    'checkbox_select',
     'status',
     'fraction',
     'weight',
@@ -43,6 +45,8 @@ const TYPES: FieldType[] = [
   'boolean',
   'datetime',
   'select',
+  'radio_select',
+  'checkbox_select',
   'status',
   'fraction',
   'weight',
@@ -56,13 +60,16 @@ const TYPE_LABELS: Record<FieldType, string> = {
   longtext: 'Long text',
   boolean: 'Boolean',
   datetime: 'Date/time',
-  select: 'Select',
+  select: 'Select (Dropdown)',
+  radio_select: 'Select (Radio)',
+  checkbox_select: 'Select (Checkboxes)',
   status: 'Status',
   fraction: 'Dimension',
   weight: 'Weight',
   atlas_location: 'Atlas Location',
   image: 'Image',
   timer: 'Timer',
+  formula: 'Formula',
 }
 
 export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
@@ -74,11 +81,16 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   const [statusColors, setStatusColors] = useState<Record<string, string>>({})
   const [integerDigits, setIntegerDigits] = useState<number | ''>('')
   const [decimalPlaces, setDecimalPlaces] = useState<number | ''>('')
+  const [decimalPlacesMode, setDecimalPlacesMode] = useState<'display' | 'enforce'>('display')
   const [numberMin, setNumberMin] = useState<number | ''>('')
   const [numberMax, setNumberMax] = useState<number | ''>('')
   const [minLength, setMinLength] = useState<number | ''>('')
   const [maxLength, setMaxLength] = useState<number | ''>('')
   const [fieldType, setFieldType] = useState<FieldType>('text')
+  const [radioLayoutPreset, setRadioLayoutPreset] = useState<string>('auto')
+  const [radioLayoutCustom, setRadioLayoutCustom] = useState<number>(5)
+  const [checkboxLayoutPreset, setCheckboxLayoutPreset] = useState<string>('auto')
+  const [checkboxLayoutCustom, setCheckboxLayoutCustom] = useState<number>(5)
 
   const {
     register,
@@ -95,13 +107,30 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
   useEffect(() => {
     if (typeVal) setFieldType(typeVal as FieldType)
     if (typeVal === 'status') setOptions((prev) => (prev.length ? prev : [...STATUS_OPTIONS]))
-    if (typeVal === 'select') setOptions((prev) => (prev.length ? prev : ['']))
+    if (typeVal === 'select' || typeVal === 'radio_select' || typeVal === 'checkbox_select')
+      setOptions((prev) => (prev.length ? prev : ['']))
   }, [typeVal])
 
   const onSubmit = async (data: FormData) => {
     const config: Record<string, unknown> = {}
-    if (fieldType === 'select') {
+    if (fieldType === 'select' || fieldType === 'radio_select' || fieldType === 'checkbox_select') {
       config.options = options.map((o) => (o == null ? '' : String(o)))
+    }
+    if (fieldType === 'radio_select') {
+      config.radioLayout =
+        radioLayoutPreset === 'custom'
+          ? radioLayoutCustom
+          : radioLayoutPreset === 'auto'
+            ? 'auto'
+            : Number(radioLayoutPreset)
+    }
+    if (fieldType === 'checkbox_select') {
+      config.checkboxLayout =
+        checkboxLayoutPreset === 'custom'
+          ? checkboxLayoutCustom
+          : checkboxLayoutPreset === 'auto'
+            ? 'auto'
+            : Number(checkboxLayoutPreset)
     }
     if (fieldType === 'fraction') {
       config.fractionScale = fractionScale
@@ -122,7 +151,10 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
       if (numberMin !== '') config.min = numberMin
       if (numberMax !== '') config.max = numberMax
       if (integerDigits !== '') config.integerDigits = integerDigits
-      if (decimalPlaces !== '') config.decimalPlaces = decimalPlaces
+      if (decimalPlaces !== '') {
+        config.decimalPlaces = decimalPlaces
+        config.decimalPlacesMode = decimalPlacesMode
+      }
     }
     if (fieldType === 'text' || fieldType === 'longtext') {
       if (minLength !== '') config.minLength = minLength
@@ -217,7 +249,7 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
             </div>
             <div>
               <label className="block text-sm font-medium text-foreground">Decimal places</label>
-              <p className="mt-1 mb-1 text-xs text-foreground/60">Optional</p>
+              <p className="mt-1 mb-1 text-xs text-foreground/60">Optional. Used for rounding (see below).</p>
               <input
                 type="number"
                 min={0}
@@ -226,6 +258,35 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
                 onChange={(e) => setDecimalPlaces(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
                 className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
               />
+              {decimalPlaces !== '' && (
+                <div className="mt-2 space-y-1">
+                  <label className="block text-xs font-medium text-foreground/80">Rounding</label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="decimalPlacesMode"
+                      checked={decimalPlacesMode === 'display'}
+                      onChange={() => setDecimalPlacesMode('display')}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm text-foreground">
+                      Display only — tables & read-only use this precision; entry keeps full precision
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="decimalPlacesMode"
+                      checked={decimalPlacesMode === 'enforce'}
+                      onChange={() => setDecimalPlacesMode('enforce')}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm text-foreground">
+                      Enforce — round on entry; stored value matches decimal places
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -375,40 +436,108 @@ export function CreateFieldForm({ onSave, onCancel }: CreateFieldFormProps) {
           />
         </div>
       )}
-      {fieldType === 'select' && (
-        <div>
-          <label className="block text-sm font-medium text-foreground">Options</label>
-          <p className="mt-1 mb-2 text-xs text-foreground/60">
-            Drag to reorder. Add or remove options below.
-          </p>
-          <DraggableOptionList
-            items={options}
-            onReorder={setOptions}
-            renderRow={(opt, i) => (
-              <div className="flex min-w-0 items-center gap-2">
-                <input
-                  value={opt}
-                  onChange={(e) => {
-                    const n = [...options]
-                    n[i] = e.target.value
-                    setOptions(n)
-                  }}
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                />
-                <button
-                  type="button"
-                  onClick={() => setOptions((o) => o.filter((_, j) => j !== i))}
-                  className="shrink-0 rounded-lg px-3 text-red-500 hover:bg-red-500/10"
-                >
-                  Remove
-                </button>
-              </div>
-            )}
-            onAdd={() => setOptions((o) => [...o, ''])}
-            addLabel="+ Add option"
-            onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
-            bulkAddLabel="Bulk add options"
-          />
+      {(fieldType === 'select' || fieldType === 'radio_select' || fieldType === 'checkbox_select') && (
+        <div className="space-y-4">
+          {fieldType === 'radio_select' && (
+            <div className="space-y-2">
+              <PopupSelect
+                label="Options per line"
+                value={radioLayoutPreset}
+                onChange={(v) => setRadioLayoutPreset(v)}
+                options={[
+                  { value: '1', label: 'One per line' },
+                  { value: '2', label: 'Two per line' },
+                  { value: '3', label: 'Three per line' },
+                  { value: '4', label: 'Four per line' },
+                  { value: 'auto', label: 'Auto (wrap as needed)' },
+                  { value: 'custom', label: 'Custom…' },
+                ]}
+              />
+              {radioLayoutPreset === 'custom' && (
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Custom amount per line</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={radioLayoutCustom}
+                    onChange={(e) => {
+                      const n = e.target.value === '' ? 1 : parseInt(e.target.value, 10)
+                      setRadioLayoutCustom(Number.isFinite(n) && n >= 1 ? Math.min(24, Math.max(1, n)) : 1)
+                    }}
+                    className="mt-1 w-24 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {fieldType === 'checkbox_select' && (
+            <div className="space-y-2">
+              <PopupSelect
+                label="Options per line"
+                value={checkboxLayoutPreset}
+                onChange={(v) => setCheckboxLayoutPreset(v)}
+                options={[
+                  { value: '1', label: 'One per line' },
+                  { value: '2', label: 'Two per line' },
+                  { value: '3', label: 'Three per line' },
+                  { value: '4', label: 'Four per line' },
+                  { value: 'auto', label: 'Auto (wrap as needed)' },
+                  { value: 'custom', label: 'Custom…' },
+                ]}
+              />
+              {checkboxLayoutPreset === 'custom' && (
+                <div>
+                  <label className="block text-xs font-medium text-foreground/70">Custom amount per line</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={checkboxLayoutCustom}
+                    onChange={(e) => {
+                      const n = e.target.value === '' ? 1 : parseInt(e.target.value, 10)
+                      setCheckboxLayoutCustom(Number.isFinite(n) && n >= 1 ? Math.min(24, Math.max(1, n)) : 1)
+                    }}
+                    className="mt-1 w-24 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-foreground">Options</label>
+            <p className="mt-1 mb-2 text-xs text-foreground/60">
+              Drag to reorder. Add or remove options below.
+            </p>
+            <DraggableOptionList
+              items={options}
+              onReorder={setOptions}
+              renderRow={(opt, i) => (
+                <div className="flex min-w-0 items-center gap-2">
+                  <input
+                    value={opt}
+                    onChange={(e) => {
+                      const n = [...options]
+                      n[i] = e.target.value
+                      setOptions(n)
+                    }}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setOptions((o) => o.filter((_, j) => j !== i))}
+                    className="shrink-0 rounded-lg px-3 text-red-500 hover:bg-red-500/10"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+              onAdd={() => setOptions((o) => [...o, ''])}
+              addLabel="+ Add option"
+              onBulkAdd={(items) => setOptions((prev) => [...prev, ...items.filter((x) => !prev.includes(x))])}
+              bulkAddLabel="Bulk add options"
+            />
+          </div>
         </div>
       )}
       <div className="flex gap-2">

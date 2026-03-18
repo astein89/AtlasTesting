@@ -17,6 +17,8 @@ const IMPORTABLE_FIELD_TYPES = [
   'boolean',
   'datetime',
   'select',
+  'radio_select',
+  'checkbox_select',
   'status',
   'fraction',
   'weight',
@@ -102,7 +104,7 @@ export function ImportDataModal({
       let imported = 0
       for (let i = 0; i < parsed.rows.length; i++) {
         const row = parsed.rows[i]
-        const data: Record<string, string | number | boolean> = {}
+        const data: Record<string, string | number | boolean | string[]> = {}
         for (const field of visibleFields) {
           const col = fieldToColumn[field.key]
           if (!col) continue
@@ -111,11 +113,11 @@ export function ImportDataModal({
           if (coerced !== undefined) {
             data[field.key] = coerced
           } else if (plan.fieldDefaults?.[field.key] !== undefined) {
-            data[field.key] = plan.fieldDefaults[field.key] as string | number | boolean
+            data[field.key] = plan.fieldDefaults[field.key] as string | number | boolean | string[]
           } else {
             const def = getDefaultValueForField(field, plan.fieldDefaults)
             if (def !== undefined && def !== null && def !== '') {
-              data[field.key] = def as string | number | boolean
+              data[field.key] = def as string | number | boolean | string[]
             }
           }
         }
@@ -123,7 +125,7 @@ export function ImportDataModal({
           if (data[field.key] === undefined) {
             const def = getDefaultValueForField(field, plan.fieldDefaults)
             if (def !== undefined && def !== null && def !== '') {
-              data[field.key] = def as string | number | boolean
+              data[field.key] = def as string | number | boolean | string[]
             }
           }
         }

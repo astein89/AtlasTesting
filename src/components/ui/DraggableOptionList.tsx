@@ -8,8 +8,15 @@ function parseBulkOptions(text: string): string[] {
     .split(/\n|,/)
     .map((s) => s.trim())
     .filter(Boolean)
-  const deduped = [...new Set(parsed)]
-  deduped.sort(localeCompare)
+  // Preserve order of first occurrence (no auto sort)
+  const seen = new Set<string>()
+  const deduped: string[] = []
+  for (const s of parsed) {
+    if (!seen.has(s)) {
+      seen.add(s)
+      deduped.push(s)
+    }
+  }
   return deduped
 }
 
@@ -88,16 +95,19 @@ export function DraggableOptionList({
         {items.map((item, i) => (
           <li
             key={i}
-            draggable
-            onDragStart={(e) => handleDragStart(e, i)}
-            onDragOver={(e) => handleDragOver(e, i)}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-            className={`flex cursor-grab items-center gap-2 rounded border border-transparent px-2 py-1 active:cursor-grabbing ${
+            className={`flex items-center gap-2 rounded border border-transparent px-2 py-1 ${
               draggedIndex === i ? 'opacity-50' : 'hover:bg-background/50'
             }`}
           >
-            <span className="shrink-0 cursor-grab text-foreground/40" title="Drag to reorder">
+            <span
+              className="shrink-0 cursor-grab text-foreground/40"
+              title="Drag to reorder"
+              draggable
+              onDragStart={(e) => handleDragStart(e, i)}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
+            >
               ⋮⋮
             </span>
             <div className="min-w-0 flex-1">{renderRow(item, i)}</div>

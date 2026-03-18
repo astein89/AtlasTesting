@@ -15,7 +15,7 @@ import {
 } from '../utils/formLayout'
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
-import type { DataField, TestPlan } from '../types'
+import type { DataField, TestPlan, TimerValue } from '../types'
 import { getStatusOptions } from '../types'
 
 export function TestPlanEditor() {
@@ -34,7 +34,9 @@ export function TestPlanEditor() {
   const [defaultSortOrder, setDefaultSortOrder] = useState<Array<{ key: string; dir: 'asc' | 'desc' }>>([
     { key: 'date', dir: 'asc' },
   ])
-  const [fieldDefaults, setFieldDefaults] = useState<Record<string, string | number | boolean | string[]>>({})
+  const [fieldDefaults, setFieldDefaults] = useState<
+    Record<string, string | number | boolean | string[] | TimerValue>
+  >({})
   const [keyField, setKeyField] = useState<string>('')
   const [hiddenFieldIds, setHiddenFieldIds] = useState<string[]>([])
   const [defaultVisibleColumnIds, setDefaultVisibleColumnIds] = useState<string[]>([])
@@ -501,9 +503,14 @@ export function TestPlanEditor() {
                       {planFields.map((f) => {
                         const key = f.key
                         const val = fieldDefaults[key]
-                        const setVal = (v: string | number | boolean | string[]) =>
+                        const setVal = (v: string | number | boolean | string[] | TimerValue) =>
                           setFieldDefaults((prev) => {
                             if (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v))) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            if (Array.isArray(v) && v.length === 0) {
                               const next = { ...prev }
                               delete next[key]
                               return next
@@ -555,6 +562,37 @@ export function TestPlanEditor() {
                                   className="w-full"
                                 />
                               )}
+                              {f.type === 'radio_select' && (
+                                <SelectInput
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(v) => setVal(v)}
+                                  options={f.config?.options || []}
+                                  placeholder="(none)"
+                                  className="w-full"
+                                />
+                              )}
+                              {f.type === 'checkbox_select' && (
+                                <div className="max-h-36 space-y-1 overflow-y-auto rounded border border-border bg-background p-2">
+                                  <p className="text-[11px] text-foreground/50">Leave unchecked for no default</p>
+                                  {(f.config?.options ?? []).filter(Boolean).map((opt) => (
+                                    <label key={opt} className="flex cursor-pointer items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={Array.isArray(val) && val.includes(opt)}
+                                        onChange={() => {
+                                          const cur = Array.isArray(val) ? [...val] : []
+                                          const i = cur.indexOf(opt)
+                                          if (i >= 0) cur.splice(i, 1)
+                                          else cur.push(opt)
+                                          setVal(cur)
+                                        }}
+                                        className="h-4 w-4 rounded border-border"
+                                      />
+                                      <span className="text-sm text-foreground">{opt}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
                               {f.type === 'status' && (
                                 <SelectInput
                                   value={val === undefined ? '' : String(val)}
@@ -564,7 +602,7 @@ export function TestPlanEditor() {
                                   className="w-full"
                                 />
                               )}
-                              {!['number', 'text', 'longtext', 'boolean', 'select', 'status'].includes(f.type) && (
+                              {!['number', 'text', 'longtext', 'boolean', 'select', 'radio_select', 'checkbox_select', 'status'].includes(f.type) && (
                                 <input
                                   type="text"
                                   value={val === undefined ? '' : String(val)}

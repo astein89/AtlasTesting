@@ -1,7 +1,7 @@
 import { parse } from 'date-fns'
 import type { DataField } from '../types'
 
-export type CoercedValue = string | number | boolean | undefined
+export type CoercedValue = string | number | boolean | string[] | undefined
 
 /**
  * Coerce a string from an import file to the value expected for the field type.
@@ -35,8 +35,17 @@ export function coerceCell(value: string, field: DataField): CoercedValue {
     return iso ?? undefined
   }
 
-  if (field.type === 'select' || field.type === 'status') {
+  if (field.type === 'select' || field.type === 'radio_select' || field.type === 'status') {
     return empty ? undefined : trimmed
+  }
+
+  if (field.type === 'checkbox_select') {
+    if (empty) return undefined
+    const opts = field.config?.options ?? []
+    const set = new Set(opts.map(String))
+    const parts = trimmed.split(/[,;|]/).map((s) => s.trim()).filter(Boolean)
+    const valid = parts.filter((p) => set.has(p))
+    return valid.length > 0 ? valid : undefined
   }
 
   if (field.type === 'formula') {
