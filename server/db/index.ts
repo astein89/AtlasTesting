@@ -71,11 +71,19 @@ function createDbWrapper() {
       sqlDb.run(sql)
       save()
     },
+    /** Used by schema migrations (PRAGMA, etc.). Must not call save() — read-only. */
+    execQuery(sql: string): import('sql.js').QueryExecResult[] {
+      const out = sqlDb.exec(sql)
+      return out ?? []
+    },
   }
 }
 
 async function init() {
   const SQL = await initSqlJs()
+  const resolvedDb = path.resolve(dbPath)
+  // eslint-disable-next-line no-console
+  console.log(`[db] atlas.db path: ${resolvedDb}`)
   if (fs.existsSync(dbPath)) {
     const buf = fs.readFileSync(dbPath)
     sqlDb = new SQL.Database(buf)
