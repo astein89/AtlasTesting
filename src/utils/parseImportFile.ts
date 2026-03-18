@@ -1,5 +1,4 @@
 import Papa from 'papaparse'
-import * as XLSX from 'xlsx'
 
 export interface ParsedImportFile {
   headers: string[]
@@ -61,50 +60,8 @@ export function parseCsv(file: File): Promise<ParsedImportFile> {
   })
 }
 
-export function parseXlsx(file: File): Promise<ParsedImportFile> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result
-        if (!data || typeof data !== 'object' || !(data instanceof ArrayBuffer)) {
-          reject(new Error('Failed to read file'))
-          return
-        }
-        const workbook = XLSX.read(data, { type: 'array' })
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-        if (!firstSheet) {
-          resolve({ headers: [], rows: [] })
-          return
-        }
-        const json = XLSX.utils.sheet_to_json<string[]>(firstSheet, {
-          header: 1,
-          defval: '',
-          raw: false,
-        }) as string[][]
-        if (!json.length) {
-          resolve({ headers: [], rows: [] })
-          return
-        }
-        const rawHeaders = json[0].map((c) => (c != null ? String(c).trim() : ''))
-        const headers = dedupeHeaders(rawHeaders)
-        const dataRows = json.slice(1)
-        resolve({
-          headers,
-          rows: rowsToObjects(headers, dataRows),
-        })
-      } catch (err) {
-        reject(err)
-      }
-    }
-    reader.onerror = () => reject(new Error('Failed to read file'))
-    reader.readAsArrayBuffer(file)
-  })
-}
-
 export function parseImportFile(file: File): Promise<ParsedImportFile> {
   const name = (file.name || '').toLowerCase()
   if (name.endsWith('.csv')) return parseCsv(file)
-  if (name.endsWith('.xlsx') || name.endsWith('.xls')) return parseXlsx(file)
-  return Promise.reject(new Error('Unsupported file type. Use .csv or .xlsx'))
+  return Promise.reject(new Error('Unsupported file type. Use .csv'))
 }

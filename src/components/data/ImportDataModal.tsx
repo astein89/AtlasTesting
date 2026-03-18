@@ -190,10 +190,10 @@ export function ImportDataModal({
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           {/* Step 1 – File */}
           <div className="mb-6">
-            <label className="mb-2 block text-sm font-medium text-foreground">File (CSV or XLSX)</label>
+            <label className="mb-2 block text-sm font-medium text-foreground">File (CSV)</label>
             <input
               type="file"
-              accept=".csv,.xlsx,.xls"
+              accept=".csv"
               onChange={handleFileChange}
               className="w-full rounded border border-border bg-background px-3 py-2 text-sm text-foreground file:mr-2 file:rounded file:border-0 file:bg-primary file:px-3 file:py-1 file:text-primary-foreground"
             />
