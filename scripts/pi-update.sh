@@ -12,9 +12,8 @@ echo "Upgrading in $REPO_DIR"
 
 # Step 1: Back up the database
 if [ -f atlas.db ]; then
-  mkdir -p db_backup
-  cp atlas.db "db_backup/atlas.db.backup.$(date +%Y%m%d-%H%M%S)"
-  echo "Backed up atlas.db to db_backup/"
+  cp atlas.db "atlas.db.backup.$(date +%Y%m%d-%H%M%S)"
+  echo "Backed up atlas.db"
 fi
 
 # Step 2: Stop the app

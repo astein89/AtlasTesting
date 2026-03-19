@@ -43,20 +43,11 @@ You can call the script from anywhere by linking it into a directory on your `PA
 
 **On Linux / Raspberry Pi:**
 
-1. Make the script executable (required when using a symlink; otherwise you may get "Permission denied"):
-
 ```bash
-cd /path/to/automation-testing   # your repo path
-chmod +x scripts/ctl.sh
+sudo ln -s /home/pi/automation-testing/scripts/ctl.sh /usr/local/bin/autotest
 ```
 
-2. Create the symlink (use your actual repo path instead of `/path/to/automation-testing`):
-
-```bash
-sudo ln -s /path/to/automation-testing/scripts/ctl.sh /usr/local/bin/autotest
-```
-
-3. Run from anywhere:
+Use your actual repo path instead of `/home/pi/automation-testing` if different. Then run:
 
 ```bash
 autotest status
@@ -64,6 +55,12 @@ autotest update
 ```
 
 The script changes into the repo directory before running PM2 or the update script, so the symlink can live anywhere.
+
+**Make the script executable** (if needed):
+
+```bash
+chmod +x scripts/ctl.sh
+```
 
 ## Prerequisites
 

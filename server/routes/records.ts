@@ -27,15 +27,9 @@ function insertRecordHistory(
 router.get('/', (req: AuthRequest, res) => {
   const { testPlanId, testId, from, to, limit = 50 } = req.query
   let sql = `
-    SELECT tr.*,
-    tp.name as plan_name,
+    SELECT tr.*, tp.name as plan_name,
     COALESCE(u.name, u.username) as entered_by_name,
-    t.name as test_name,
-    (
-      SELECT MAX(rh.changed_at)
-      FROM record_history rh
-      WHERE rh.record_id = tr.id
-    ) as last_edited_at
+    t.name as test_name
     FROM test_runs tr
     JOIN test_plans tp ON tr.test_plan_id = tp.id
     LEFT JOIN users u ON tr.entered_by = u.id
@@ -72,7 +66,6 @@ router.get('/', (req: AuthRequest, res) => {
     data: string | null
     plan_name: string
     entered_by_name: string | null
-    last_edited_at: string | null
     run_id?: string | null
     test_id?: string | null
     test_name?: string | null
@@ -88,7 +81,6 @@ router.get('/', (req: AuthRequest, res) => {
       recordedAt: r.run_at,
       enteredBy: r.entered_by,
       enteredByName: r.entered_by_name || r.entered_by,
-      lastEditedAt: r.last_edited_at ?? r.run_at,
       status: r.status,
       data: r.data ? JSON.parse(r.data) : {},
       runId: r.run_id ?? undefined,

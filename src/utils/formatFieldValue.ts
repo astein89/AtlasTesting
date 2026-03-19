@@ -130,10 +130,6 @@ export function formatFieldValue(
     const tag = field.config?.imageTag ? ` · ${field.config.imageTag}` : ''
     return arr.length ? `${arr.length} photo(s)${tag}` : '—'
   }
-  if (field.type === 'checkbox_select') {
-    const arr = Array.isArray(value) ? value : value ? [String(value)] : []
-    return arr.length ? arr.map(String).join(', ') : '—'
-  }
   if (Array.isArray(value)) {
     return value.map(String).join(', ')
   }

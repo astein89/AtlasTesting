@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Navbar } from './Navbar'
 import { Sidebar } from './Sidebar'
+import { useDateTimeConfig } from '../../hooks/useDateTimeConfig'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
 export function Layout() {
@@ -9,6 +10,7 @@ export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { showAlert } = useAlertConfirm()
+  useDateTimeConfig()
 
   useEffect(() => {
     const state = location.state as { adminRequired?: boolean } | null

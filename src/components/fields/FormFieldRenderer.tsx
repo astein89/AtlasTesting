@@ -6,8 +6,6 @@ import { WeightInput } from './WeightInput'
 import { ImageInput } from './ImageInput'
 import { MaskedTextInput, filterTextValue } from './MaskedTextInput'
 import { SelectInput } from './SelectInput'
-import { RadioInput } from './RadioInput'
-import { CheckboxGroupInput } from './CheckboxGroupInput'
 import { TimerInput } from './TimerInput'
 import { parseFractionScale } from '../../utils/fraction'
 import { parseTimerValue } from '../../utils/timer'
@@ -66,7 +64,6 @@ function NumberFieldInput({
   value,
   onChange,
   decimals,
-  enforceDecimals,
   min,
   max,
   inputClass,
@@ -76,8 +73,6 @@ function NumberFieldInput({
   value: string | number
   onChange: (key: string, val: string | number) => void
   decimals: number | undefined
-  /** When true with decimals, round stored value to decimals on every change */
-  enforceDecimals: boolean
   min: number | undefined
   max: number | undefined
   inputClass: string
@@ -94,10 +89,7 @@ function NumberFieldInput({
   const displayVal =
     numVal === '' || !Number.isFinite(numVal)
       ? ''
-      : formatNumberForDisplay(
-          numVal as number,
-          enforceDecimals && decimals != null ? decimals : undefined
-        )
+      : formatNumberForDisplay(numVal as number, decimals)
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value
@@ -119,11 +111,9 @@ function NumberFieldInput({
       onChange(fieldKey, '')
       return
     }
+    if (decimals != null) n = Number(n.toFixed(decimals))
     if (min != null && n < min) n = min
     if (max != null && n > max) n = max
-    if (enforceDecimals && decimals != null && decimals >= 0) {
-      n = Number(n.toFixed(decimals))
-    }
     onChange(fieldKey, n)
   }
 
@@ -218,11 +208,7 @@ export function renderFormField(
     : `w-full rounded border border-border bg-background px-3 py-2 text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
 
   if (f.type === 'number') {
-    const decimals =
-      typeof f.config?.decimalPlaces === 'number' && f.config.decimalPlaces >= 0
-        ? f.config.decimalPlaces
-        : undefined
-    const enforceDecimals = f.config?.decimalPlacesMode === 'enforce' && decimals != null
+    const decimals = typeof f.config?.decimalPlaces === 'number' && f.config.decimalPlaces >= 0 ? f.config.decimalPlaces : undefined
     const min = typeof f.config?.min === 'number' ? f.config.min : undefined
     const max = typeof f.config?.max === 'number' ? f.config.max : undefined
     return (
@@ -231,7 +217,6 @@ export function renderFormField(
         value={value as string | number}
         onChange={onChange as (key: string, val: string | number) => void}
         decimals={decimals}
-        enforceDecimals={enforceDecimals}
         min={min}
         max={max}
         inputClass={inputClass}
@@ -337,35 +322,6 @@ export function renderFormField(
         onChange={(v) => onChange(f.key, v)}
         options={f.config?.options || []}
         className="w-full"
-      />
-    )
-    return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
-  }
-  if (f.type === 'radio_select') {
-    const layout = f.config?.radioLayout
-    const content = (
-      <RadioInput
-        value={String(value ?? '')}
-        onChange={(v) => onChange(f.key, v)}
-        options={f.config?.options || []}
-        className="w-full"
-        name={f.key}
-        layout={layout ?? 'auto'}
-      />
-    )
-    return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content
-  }
-  if (f.type === 'checkbox_select') {
-    const arr = Array.isArray(value) ? (value as string[]).map(String) : value ? [String(value)] : []
-    const layout = f.config?.checkboxLayout
-    const content = (
-      <CheckboxGroupInput
-        value={arr}
-        onChange={(v) => onChange(f.key, v)}
-        options={f.config?.options || []}
-        className="w-full"
-        name={f.key}
-        layout={layout ?? 'auto'}
       />
     )
     return disabled ? <div className="pointer-events-none opacity-70">{content}</div> : content

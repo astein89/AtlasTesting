@@ -160,7 +160,7 @@ export function PopupSelect({
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        <span className={`block break-words whitespace-normal text-left ${!value ? 'text-foreground/60' : ''}`}>
+        <span className={!value ? 'text-foreground/60' : ''}>
           {displayLabel}
         </span>
       </button>
@@ -197,7 +197,7 @@ export function PopupSelect({
                   key={opt.value}
                   type="button"
                   onClick={() => select(opt.value)}
-                  className={`flex min-h-[44px] w-full items-center break-words px-3 py-2 text-left text-sm whitespace-normal text-foreground hover:bg-card ${
+                  className={`flex min-h-[44px] w-full items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
                     value === opt.value ? 'bg-primary/10 font-medium' : ''
                   }`}
                   role="option"
@@ -247,7 +247,7 @@ export function PopupSelect({
                   key={opt.value}
                   type="button"
                   onClick={() => select(opt.value)}
-                  className={`flex min-h-[44px] w-full items-center break-words px-3 py-2 text-left text-sm whitespace-normal text-foreground hover:bg-card ${
+                  className={`flex min-h-[44px] w-full items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
                     value === opt.value ? 'bg-primary/10 font-medium' : ''
                   }`}
                   role="option"

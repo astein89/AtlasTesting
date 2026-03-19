@@ -4,13 +4,12 @@ import { useSortableHeader } from '../hooks/useSortableHeader'
 import { useUserPreference } from '../hooks/useUserPreference'
 import { formatDate, formatDateTime } from '../lib/dateTimeConfig'
 import { api } from '../api/client'
-import { getTests, getTest, updateTest, createTest } from '../api/tests'
+import { getTests, getTest, updateTest } from '../api/tests'
 import { formatDecimalAsFraction } from '../utils/fraction'
 import { useAuthStore } from '../store/authStore'
 import { EditRecordModal } from '../components/data/EditRecordModal'
 import { AddRecordModal } from '../components/data/AddRecordModal'
 import { BulkAddRowsModal } from '../components/data/BulkAddRowsModal'
-import { ImportDataModal } from '../components/data/ImportDataModal'
 import { ColumnFilterDropdown } from '../components/data/ColumnFilterDropdown'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { renderFormField } from '../components/fields/FormFieldRenderer'
@@ -29,9 +28,7 @@ import { getStatusOptions } from '../types'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from '../utils/timer'
 import { getDefaultValueForField } from '../utils/fieldDefaults'
 import { computeFormulaValues } from '../utils/formulaEvaluator'
-import { getConditionalFormatStyle } from '../utils/conditionalFormat'
 import { formatFieldValue } from '../utils/formatFieldValue'
-import type { FormulaData } from '../utils/formulaEvaluator'
 import { getContrastTextColor } from '../utils/colorContrast'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 
@@ -40,8 +37,6 @@ interface Record {
   testPlanId: string
   planName: string
   recordedAt: string
-  /** When present, last edit time from record_history (falls back to recordedAt). */
-  lastEditedAt?: string
   enteredBy: string
   status: string
   data: Record<string, string | number | boolean | string[] | TimerValue>
@@ -60,12 +55,6 @@ function getDefaultData(
       if (f.type === 'number' && (typeof planDefault === 'number' || planDefault === '')) out[f.key] = planDefault
       else if (f.type === 'boolean' && typeof planDefault === 'boolean') out[f.key] = planDefault
       else if (f.type === 'select' && typeof planDefault === 'string') out[f.key] = planDefault
-      else if (f.type === 'radio_select' && typeof planDefault === 'string') out[f.key] = planDefault
-      else if (f.type === 'checkbox_select' && Array.isArray(planDefault)) {
-        const opts = f.config?.options ?? []
-        const set = new Set(opts.map(String))
-        out[f.key] = planDefault.filter((x): x is string => typeof x === 'string' && set.has(x))
-      }
       else if (f.type === 'status' && typeof planDefault === 'string') out[f.key] = planDefault
       else if ((f.type === 'text' || f.type === 'longtext') && typeof planDefault === 'string') out[f.key] = planDefault
       else if (f.type === 'fraction' && typeof planDefault === 'number') out[f.key] = planDefault
@@ -91,8 +80,6 @@ function getDefaultData(
       else if (f.type === 'boolean') out[f.key] = false
       else if (f.type === 'longtext') out[f.key] = ''
       else if (f.type === 'select') out[f.key] = ''
-      else if (f.type === 'radio_select') out[f.key] = ''
-      else if (f.type === 'checkbox_select') out[f.key] = []
       else if (f.type === 'status') {
         const opts = getStatusOptions(f)
         out[f.key] = opts[0] ?? 'In Progress'
@@ -208,28 +195,19 @@ export function TestPlanDataView() {
   const columnsPrefKey = planId ? `atlas-data-hidden-columns-${planId}` : 'atlas-data-hidden-columns-default'
   const [hiddenColumnKeys, setHiddenColumnKeys] = useUserPreference<string[]>(columnsPrefKey, [])
   const [directTableEdit, setDirectTableEdit] = useUserPreference('atlas-direct-table-edit', false)
-  const [bulkSelectMode, setBulkSelectMode] = useState(false)
+  const [bulkSelectMode, setBulkSelectMode] = useUserPreference('atlas-bulk-select-mode', false)
   const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
   const [recordModalViewOnly, setRecordModalViewOnly] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
   const [showBulkAddRowsModal, setShowBulkAddRowsModal] = useState(false)
-  const [showImportModal, setShowImportModal] = useState(false)
   const [bulkDeletePending, setBulkDeletePending] = useState(false)
   const [bulkEditFieldKey, setBulkEditFieldKey] = useState<string | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState<string | number | boolean | string[] | TimerValue | null>(null)
   const [showMoveToTestModal, setShowMoveToTestModal] = useState(false)
   const [otherTests, setOtherTests] = useState<Array<{ id: string; name: string }>>([])
   const [moveToTestId, setMoveToTestId] = useState<string>('')
-  const [showAddTestInMoveModal, setShowAddTestInMoveModal] = useState(false)
-  const [newTestName, setNewTestName] = useState('')
-  const [newTestStart, setNewTestStart] = useState('')
-  const [newTestEnd, setNewTestEnd] = useState('')
   const [restoringFromArchive, setRestoringFromArchive] = useState(false)
-  const [showLastEditedColumn, setShowLastEditedColumn] = useUserPreference<boolean>(
-    planId ? `atlas-data-show-last-edited-${planId}` : 'atlas-data-show-last-edited-default',
-    false
-  )
   const visibleFields = useMemo(() => {
     const allTableFields = fields
     // If admin configured defaultVisibleColumnIds and user has not customized columns
@@ -273,34 +251,6 @@ export function TestPlanDataView() {
       .then((r) => setRecords(r.data))
       .catch(() => setRecords([]))
   }, [planId, testId])
-
-  const loadPlanAndFields = useCallback(() => {
-    if (!planId) return
-    api
-      .get<TestPlan>(`/test-plans/${planId}`)
-      .then((r) => {
-        const planData = r.data
-        setPlan(planData)
-        const fieldIds = planData.fieldIds?.length ? planData.fieldIds : []
-        if (fieldIds.length === 0) {
-          setFields([])
-          setAddData({})
-          return
-        }
-        return Promise.allSettled(
-          fieldIds.map((fid: string) =>
-            api.get<DataField>(`/fields/${fid}`).then((fr) => fr.data)
-          )
-        ).then((results) => {
-          const f = results
-            .filter((res): res is PromiseFulfilledResult<DataField> => res.status === 'fulfilled' && res.value != null)
-            .map((res) => res.value)
-          setFields(f)
-          setAddData(getDefaultData(f, planData))
-        })
-      })
-      .catch(() => setPlan(null))
-  }, [planId])
 
   useEffect(() => {
     if (!planId) return
@@ -367,7 +317,6 @@ export function TestPlanDataView() {
     showBulkEditModal ||
     bulkDeletePending ||
     showBulkAddRowsModal ||
-    showImportModal ||
     showMoveToTestModal
 
   const closeTopmostModal = useCallback(() => {
@@ -381,10 +330,6 @@ export function TestPlanDataView() {
       setBulkDeletePending(false)
     } else if (showExportModal) {
       setShowExportModal(false)
-    } else if (showImportModal) {
-      setShowImportModal(false)
-    } else if (showBulkAddRowsModal) {
-      setShowBulkAddRowsModal(false)
     } else if (editingId) {
       setEditingId(null)
       setSearchParams((prev) => {
@@ -402,8 +347,6 @@ export function TestPlanDataView() {
     bulkDeletePending,
     showMoveToTestModal,
     showExportModal,
-    showImportModal,
-    showBulkAddRowsModal,
     editingId,
     isAdding,
     setSearchParams,
@@ -627,41 +570,8 @@ export function TestPlanDataView() {
       .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
       .catch(() => setOtherTests([]))
     setMoveToTestId('')
-    setShowAddTestInMoveModal(false)
-    setNewTestName('')
-    setNewTestStart('')
-    setNewTestEnd('')
     setShowMoveToTestModal(true)
   }, [planId, testId])
-
-  const refreshOtherTests = useCallback(() => {
-    if (!planId || !testId) return
-    getTests(planId)
-      .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
-      .catch(() => setOtherTests([]))
-  }, [planId, testId])
-
-  const handleAddTestFromMoveModal = async () => {
-    if (!planId || !newTestName.trim() || !newTestStart.trim()) return
-    setSubmitting(true)
-    try {
-      const test = await createTest(planId, {
-        name: newTestName.trim(),
-        startDate: newTestStart.trim() || undefined,
-        endDate: newTestEnd.trim() || undefined,
-      })
-      await refreshOtherTests()
-      setMoveToTestId(test.id)
-      setShowAddTestInMoveModal(false)
-      setNewTestName('')
-      setNewTestStart('')
-      setNewTestEnd('')
-    } catch {
-      showAlert('Failed to add test.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
 
   const handleMoveToTest = async () => {
     if (!moveToTestId || selectedIds.size === 0) return
@@ -735,12 +645,6 @@ export function TestPlanDataView() {
     if (f.type === 'select' && Array.isArray(f.config?.options)) {
       optionLen = Math.max(0, ...f.config.options.map((o) => String(o).length))
     }
-    if (f.type === 'radio_select' && Array.isArray(f.config?.options)) {
-      optionLen = Math.max(0, ...f.config.options.map((o) => String(o).length))
-    }
-    if (f.type === 'checkbox_select' && Array.isArray(f.config?.options)) {
-      optionLen = Math.max(0, ...f.config.options.map((o) => String(o).length))
-    }
     if (f.type === 'status') {
       const opts = getStatusOptions(f)
       optionLen = Math.max(0, ...opts.map((o) => String(o).length))
@@ -759,8 +663,6 @@ export function TestPlanDataView() {
         return '12rem'
       case 'status':
       case 'select':
-      case 'radio_select':
-      case 'checkbox_select':
         return `${fromContent}rem`
       case 'datetime':
         return `${Math.max(11, fromContent)}rem`
@@ -777,7 +679,7 @@ export function TestPlanDataView() {
     }
   }
 
-  type SortKey = 'date' | 'lastEdited' | string
+  type SortKey = 'date' | string
   type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
   const sortStorageKey = planId ? `automation-data-sort-${planId}` : 'automation-data-sort-default'
   const defaultSortOrder = useMemo<SortLevel[]>(
@@ -804,7 +706,6 @@ export function TestPlanDataView() {
 
   const getVal = (record: Record, key: SortKey): string | number | boolean | string[] | TimerValue => {
     if (key === 'date') return record.recordedAt
-    if (key === 'lastEdited') return record.lastEditedAt ?? record.recordedAt
     return record.data[key] ?? ''
   }
 
@@ -974,15 +875,6 @@ export function TestPlanDataView() {
 
   const handleRowClick = (record: Record, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return
-    if (editingAllowed && bulkSelectMode) {
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(record.id)) next.delete(record.id)
-        else next.add(record.id)
-        return next
-      })
-      return
-    }
     startEdit(record)
   }
 
@@ -992,6 +884,20 @@ export function TestPlanDataView() {
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
+      {isArchived && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+          <span className="font-medium">This test is archived.</span>
+          <span className="text-foreground/80">View-only.</span>
+          <button
+            type="button"
+            onClick={handleRestoreFromArchive}
+            disabled={restoringFromArchive}
+            className="shrink-0 rounded border border-amber-600/60 bg-amber-500/20 px-3 py-1.5 font-medium text-foreground hover:bg-amber-500/30 disabled:opacity-50 dark:border-amber-400/50 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
+          >
+            {restoringFromArchive ? 'Restoring…' : 'Restore'}
+          </button>
+        </div>
+      )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/70">
         <div className="flex flex-wrap items-center gap-2">
           <Link to="/test-plans" className="hover:text-foreground hover:underline">
@@ -1016,16 +922,6 @@ export function TestPlanDataView() {
           >
             Export
           </button>
-          {editingAllowed && (
-            <button
-              type="button"
-              onClick={() => setShowImportModal(true)}
-              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
-              title="Import rows from CSV or XLSX file"
-            >
-              Import
-            </button>
-          )}
           {hasFields && editingAllowed && (
             <>
               <button
@@ -1076,19 +972,6 @@ export function TestPlanDataView() {
           onCreated={() => {
             setShowBulkAddRowsModal(false)
             loadRecords()
-          }}
-        />
-      )}
-      {showImportModal && plan && testId && (
-        <ImportDataModal
-          planId={planId!}
-          plan={plan}
-          testId={testId}
-          fields={fields}
-          onClose={() => setShowImportModal(false)}
-          onImported={() => {
-            loadRecords()
-            loadPlanAndFields()
           }}
         />
       )}
@@ -1293,73 +1176,6 @@ export function TestPlanDataView() {
                 options={otherTests.map((t) => ({ value: t.id, label: t.name }))}
               />
             </div>
-            {!showAddTestInMoveModal ? (
-              <div className="mb-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewTestStart(new Date().toISOString().slice(0, 10))
-                    setShowAddTestInMoveModal(true)
-                  }}
-                  className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-background"
-                >
-                  Add new test
-                </button>
-              </div>
-            ) : (
-              <div className="mb-4 rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-foreground/80">Name</label>
-                  <input
-                    type="text"
-                    value={newTestName}
-                    onChange={(e) => setNewTestName(e.target.value)}
-                    placeholder="Test name"
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-foreground/80">Start date</label>
-                  <input
-                    type="date"
-                    value={newTestStart}
-                    onChange={(e) => setNewTestStart(e.target.value)}
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-foreground/80">End date (optional)</label>
-                  <input
-                    type="date"
-                    value={newTestEnd}
-                    onChange={(e) => setNewTestEnd(e.target.value)}
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowAddTestInMoveModal(false)
-                      setNewTestName('')
-                      setNewTestStart('')
-                      setNewTestEnd('')
-                    }}
-                    className="rounded border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-background"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAddTestFromMoveModal}
-                    disabled={submitting || !newTestName.trim() || !newTestStart.trim()}
-                    className="rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    {submitting ? 'Creating…' : 'Create test'}
-                  </button>
-                </div>
-              </div>
-            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -1508,12 +1324,12 @@ export function TestPlanDataView() {
                     ? 'border-primary bg-primary/15 text-primary ring-2 ring-primary/30'
                     : 'border-border text-foreground hover:bg-background'
                 }`}
-                title={bulkSelectMode ? 'Turn off row selection' : 'Select rows'}
+                title={bulkSelectMode ? 'Turn off row selection' : 'Select rows for bulk edit or delete'}
               >
                 <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-xs font-medium">Select</span>
+                <span className="text-xs font-medium">Bulk edit</span>
                 {bulkSelectMode && (
                   <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                     On
@@ -1558,15 +1374,6 @@ export function TestPlanDataView() {
                       <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background">
                         <input type="checkbox" checked disabled className="h-4 w-4" />
                         <span className="text-sm text-foreground">Date</span>
-                      </label>
-                      <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background">
-                        <input
-                          type="checkbox"
-                          checked={showLastEditedColumn}
-                          onChange={(e) => setShowLastEditedColumn(e.target.checked)}
-                          className="h-4 w-4"
-                        />
-                        <span className="text-sm text-foreground">Last edited</span>
                       </label>
                       {fields.map((f) => (
                         <label
@@ -1786,7 +1593,7 @@ export function TestPlanDataView() {
                   <div
                     key={record.id}
                     onClick={(e) => handleRowClick(record, e)}
-                    className={`w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70 ${bulkSelectMode && selectedIds.has(record.id) ? 'border-border bg-blue-600/20 dark:bg-blue-500/20' : 'border-border bg-card'}`}
+                    className={`w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70 ${bulkSelectMode && selectedIds.has(record.id) ? 'border-primary ring-1 ring-primary/50' : 'border-border'}`}
                   >
                     {editingAllowed && bulkSelectMode ? (
                       <div className="mb-2 flex items-start gap-2" onClick={(e) => e.stopPropagation()}>
@@ -1931,21 +1738,6 @@ export function TestPlanDataView() {
           )}
           {/* Table view: main scroll area. On small screens, ensure enough vertical space for many rows. */}
           {showTableView && (
-          <>
-          {isArchived && (
-            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
-              <span className="font-medium">This test is archived.</span>
-              <span className="text-foreground/80">View-only.</span>
-              <button
-                type="button"
-                onClick={handleRestoreFromArchive}
-                disabled={restoringFromArchive}
-                className="shrink-0 rounded border border-amber-600/60 bg-amber-500/20 px-3 py-1.5 font-medium text-foreground hover:bg-amber-500/30 disabled:opacity-50 dark:border-amber-400/50 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
-              >
-                {restoringFromArchive ? 'Restoring…' : 'Restore'}
-              </button>
-            </div>
-          )}
           <div className="flex min-h-[60vh] min-w-0 flex-1 flex-col overflow-y-auto overflow-x-auto rounded-lg border border-border">
           <table
             className="w-full"
@@ -1954,7 +1746,6 @@ export function TestPlanDataView() {
             <colgroup>
               {editingAllowed && bulkSelectMode && <col style={{ width: '2.5rem' }} />}
               <col style={{ width: '14rem' }} />
-              {showLastEditedColumn && <col style={{ width: '14rem' }} />}
               {visibleFields.map((f) => (
                 <col key={f.id} style={{ width: hasFieldLayout ? (fieldLayout[f.id] || getColumnWidth(f)) : getColumnWidth(f) }} />
               ))}
@@ -2016,22 +1807,6 @@ export function TestPlanDataView() {
                     />
                   )}
                 </th>
-                {showLastEditedColumn && (
-                  <th
-                    className="min-w-0 cursor-pointer select-none px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-background/50"
-                    {...getSortHandlers('lastEdited')}
-                    title="Tap to sort. Long-press or Shift+click to add secondary sort."
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="whitespace-nowrap">Last edited</span>
-                      {getSortIndex('lastEdited') >= 0 && (
-                        <span className="shrink-0 text-foreground/60">
-                          {getSortIndex('lastEdited') + 1}{getSortDir('lastEdited') === 'asc' ? '↓' : '↑'}
-                        </span>
-                      )}
-                    </span>
-                  </th>
-                )}
                 {visibleFields.map((f) => (
                   <th
                     key={f.id}
@@ -2081,7 +1856,7 @@ export function TestPlanDataView() {
               {sortedRecords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2) + (showLastEditedColumn ? 1 : 0)}
+                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2)}
                     className="p-6 text-center text-foreground/60"
                   >
                     No data yet. Click &quot;+ Add row&quot; to add.
@@ -2090,7 +1865,7 @@ export function TestPlanDataView() {
               ) : filteredRecords.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2) + (showLastEditedColumn ? 1 : 0)}
+                    colSpan={visibleFields.length + (bulkSelectMode ? 3 : 2)}
                     className="p-6 text-center text-foreground/60"
                   >
                     No rows match the current filters.
@@ -2101,7 +1876,7 @@ export function TestPlanDataView() {
                   <tr
                     key={record.id}
                     onClick={(e) => handleRowClick(record, e)}
-                    className={`cursor-pointer transition-colors hover:bg-card ${editingAllowed && bulkSelectMode && selectedIds.has(record.id) ? 'bg-blue-600/20 dark:bg-blue-500/20' : 'bg-background'}`}
+                    className={`cursor-pointer bg-background transition-colors hover:bg-card ${editingAllowed && bulkSelectMode && selectedIds.has(record.id) ? 'ring-1 ring-primary/50' : ''}`}
                   >
                     {editingAllowed && bulkSelectMode && (
                       <td className="w-10 px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
@@ -2126,19 +1901,12 @@ export function TestPlanDataView() {
                     <td className="whitespace-nowrap min-w-0 px-4 py-3 text-sm text-foreground align-top">
                       {formatDateTime(record.recordedAt)}
                     </td>
-                    {showLastEditedColumn && (
-                      <td className="whitespace-nowrap min-w-0 px-4 py-3 text-sm text-foreground/80 align-top">
-                        {record.lastEditedAt ? formatDateTime(record.lastEditedAt) : '—'}
-                      </td>
-                    )}
                     {visibleFields.map((f) => {
                       const cellEditable = editingAllowed && (directTableEdit || f.type === 'status') && f.type !== 'formula' && !(f.type === 'status' && f.config?.formula)
-                      const cfStyle = getConditionalFormatStyle(f, record.data as FormulaData)
                       return (
                       <td
                         key={f.id}
                         className="min-w-0 px-2 py-2 text-foreground align-top"
-                        style={cfStyle}
                         onClick={cellEditable ? (e) => e.stopPropagation() : undefined}
                       >
                         {cellEditable ? (
@@ -2167,20 +1935,7 @@ export function TestPlanDataView() {
                             >
                               {renderFormField(
                                 f,
-                                record.data[f.key] ??
-                                  (f.type === 'number'
-                                    ? ''
-                                    : f.type === 'boolean'
-                                      ? false
-                                      : f.type === 'fraction'
-                                        ? 0
-                                        : f.type === 'timer'
-                                          ? { totalElapsedMs: 0 }
-                                          : f.type === 'datetime'
-                                            ? ''
-                                            : f.type === 'checkbox_select'
-                                              ? []
-                                              : ''),
+                                record.data[f.key] ?? (f.type === 'number' ? '' : f.type === 'boolean' ? false : f.type === 'fraction' ? 0 : f.type === 'timer' ? { totalElapsedMs: 0 } : f.type === 'datetime' ? '' : ''),
                                 (key, val) => updateRecordField(record, key, val),
                                 { disabled: submitting, compact: true }
                               )}
@@ -2241,7 +1996,6 @@ export function TestPlanDataView() {
             </tbody>
           </table>
           </div>
-          </>
           )}
         </div>
       )}

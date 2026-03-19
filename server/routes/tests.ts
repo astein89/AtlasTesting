@@ -51,7 +51,7 @@ router.get('/', (req: Request<Params>, res) => {
   )
 })
 
-router.post('/', (req: Request<Params>, res) => {
+router.post('/', requireAdmin, (req: Request<Params>, res) => {
   const planId = req.params.planId
   const { name, startDate, endDate } = req.body
   const plan = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(planId)

@@ -65,10 +65,6 @@ export function TestPlansList() {
       .finally(() => setLoading(false))
   }, [])
 
-  const handleNewPlan = () => {
-    navigate('/test-plans/new', { state: { returnTo: '/test-plans' } })
-  }
-
   return (
     <div className="w-full min-w-0">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -77,13 +73,13 @@ export function TestPlansList() {
         </div>
         <div className="flex flex-wrap gap-2">
           {isAdmin && (
-            <button
-              type="button"
-              onClick={handleNewPlan}
+            <Link
+              to="/test-plans/new"
+              state={{ returnTo: '/test-plans' }}
               className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
             >
               New Test Plan
-            </button>
+            </Link>
           )}
         </div>
       </div>

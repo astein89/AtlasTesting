@@ -137,16 +137,8 @@ export function TestPlanOverview() {
   const handleArchiveSelected = async () => {
     if (!planId || selectedToArchive.size === 0) return
     setSubmitting(true)
-    const today = new Date().toISOString().slice(0, 10)
     try {
-      await Promise.all(
-        [...selectedToArchive].map((testId) => {
-          const test = tests.find((t) => t.id === testId)
-          const payload: { archived: boolean; endDate?: string } = { archived: true }
-          if (test && !test.endDate) payload.endDate = today
-          return updateTest(planId, testId, payload)
-        })
-      )
+      await Promise.all([...selectedToArchive].map((testId) => updateTest(planId, testId, { archived: true })))
       setArchiveModalOpen(false)
       setSelectedToArchive(new Set())
       loadTests()
@@ -157,15 +149,11 @@ export function TestPlanOverview() {
     }
   }
 
-  const handleRestoreTest = async (test: Test) => {
+  const handleRestoreTest = async (testId: string) => {
     if (!planId) return
-    const ok = await showConfirm(
-      `Restore test "${test.name}"? It will appear in the main test list again.`
-    )
-    if (!ok) return
-    setRestoringTestId(test.id)
+    setRestoringTestId(testId)
     try {
-      await updateTest(planId, test.id, { archived: false })
+      await updateTest(planId, testId, { archived: false })
       setArchiveModalOpen(false)
       setSelectedToArchive(new Set())
       loadTests()
@@ -180,11 +168,8 @@ export function TestPlanOverview() {
     if (!planId) return
     const ok = await showConfirm(`Archive test "${test.name}"? It will be hidden from the main list. You can restore it from the Archive modal.`)
     if (!ok) return
-    const today = new Date().toISOString().slice(0, 10)
-    const payload: { archived: boolean; endDate?: string } = { archived: true }
-    if (!test.endDate) payload.endDate = today
     try {
-      await updateTest(planId, test.id, payload)
+      await updateTest(planId, test.id, { archived: true })
       loadTests()
     } catch {
       showAlert('Failed to archive test.')
@@ -278,24 +263,13 @@ export function TestPlanOverview() {
                     >
                       Edit
                     </button>
-                    {archived ? (
-                      <button
-                        type="button"
-                        onClick={() => handleRestoreTest(t)}
-                        disabled={restoringTestId === t.id}
-                        className="min-h-[44px] rounded border border-amber-500/50 px-3 py-2 text-sm text-amber-600 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
-                      >
-                        {restoringTestId === t.id ? 'Restoring…' : 'Restore'}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleArchiveTest(t)}
-                        className="min-h-[44px] rounded border border-amber-500/50 px-3 py-2 text-sm text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                      >
-                        Archive
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleArchiveTest(t)}
+                      className="min-h-[44px] rounded border border-amber-500/50 px-3 py-2 text-sm text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                    >
+                      Archive
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteTest(t)}
@@ -413,24 +387,13 @@ export function TestPlanOverview() {
                           >
                             Edit
                           </button>
-                          {archived ? (
-                            <button
-                              type="button"
-                              onClick={() => handleRestoreTest(t)}
-                              disabled={restoringTestId === t.id}
-                              className="shrink-0 rounded border border-amber-500/50 px-3 py-1.5 text-sm text-amber-600 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
-                            >
-                              {restoringTestId === t.id ? 'Restoring…' : 'Restore'}
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleArchiveTest(t)}
-                              className="shrink-0 rounded border border-amber-500/50 px-3 py-1.5 text-sm text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                            >
-                              Archive
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleArchiveTest(t)}
+                            className="shrink-0 rounded border border-amber-500/50 px-3 py-1.5 text-sm text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                          >
+                            Archive
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteTest(t)}
@@ -489,24 +452,26 @@ export function TestPlanOverview() {
             Export all plan data
           </button>
           {isAdmin && (
-            <button
-              type="button"
-              onClick={() => setArchiveModalOpen(true)}
-              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
-            >
-              Archive
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setArchiveModalOpen(true)}
+                className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
+              >
+                Archive
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddTestStart(new Date().toISOString().slice(0, 10))
+                  setAddTestOpen(true)
+                }}
+                className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
+              >
+                Add new test
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setAddTestStart(new Date().toISOString().slice(0, 10))
-              setAddTestOpen(true)
-            }}
-            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
-          >
-            Add new test
-          </button>
         </div>
       </div>
 
@@ -756,7 +721,12 @@ export function TestPlanOverview() {
                           </Link>
                           <button
                             type="button"
-                            onClick={() => handleRestoreTest(t)}
+                            onClick={async () => {
+                              const ok = await showConfirm(
+                                `Restore test "${t.name}"? It will appear in the main test list again.`
+                              )
+                              if (ok) handleRestoreTest(t.id)
+                            }}
                             disabled={restoringTestId !== null}
                             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background disabled:opacity-50"
                           >

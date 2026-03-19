@@ -13,7 +13,6 @@ function toFieldJson(r: {
   label: string
   type: string
   config: string | null
-  owner_test_plan_id?: string | null
   created_at?: string | null
   updated_at?: string | null
   created_by?: string | null
@@ -27,7 +26,6 @@ function toFieldJson(r: {
     label: r.label,
     type: r.type,
     config: r.config ? JSON.parse(r.config) : {},
-    ownerTestPlanId: r.owner_test_plan_id ?? null,
     createdAt: r.created_at ?? null,
     updatedAt: r.updated_at ?? null,
     createdBy: r.created_by ?? null,
@@ -93,13 +91,7 @@ router.get('/:id', (req, res) => {
 })
 
 router.post('/', requireAdmin, (req: AuthRequest, res) => {
-  const { key, label, type, config, ownerTestPlanId } = req.body as {
-    key?: string
-    label?: string
-    type?: string
-    config?: unknown
-    ownerTestPlanId?: string | null
-  }
+  const { key, label, type, config } = req.body
   if (!key || !label || !type) {
     return res.status(400).json({ error: 'key, label, type required' })
   }
@@ -111,17 +103,9 @@ router.post('/', requireAdmin, (req: AuthRequest, res) => {
 
   const id = uuidv4()
   const createdBy = req.user?.id ?? null
-  const ownerPlanId =
-    typeof ownerTestPlanId === 'string' && ownerTestPlanId.trim() ? ownerTestPlanId.trim() : null
-  if (ownerPlanId) {
-    const hasPlan = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(ownerPlanId)
-    if (!hasPlan) {
-      return res.status(400).json({ error: 'ownerTestPlanId does not match an existing test plan' })
-    }
-  }
   db.prepare(
-    'INSERT INTO fields (id, key, label, type, config, created_by, owner_test_plan_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, key, label, type, config ? JSON.stringify(config) : null, createdBy, ownerPlanId)
+    'INSERT INTO fields (id, key, label, type, config, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, key, label, type, config ? JSON.stringify(config) : null, createdBy)
 
   const row = db
     .prepare(
@@ -136,17 +120,11 @@ router.post('/', requireAdmin, (req: AuthRequest, res) => {
 })
 
 router.put('/:id', requireAdmin, (req: AuthRequest, res) => {
-  const { key: newKey, label, type, config, ownerTestPlanId } = req.body as {
-    key?: string
-    label?: string
-    type?: string
-    config?: unknown
-    ownerTestPlanId?: string | null
-  }
+  const { key: newKey, label, type, config } = req.body
   const { id } = req.params
 
-  const existing = db.prepare('SELECT id, key, owner_test_plan_id FROM fields WHERE id = ?').get(id) as
-    | { id: string; key: string; owner_test_plan_id: string | null }
+  const existing = db.prepare('SELECT id, key FROM fields WHERE id = ?').get(id) as
+    | { id: string; key: string }
     | undefined
   if (!existing) return res.status(404).json({ error: 'Field not found' })
 
@@ -222,18 +200,6 @@ router.put('/:id', requireAdmin, (req: AuthRequest, res) => {
   if (newKey !== undefined) {
     updates.push('key = ?')
     values.push(newKeyTrimmed ?? newKey)
-  }
-  if (ownerTestPlanId !== undefined) {
-    const ownerPlanId =
-      typeof ownerTestPlanId === 'string' && ownerTestPlanId.trim() ? ownerTestPlanId.trim() : null
-    if (ownerPlanId) {
-      const hasPlan = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(ownerPlanId)
-      if (!hasPlan) {
-        return res.status(400).json({ error: 'ownerTestPlanId does not match an existing test plan' })
-      }
-    }
-    updates.push('owner_test_plan_id = ?')
-    values.push(ownerPlanId)
   }
   if (label !== undefined) {
     updates.push('label = ?')
