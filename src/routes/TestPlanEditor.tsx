@@ -22,6 +22,7 @@ export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const params = new URLSearchParams(location.search)
   const navState = (location.state as { returnTo?: string; createdInline?: boolean; newFieldId?: string } | null) ?? {}
   const returnTo = navState.returnTo
   const [createdInline] = useState<boolean>(navState.createdInline === true)
@@ -116,7 +117,7 @@ export function TestPlanEditor() {
   // wire the new field into the plan layout. Guard against React StrictMode
   // double-invoking effects in dev by tracking the last handled id.
   useEffect(() => {
-    const newFieldId = navState.newFieldId
+    const newFieldId = navState.newFieldId || params.get('newFieldId') || undefined
     if (!newFieldId) return
     if (handledNewFieldIdRef.current === newFieldId) return
     handledNewFieldIdRef.current = newFieldId
@@ -149,11 +150,8 @@ export function TestPlanEditor() {
             ? getFormulaReferencedFieldKeys(field.config?.formula ?? '')
             : []
         if (refKeys.length === 0) {
+          // Simple path: just add the new field to the plan's field list.
           setFieldIds((ids) => (ids.includes(newFieldId) ? ids : [...ids, newFieldId]))
-          setFormLayoutOrder((order) =>
-            getFieldIdsFromOrder(order).includes(newFieldId) ? order : [...order, formatFieldEntry(newFieldId, 3)]
-          )
-          setShowCreateField(false)
           resolve()
           return
         }
@@ -164,28 +162,16 @@ export function TestPlanEditor() {
             .filter(Boolean) as string[]
           setFieldIds((ids) => {
             const missing = missingRefIds.filter((id) => !ids.includes(id))
-            const next = ids.includes(newFieldId) ? [...ids, ...missing] : [...ids, ...missing, newFieldId]
-            return next
+            // Ensure referenced fields and the new field are available in the plan,
+            // but let the user place them in the form layout manually.
+            const base = ids.includes(newFieldId) ? ids : [...ids, newFieldId]
+            return [...base, ...missing]
           })
-          setFormLayoutOrder((order) => {
-            const currentIds = getFieldIdsFromOrder(order)
-            const missing = missingRefIds.filter((id) => !currentIds.includes(id))
-            return [
-              ...order,
-              ...missing.map((id) => formatFieldEntry(id, 3)),
-              ...(currentIds.includes(newFieldId) ? [] : [formatFieldEntry(newFieldId, 3)]),
-            ]
-          })
-          setShowCreateField(false)
           resolve()
         })
       })
       .catch(() => {
         setFieldIds((ids) => (ids.includes(newFieldId) ? ids : [...ids, newFieldId]))
-        setFormLayoutOrder((order) =>
-          getFieldIdsFromOrder(order).includes(newFieldId) ? order : [...order, formatFieldEntry(newFieldId, 3)]
-        )
-        setShowCreateField(false)
         resolve()
       })
     })

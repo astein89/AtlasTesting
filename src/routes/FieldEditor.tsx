@@ -370,7 +370,9 @@ export function FieldEditor() {
           ownerTestPlanId: ownerPlanId,
         })
         if (navState.fromPlan && navState.returnTo) {
-          navigate(navState.returnTo, {
+          const url = new URL(navState.returnTo, window.location.origin)
+          url.searchParams.set('newFieldId', created.id)
+          navigate(url.pathname + url.search, {
             replace: true,
             state: {
               returnTo: navState.returnTo.startsWith('/test-plans')

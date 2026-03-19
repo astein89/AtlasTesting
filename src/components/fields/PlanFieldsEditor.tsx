@@ -315,17 +315,22 @@ export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
     return { visible, hidden }
   }
 
-  const availableFields = allFields.filter((f) => {
-    // Do not allow adding a plan-specific field to other plans.
-    if (f.ownerTestPlanId && (!planId || f.ownerTestPlanId !== planId)) return false
-    if (fieldIdsInOrder.includes(f.id)) return false
-    if (search === '') return true
-    const q = search.toLowerCase()
-    return (
-      f.key.toLowerCase().includes(q) ||
-      f.label.toLowerCase().includes(q)
-    )
-  })
+  const availableFields = allFields
+    .filter((f) => {
+      // Do not allow adding a plan-specific field to other plans.
+      if (f.ownerTestPlanId && (!planId || f.ownerTestPlanId !== planId)) return false
+      if (fieldIdsInOrder.includes(f.id)) return false
+      if (search === '') return true
+      const q = search.toLowerCase()
+      return f.key.toLowerCase().includes(q) || f.label.toLowerCase().includes(q)
+    })
+    .sort((a, b) => {
+      if (!planId) return 0
+      const aPlan = a.ownerTestPlanId === planId
+      const bPlan = b.ownerTestPlanId === planId
+      if (aPlan === bPlan) return 0
+      return aPlan ? -1 : 1
+    })
 
   const handleDndDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
