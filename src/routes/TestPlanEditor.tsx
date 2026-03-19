@@ -120,11 +120,14 @@ export function TestPlanEditor() {
     if (!newFieldId) return
     if (handledNewFieldIdRef.current === newFieldId) return
     handledNewFieldIdRef.current = newFieldId
-    handleCreateField(newFieldId)
-    // Clear newFieldId from navigation state to avoid re-adding on refresh.
-    navigate(location.pathname, {
-      replace: true,
-      state: { returnTo, createdInline },
+    // Clear newFieldId from navigation state only after wiring completes.
+    // In dev/StrictMode, effects can be mounted/unmounted quickly; clearing too early can
+    // prevent the async setState from landing on the instance that remains.
+    void handleCreateField(newFieldId).finally(() => {
+      navigate(location.pathname, {
+        replace: true,
+        state: { returnTo, createdInline },
+      })
     })
   }, [navState.newFieldId])
 
@@ -135,7 +138,8 @@ export function TestPlanEditor() {
     }
   }, [nameError])
 
-  const handleCreateField = (newFieldId: string) => {
+  const handleCreateField = (newFieldId: string): Promise<void> => {
+    return new Promise((resolve) => {
     api
       .get<DataField>(`/fields/${newFieldId}`)
       .then((fieldResp) => {
@@ -145,9 +149,12 @@ export function TestPlanEditor() {
             ? getFormulaReferencedFieldKeys(field.config?.formula ?? '')
             : []
         if (refKeys.length === 0) {
-          setFieldIds((ids) => [...ids, newFieldId])
-          setFormLayoutOrder((order) => [...order, formatFieldEntry(newFieldId, 3)])
+          setFieldIds((ids) => (ids.includes(newFieldId) ? ids : [...ids, newFieldId]))
+          setFormLayoutOrder((order) =>
+            getFieldIdsFromOrder(order).includes(newFieldId) ? order : [...order, formatFieldEntry(newFieldId, 3)]
+          )
           setShowCreateField(false)
+          resolve()
           return
         }
         return api.get<DataField[]>('/fields').then((allResp) => {
@@ -157,7 +164,8 @@ export function TestPlanEditor() {
             .filter(Boolean) as string[]
           setFieldIds((ids) => {
             const missing = missingRefIds.filter((id) => !ids.includes(id))
-            return [...ids, ...missing, newFieldId]
+            const next = ids.includes(newFieldId) ? [...ids, ...missing] : [...ids, ...missing, newFieldId]
+            return next
           })
           setFormLayoutOrder((order) => {
             const currentIds = getFieldIdsFromOrder(order)
@@ -165,17 +173,22 @@ export function TestPlanEditor() {
             return [
               ...order,
               ...missing.map((id) => formatFieldEntry(id, 3)),
-              formatFieldEntry(newFieldId, 3),
+              ...(currentIds.includes(newFieldId) ? [] : [formatFieldEntry(newFieldId, 3)]),
             ]
           })
           setShowCreateField(false)
+          resolve()
         })
       })
       .catch(() => {
-        setFieldIds((ids) => [...ids, newFieldId])
-        setFormLayoutOrder((order) => [...order, formatFieldEntry(newFieldId, 3)])
+        setFieldIds((ids) => (ids.includes(newFieldId) ? ids : [...ids, newFieldId]))
+        setFormLayoutOrder((order) =>
+          getFieldIdsFromOrder(order).includes(newFieldId) ? order : [...order, formatFieldEntry(newFieldId, 3)]
+        )
         setShowCreateField(false)
+        resolve()
       })
+    })
   }
 
   const handleFormLayoutChange = (order: string[]) => {

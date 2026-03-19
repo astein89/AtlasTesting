@@ -147,6 +147,8 @@ export function FieldEditor() {
   const [formulaModalOpen, setFormulaModalOpen] = useState(false)
   const [formulaDraft, setFormulaDraft] = useState('')
   const [formulaHelpOpen, setFormulaHelpOpen] = useState(false)
+  const [formulaModalContext, setFormulaModalContext] = useState<'field' | 'status' | 'conditionalFormatting' | null>(null)
+  const [cfFormulaEditingRuleId, setCfFormulaEditingRuleId] = useState<string | null>(null)
   const [cfRules, setCfRules] = useState<ConditionalFormatRule[]>([])
   const [cfHelpOpen, setCfHelpOpen] = useState(false)
   const [cfCfPopover, setCfCfPopover] = useState<{ ruleId: string; kind: 'fill' | 'text' } | null>(null)
@@ -1147,7 +1149,12 @@ export function FieldEditor() {
                   type="button"
                   onClick={() => {
                     setFormulaDraft((watch('config') as { formula?: string })?.formula ?? '')
+                    setFormulaModalContext('status')
+                    setCfFormulaEditingRuleId(null)
                     setFormulaModalOpen(true)
+                    setFormulaHelpOpen(false)
+                    setFormulaTestData({})
+                    setFormulaTestResult(undefined)
                     api.get<DataField[]>('/fields').then((r) => {
                       const currentKey = getValues('key')
                       setAvailableFieldsForFormula(r.data.filter((f) => f.key !== currentKey))
@@ -1178,7 +1185,12 @@ export function FieldEditor() {
                   type="button"
                   onClick={() => {
                     setFormulaDraft((watch('config') as { formula?: string })?.formula ?? '')
+                    setFormulaModalContext('field')
+                    setCfFormulaEditingRuleId(null)
                     setFormulaModalOpen(true)
+                    setFormulaHelpOpen(false)
+                    setFormulaTestData({})
+                    setFormulaTestResult(undefined)
                     api.get<DataField[]>('/fields').then((r) => {
                       const currentKey = getValues('key')
                       setAvailableFieldsForFormula(r.data.filter((f) => f.key !== currentKey))
@@ -1588,7 +1600,14 @@ export function FieldEditor() {
                   <div className="flex justify-end gap-2 p-4 border-t border-border">
                     <button
                       type="button"
-                      onClick={() => { setFormulaHelpOpen(false); setFormulaTestData({}); setFormulaTestResult(undefined); setFormulaModalOpen(false) }}
+                      onClick={() => {
+                        setFormulaHelpOpen(false)
+                        setFormulaTestData({})
+                        setFormulaTestResult(undefined)
+                        setFormulaModalOpen(false)
+                        setFormulaModalContext(null)
+                        setCfFormulaEditingRuleId(null)
+                      }}
                       className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
                     >
                       Cancel
@@ -1599,8 +1618,14 @@ export function FieldEditor() {
                         setFormulaHelpOpen(false)
                         setFormulaTestData({})
                         setFormulaTestResult(undefined)
-                        setValue('config', { ...getValues('config'), formula: formulaDraft })
+                        if (formulaModalContext === 'conditionalFormatting' && cfFormulaEditingRuleId) {
+                          setCfRules((prev) => prev.map((r) => (r.id === cfFormulaEditingRuleId ? { ...r, formula: formulaDraft } : r)))
+                        } else {
+                          setValue('config', { ...getValues('config'), formula: formulaDraft })
+                        }
                         setFormulaModalOpen(false)
+                        setFormulaModalContext(null)
+                        setCfFormulaEditingRuleId(null)
                       }}
                       className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
                       disabled={!!formulaValidationError}
@@ -1879,15 +1904,27 @@ export function FieldEditor() {
                   )}
                 </div>
                 {rule.mode === 'formula' ? (
-                  <input
-                    type="text"
-                    value={rule.formula ?? ''}
-                    onChange={(e) =>
-                      setCfRules((prev) => prev.map((r, i) => (i === idx ? { ...r, formula: e.target.value } : r)))
-                    }
-                    className="w-full rounded border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
-                    placeholder='e.g. [Result] = "Fail" OR [Score] < 60'
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <pre className="min-h-9 flex-1 rounded-lg border border-border bg-muted/30 px-3 py-1 font-mono text-xs text-foreground whitespace-pre-wrap break-all">
+                      {(rule.formula ?? '').trim().length > 0 ? rule.formula : '(no formula)'}
+                    </pre>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormulaModalContext('conditionalFormatting')
+                        setCfFormulaEditingRuleId(rule.id)
+                        setFormulaDraft(rule.formula ?? '')
+                        setFormulaHelpOpen(false)
+                        setFormulaTestData({})
+                        setFormulaTestResult(undefined)
+                        setFormulaModalOpen(true)
+                        api.get<DataField[]>('/fields').then((r) => setAvailableFieldsForFormula(r.data)).catch(() => setAvailableFieldsForFormula([]))
+                      }}
+                      className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+                    >
+                      Edit formula
+                    </button>
+                  </div>
                 ) : rule.mode === 'standard' ? (
                   <div className="flex flex-wrap items-center gap-2">
                     <select
