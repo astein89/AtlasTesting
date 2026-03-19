@@ -3,7 +3,7 @@ import initSqlJs from 'sql.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
-import { initSchema } from './schema.js'
+import { initSchema, type DbWrapper } from './schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // Dev (tsx): __dirname is server/db -> 2 levels up to project root
@@ -71,11 +71,19 @@ function createDbWrapper() {
       sqlDb.run(sql)
       save()
     },
+    /** Used by schema migrations (PRAGMA, etc.). Must not call save() — read-only. */
+    execQuery(sql: string): import('sql.js').QueryExecResult[] {
+      const out = sqlDb.exec(sql)
+      return out ?? []
+    },
   }
 }
 
 async function init() {
   const SQL = await initSqlJs()
+  const resolvedDb = path.resolve(dbPath)
+  // eslint-disable-next-line no-console
+  console.log(`[db] atlas.db path: ${resolvedDb}`)
   if (fs.existsSync(dbPath)) {
     const buf = fs.readFileSync(dbPath)
     sqlDb = new SQL.Database(buf)

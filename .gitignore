@@ -1,6 +1,8 @@
 node_modules
 dist
-atlas.db
+# SQLite DBs (may contain credentials, test data, app state — do not commit)
+*.db*
+db_backup
 uploads
 .env
 *.log

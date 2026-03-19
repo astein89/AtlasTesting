@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthGuard } from './components/auth/AuthGuard'
 import { AdminGuard } from './components/auth/AdminGuard'
@@ -6,20 +6,23 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { Layout } from './components/layout/Layout'
 import { Login } from './routes/Login'
 import { Dashboard } from './routes/Dashboard'
-import { FieldsList } from './routes/FieldsList'
-import { FieldEditor } from './routes/FieldEditor'
-import { TestPlansList } from './routes/TestPlansList'
-import { TestPlanOverview } from './routes/TestPlanOverview'
-import { TestPlanDataRedirect } from './routes/TestPlanDataRedirect'
-import { TestPlanEditor } from './routes/TestPlanEditor'
-import { ResultsList } from './routes/ResultsList'
-import { ResultDetail } from './routes/ResultDetail'
-import { Users } from './routes/Users'
-import { DbTablesViewer } from './routes/DbTablesViewer'
-import { Settings } from './routes/Settings'
 import { useAuthStore } from './store/authStore'
 import { api } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
+import { DateTimeConfigProvider } from './contexts/DateTimeConfigContext'
+import { ConditionalFormatPresetsProvider } from './contexts/ConditionalFormatPresetsContext'
+
+const FieldsList = lazy(() => import('./routes/FieldsList').then((m) => ({ default: m.FieldsList })))
+const FieldEditor = lazy(() => import('./routes/FieldEditor').then((m) => ({ default: m.FieldEditor })))
+const TestPlansList = lazy(() => import('./routes/TestPlansList').then((m) => ({ default: m.TestPlansList })))
+const TestPlanOverview = lazy(() => import('./routes/TestPlanOverview').then((m) => ({ default: m.TestPlanOverview })))
+const TestPlanDataRedirect = lazy(() => import('./routes/TestPlanDataRedirect').then((m) => ({ default: m.TestPlanDataRedirect })))
+const TestPlanEditor = lazy(() => import('./routes/TestPlanEditor').then((m) => ({ default: m.TestPlanEditor })))
+const ResultsList = lazy(() => import('./routes/ResultsList').then((m) => ({ default: m.ResultsList })))
+const ResultDetail = lazy(() => import('./routes/ResultDetail').then((m) => ({ default: m.ResultDetail })))
+const Users = lazy(() => import('./routes/Users').then((m) => ({ default: m.Users })))
+const DbTablesViewer = lazy(() => import('./routes/DbTablesViewer').then((m) => ({ default: m.DbTablesViewer })))
+const Settings = lazy(() => import('./routes/Settings').then((m) => ({ default: m.Settings })))
 
 const REHYDRATE_DELAY_MS = 300
 
@@ -100,13 +103,24 @@ function App() {
   return (
     <AlertConfirmProvider>
       <AuthInit />
-      <Routes>
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+            <span className="text-sm">Loading…</span>
+          </div>
+        }
+      >
+        <Routes>
         <Route path="/login" element={<Login />} />
         <Route
           path="/"
           element={
             <AuthGuard>
-              <Layout />
+              <DateTimeConfigProvider>
+                <ConditionalFormatPresetsProvider>
+                  <Layout />
+                </ConditionalFormatPresetsProvider>
+              </DateTimeConfigProvider>
             </AuthGuard>
           }
         >
@@ -157,6 +171,7 @@ function App() {
         <Route path="tests" element={<Navigate to="/test-plans" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </AlertConfirmProvider>
   )
 }

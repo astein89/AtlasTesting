@@ -1,9 +1,24 @@
 /// <reference path="../sqljs.d.ts" />
 type SqlDb = import('sql.js').Database
 
-function migrateEmailToUsername(db: SqlDb) {
+/** Prepared statement handle (better-sqlite3 style) used by schema migrations. */
+export interface PreparedStatement {
+  run(...params: unknown[]): { changes: number }
+  get(...params: unknown[]): Record<string, string | number | null> | undefined
+  all(...params: unknown[]): Record<string, unknown>[]
+}
+
+/** DB wrapper used by schema (prepare/run/exec/execQuery). */
+export interface DbWrapper {
+  prepare(sql: string): PreparedStatement
+  run(sql: string, params?: unknown[] | unknown): void
+  exec(sql: string): void
+  execQuery(sql: string): import('sql.js').QueryExecResult[]
+}
+
+function migrateEmailToUsername(db: DbWrapper) {
   try {
-    const info = db.exec("PRAGMA table_info(users)")
+    const info = db.execQuery('PRAGMA table_info(users)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const hasEmail = rows.some((r) => r[1] === 'email')
@@ -14,7 +29,20 @@ function migrateEmailToUsername(db: SqlDb) {
   }
 }
 
-export function initSchema(db: SqlDb) {
+function migrateFieldsOwnerTestPlanId(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(fields)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasOwner = rows.some((r) => r[1] === 'owner_test_plan_id')
+    if (hasOwner) return
+    db.run('ALTER TABLE fields ADD COLUMN owner_test_plan_id TEXT')
+  } catch {
+    // Ignore migration errors (older DBs may not support ALTER in some environments)
+  }
+}
+
+export function initSchema(db: DbWrapper) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -68,6 +96,7 @@ export function initSchema(db: SqlDb) {
     );
   `)
   migrateEmailToUsername(db)
+  migrateFieldsOwnerTestPlanId(db)
   migrateTestsToPlans(db)
   migratePlanFieldIds(db)
   migratePlanFieldLayout(db)
@@ -99,7 +128,7 @@ export function initSchema(db: SqlDb) {
   `)
 }
 
-function migrateRecordHistory(db: SqlDb) {
+function migrateRecordHistory(db: DbWrapper) {
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS record_history (
@@ -119,7 +148,7 @@ function migrateRecordHistory(db: SqlDb) {
   }
 }
 
-function migrateRecordsToPlanDirect(db: SqlDb) {
+function migrateRecordsToPlanDirect(db: DbWrapper) {
   try {
     const trRows = db.prepare('PRAGMA table_info(test_runs)').all() as Array<{ name: string }>
     const hasTestId = trRows.some((r) => r.name === 'test_id')
@@ -155,9 +184,9 @@ function migrateRecordsToPlanDirect(db: SqlDb) {
   }
 }
 
-function migratePlanConstraints(db: SqlDb) {
+function migratePlanConstraints(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const hasConstraints = rows.some((r) => r[1] === 'constraints')
@@ -168,9 +197,9 @@ function migratePlanConstraints(db: SqlDb) {
   }
 }
 
-function migratePlanShortDescription(db: SqlDb) {
+function migratePlanShortDescription(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const hasShortDesc = rows.some((r) => r[1] === 'short_description')
@@ -181,9 +210,9 @@ function migratePlanShortDescription(db: SqlDb) {
   }
 }
 
-function migratePlanFieldLayout(db: SqlDb) {
+function migratePlanFieldLayout(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const hasFieldLayout = rows.some((r) => r[1] === 'field_layout')
@@ -194,9 +223,9 @@ function migratePlanFieldLayout(db: SqlDb) {
   }
 }
 
-function migratePlanFormLayout(db: SqlDb) {
+function migratePlanFormLayout(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const hasFormLayout = rows.some((r) => r[1] === 'form_layout')
@@ -207,9 +236,9 @@ function migratePlanFormLayout(db: SqlDb) {
   }
 }
 
-function migratePlanDefaultSortOrder(db: SqlDb) {
+function migratePlanDefaultSortOrder(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const has = rows.some((r) => r[1] === 'default_sort_order')
@@ -220,9 +249,9 @@ function migratePlanDefaultSortOrder(db: SqlDb) {
   }
 }
 
-function migratePlanDefaultVisibleColumns(db: SqlDb) {
+function migratePlanDefaultVisibleColumns(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const has = rows.some((r) => r[1] === 'default_visible_columns')
@@ -233,9 +262,9 @@ function migratePlanDefaultVisibleColumns(db: SqlDb) {
   }
 }
 
-function migratePlanFieldDefaults(db: SqlDb) {
+function migratePlanFieldDefaults(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const has = rows.some((r) => r[1] === 'field_defaults')
@@ -246,9 +275,9 @@ function migratePlanFieldDefaults(db: SqlDb) {
   }
 }
 
-function migratePlanKeyField(db: SqlDb) {
+function migratePlanKeyField(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const has = rows.some((r) => r[1] === 'key_field')
@@ -259,9 +288,9 @@ function migratePlanKeyField(db: SqlDb) {
   }
 }
 
-function migratePlanHiddenFieldIds(db: SqlDb) {
+function migratePlanHiddenFieldIds(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const has = rows.some((r) => r[1] === 'hidden_field_ids')
@@ -272,9 +301,9 @@ function migratePlanHiddenFieldIds(db: SqlDb) {
   }
 }
 
-function migratePlanRequiredFieldIds(db: SqlDb) {
+function migratePlanRequiredFieldIds(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const has = rows.some((r) => r[1] === 'required_field_ids')
@@ -285,9 +314,9 @@ function migratePlanRequiredFieldIds(db: SqlDb) {
   }
 }
 
-function migratePlanStartEndDate(db: SqlDb) {
+function migratePlanStartEndDate(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const cols = rows.map((r) => r[1] as string)
@@ -302,9 +331,9 @@ function migratePlanStartEndDate(db: SqlDb) {
   }
 }
 
-function migratePlanArchivedRuns(db: SqlDb) {
+function migratePlanArchivedRuns(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const cols = rows.map((r) => r[1] as string)
@@ -316,9 +345,9 @@ function migratePlanArchivedRuns(db: SqlDb) {
   }
 }
 
-function migrateTestRunsRunId(db: SqlDb) {
+function migrateTestRunsRunId(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_runs)')
+    const info = db.execQuery('PRAGMA table_info(test_runs)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const cols = rows.map((r) => r[1] as string)
@@ -331,7 +360,7 @@ function migrateTestRunsRunId(db: SqlDb) {
 }
 
 /** Create tests table (first-class tests under a plan), add test_id to test_runs, backfill one Legacy test per plan. */
-function migrateTestsTableAndBackfill(db: SqlDb) {
+function migrateTestsTableAndBackfill(db: DbWrapper) {
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS tests (
@@ -350,53 +379,45 @@ function migrateTestsTableAndBackfill(db: SqlDb) {
     if (!trCols.includes('test_id')) {
       db.run('ALTER TABLE test_runs ADD COLUMN test_id TEXT REFERENCES tests(id)')
     }
-    // Ensure every plan that has records has a Legacy test and backfill records to it
-    const planIdsWithRecords = db.prepare('SELECT DISTINCT test_plan_id FROM test_runs').all() as Array<{ test_plan_id: string }>
+    // Ensure every legacy plan that already has records gets a Legacy test and backfill records to it.
+    // New plans created after this migration should manage their own tests explicitly.
+    const planIdsWithRecords = db
+      .prepare('SELECT DISTINCT test_plan_id FROM test_runs')
+      .all() as Array<{ test_plan_id: string }>
     for (const { test_plan_id: planId } of planIdsWithRecords) {
       const legacyId = `legacy-${planId}`
-      const existing = db.prepare('SELECT id FROM tests WHERE id = ?').get(legacyId) as { id: string } | undefined
+      const existing = db
+        .prepare('SELECT id FROM tests WHERE id = ?')
+        .get(legacyId) as { id: string } | undefined
       if (!existing) {
         db.prepare(
           'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
         ).run(legacyId, planId, 'Legacy')
       }
-      db.prepare('UPDATE test_runs SET test_id = ? WHERE test_plan_id = ? AND (test_id IS NULL OR test_id = \'\')').run(legacyId, planId)
-    }
-    // Ensure every plan has at least one test (so overview always shows something)
-    const allPlanIds = db.prepare('SELECT id FROM test_plans').all() as Array<{ id: string }>
-    for (const { id: planId } of allPlanIds) {
-      const legacyId = `legacy-${planId}`
-      const hasTest = db.prepare('SELECT 1 FROM tests WHERE test_plan_id = ? LIMIT 1').get(planId)
-      if (!hasTest) {
-        db.prepare(
-          'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, NULL, NULL, 0)'
-        ).run(legacyId, planId, 'Legacy')
-      }
+      db.prepare(
+        'UPDATE test_runs SET test_id = ? WHERE test_plan_id = ? AND (test_id IS NULL OR test_id = \'\')'
+      ).run(legacyId, planId)
     }
   } catch {
     // Ignore
   }
 }
 
-function migratePlanFieldIds(db: SqlDb) {
+function migratePlanFieldIds(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasFieldIds = rows.some((r) => r[1] === 'field_ids')
+    const planInfo = db.prepare('PRAGMA table_info(test_plans)').all() as Array<{ name: string }>
+    const hasFieldIds = planInfo.some((r) => r.name === 'field_ids')
     if (hasFieldIds) return
     db.run('ALTER TABLE test_plans ADD COLUMN field_ids TEXT')
-    const tablesInfo = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='tests'")
-    if (!tablesInfo.length || !(tablesInfo[0].values as unknown[][])?.length) return
-    const stmt = db.prepare('SELECT test_plan_id, field_ids FROM tests')
+    const tablesList = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tests'").all() as Array<{ name: string }>
+    if (!tablesList.length) return
+    const rowsList = db.prepare('SELECT test_plan_id, field_ids FROM tests').all() as Array<{ test_plan_id: string; field_ids: string }>
     const planFields = new Map<string, string>()
-    while (stmt.step()) {
-      const row = stmt.getAsObject() as { test_plan_id: string; field_ids: string }
+    for (const row of rowsList) {
       if (!planFields.has(row.test_plan_id)) {
         planFields.set(row.test_plan_id, row.field_ids)
       }
     }
-    stmt.free()
     for (const [planId, fieldIds] of planFields) {
       db.run('UPDATE test_plans SET field_ids = ? WHERE id = ?', [fieldIds, planId])
     }
@@ -405,7 +426,7 @@ function migratePlanFieldIds(db: SqlDb) {
   }
 }
 
-function migrateUserPreferences(db: SqlDb) {
+function migrateUserPreferences(db: DbWrapper) {
   try {
     db.run(`
       CREATE TABLE IF NOT EXISTS user_preferences (
@@ -421,9 +442,9 @@ function migrateUserPreferences(db: SqlDb) {
   }
 }
 
-function migrateFieldsAudit(db: SqlDb) {
+function migrateFieldsAudit(db: DbWrapper) {
   try {
-    const info = db.exec('PRAGMA table_info(fields)')
+    const info = db.execQuery('PRAGMA table_info(fields)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const cols = rows.map((r) => r[1] as string)
@@ -441,7 +462,7 @@ function migrateFieldsAudit(db: SqlDb) {
   }
 }
 
-function migrateTestPlansAndTestsUpdatedAt(db: SqlDb) {
+function migrateTestPlansAndTestsUpdatedAt(db: DbWrapper) {
   try {
     const planRows = db.prepare('PRAGMA table_info(test_plans)').all() as Array<{ name: string }>
     if (!planRows.some((r) => r.name === 'updated_at')) {
@@ -456,10 +477,10 @@ function migrateTestPlansAndTestsUpdatedAt(db: SqlDb) {
   }
 }
 
-function migrateTestsToPlans(db: SqlDb) {
+function migrateTestsToPlans(db: DbWrapper) {
   try {
     db.run('CREATE TABLE IF NOT EXISTS test_plans (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT DEFAULT (datetime(\'now\')))')
-    const info = db.exec('PRAGMA table_info(tests)')
+    const info = db.execQuery('PRAGMA table_info(tests)')
     if (!info.length || !info[0].values) return
     const rows = info[0].values as unknown[][]
     const hasPlanId = rows.some((r) => r[1] === 'test_plan_id')

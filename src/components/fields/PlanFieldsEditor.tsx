@@ -48,6 +48,8 @@ interface PlanFieldsEditorProps {
   fieldDefaults?: Record<string, string | number | boolean | string[]>
   /** Rendered just above the Live preview block */
   renderAbovePreview?: React.ReactNode
+  /** Current plan id; used to highlight plan-specific fields for this plan. */
+  planId?: string
 }
 
 function SortableLayoutItem({
@@ -61,6 +63,7 @@ function SortableLayoutItem({
   hiddenFieldIds,
   onHiddenFieldIdsChange,
   isRequired,
+  planId,
 }: {
   id: string
   index: number
@@ -73,6 +76,7 @@ function SortableLayoutItem({
   onHiddenFieldIdsChange?: (ids: string[]) => void
   /** Whether this field is required; used only for display. */
   isRequired: boolean
+  planId?: string
 }) {
   const { fieldId } = parseFieldEntry(id)
   const isHidden = hiddenFieldIds.includes(fieldId)
@@ -147,6 +151,7 @@ function SortableLayoutItem({
   const { span } = parseFieldEntry(id)
   const field = fieldMap.get(fieldId)
   if (!field) return null
+  const isPlanSpecific = !!planId && field.ownerTestPlanId === planId
 
   const toggleHidden = () => {
     if (!onHiddenFieldIdsChange) return
@@ -180,6 +185,11 @@ function SortableLayoutItem({
         title={field.label}
       >
         {field.label}
+        {isPlanSpecific && (
+          <span className="ml-2 inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
+            Plan
+          </span>
+        )}
       </span>
       {isRequired && (
         <span className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground/70 sm:px-2 sm:py-0.5" title="Required when entering data">
@@ -254,6 +264,7 @@ export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
     onCreateNew,
     fieldDefaults,
     renderAbovePreview,
+    planId,
   } = props
   // Ensure these arrays are always defined so downstream code never sees an undefined variable.
   const hiddenFieldIds = hiddenFieldIdsProp ?? []
@@ -304,13 +315,17 @@ export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
     return { visible, hidden }
   }
 
-  const availableFields = allFields.filter(
-    (f) =>
-      !fieldIdsInOrder.includes(f.id) &&
-      (search === '' ||
-        f.key.toLowerCase().includes(search.toLowerCase()) ||
-        f.label.toLowerCase().includes(search.toLowerCase()))
-  )
+  const availableFields = allFields.filter((f) => {
+    // Do not allow adding a plan-specific field to other plans.
+    if (f.ownerTestPlanId && (!planId || f.ownerTestPlanId !== planId)) return false
+    if (fieldIdsInOrder.includes(f.id)) return false
+    if (search === '') return true
+    const q = search.toLowerCase()
+    return (
+      f.key.toLowerCase().includes(q) ||
+      f.label.toLowerCase().includes(q)
+    )
+  })
 
   const handleDndDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -541,6 +556,7 @@ export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
                           hiddenFieldIds={hiddenFieldIds}
                           onHiddenFieldIdsChange={onHiddenFieldIdsChange}
                           isRequired={(requiredFieldIds ?? []).includes(parseFieldEntry(id).fieldId)}
+                          planId={planId}
                         />
                       </Fragment>
                     ))}
@@ -659,6 +675,11 @@ export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
                         </span>
                         <span className="min-w-0 flex-1 truncate text-xs text-foreground sm:text-base" title={field.label}>
                           {field.label}
+                          {planId && field.ownerTestPlanId === planId && (
+                            <span className="ml-2 inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
+                              Plan
+                            </span>
+                          )}
                         </span>
                         {!itemHidden && (requiredFieldIds ?? []).includes(fieldId) && (
                           <span className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground/70 sm:px-2 sm:py-0.5">
@@ -732,6 +753,11 @@ export function PlanFieldsEditor(props: PlanFieldsEditorProps) {
                     title={f.label}
                   >
                     {f.label}
+                    {planId && f.ownerTestPlanId === planId && (
+                      <span className="ml-2 inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
+                        Plan
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}

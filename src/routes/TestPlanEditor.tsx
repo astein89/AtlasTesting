@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -15,17 +15,20 @@ import {
 } from '../utils/formLayout'
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
-import type { DataField, TestPlan } from '../types'
+import type { DataField, TestPlan, TimerValue } from '../types'
 import { getStatusOptions } from '../types'
 
 export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
+  const navState = (location.state as { returnTo?: string; createdInline?: boolean; newFieldId?: string } | null) ?? {}
+  const returnTo = navState.returnTo
+  const [createdInline] = useState<boolean>(navState.createdInline === true)
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const isNew = !planId
   const [name, setName] = useState('')
+  const [nameError, setNameError] = useState<string | null>(null)
   const [description, setDescription] = useState('')
   const [testPlan, setTestPlan] = useState('')
   const [constraints, setConstraints] = useState('')
@@ -34,16 +37,19 @@ export function TestPlanEditor() {
   const [defaultSortOrder, setDefaultSortOrder] = useState<Array<{ key: string; dir: 'asc' | 'desc' }>>([
     { key: 'date', dir: 'asc' },
   ])
-  const [fieldDefaults, setFieldDefaults] = useState<Record<string, string | number | boolean | string[]>>({})
+  const [fieldDefaults, setFieldDefaults] = useState<
+    Record<string, string | number | boolean | string[] | TimerValue>
+  >({})
   const [keyField, setKeyField] = useState<string>('')
   const [hiddenFieldIds, setHiddenFieldIds] = useState<string[]>([])
   const [defaultVisibleColumnIds, setDefaultVisibleColumnIds] = useState<string[]>([])
   const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
   const [planFields, setPlanFields] = useState<DataField[]>([])
-  const [showCreateField, setShowCreateField] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
   const { showAlert, showConfirm } = useAlertConfirm()
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
+  const handledNewFieldIdRef = useRef<string | null>(null)
 
   /** Move entries for hidden fields to the end of the form layout order. */
   function moveHiddenFieldsToEnd(order: string[], hiddenIds: string[]): string[] {
@@ -69,34 +75,65 @@ export function TestPlanEditor() {
   }
 
   useEffect(() => {
-    if (!isNew && planId) {
-      api
-        .get<TestPlan>(`/test-plans/${planId}`)
-        .then((r) => {
-          setName(r.data.name)
-          setDescription(r.data.description || '')
-          setTestPlan(r.data.testPlan || '')
-          setConstraints(r.data.constraints || '')
-          setFieldIds(r.data.fieldIds || [])
-          const order =
-            Array.isArray(r.data.formLayoutOrder) && r.data.formLayoutOrder.length > 0
-              ? r.data.formLayoutOrder
-              : r.data.fieldIds || []
-          const hiddenIds = r.data.hiddenFieldIds ?? []
-          setFormLayoutOrder(moveHiddenFieldsToEnd(order, hiddenIds))
-          setDefaultSortOrder(
-            r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
-          )
-          setFieldDefaults(r.data.fieldDefaults && typeof r.data.fieldDefaults === 'object' ? r.data.fieldDefaults : {})
-          setKeyField(r.data.keyField ?? '')
-          setHiddenFieldIds(hiddenIds)
-          setRequiredFieldIds(r.data.requiredFieldIds ?? [])
-          setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
-        })
-        .catch(() => navigate('/test-plans'))
-        .finally(() => setLoading(false))
+    if (!planId) return
+    api
+      .get<TestPlan>(`/test-plans/${planId}`)
+      .then((r) => {
+        setName(r.data.name)
+        setDescription(r.data.description || '')
+        setTestPlan(r.data.testPlan || '')
+        setConstraints(r.data.constraints || '')
+        setFieldIds(r.data.fieldIds || [])
+        const order =
+          Array.isArray(r.data.formLayoutOrder) && r.data.formLayoutOrder.length > 0
+            ? r.data.formLayoutOrder
+            : r.data.fieldIds || []
+        const hiddenIds = r.data.hiddenFieldIds ?? []
+        setFormLayoutOrder(moveHiddenFieldsToEnd(order, hiddenIds))
+        setDefaultSortOrder(
+          r.data.defaultSortOrder?.length ? r.data.defaultSortOrder : [{ key: 'date', dir: 'desc' }]
+        )
+        setFieldDefaults(
+          r.data.fieldDefaults && typeof r.data.fieldDefaults === 'object' ? r.data.fieldDefaults : {}
+        )
+        setKeyField(r.data.keyField ?? '')
+        setHiddenFieldIds(hiddenIds)
+        setRequiredFieldIds(r.data.requiredFieldIds ?? [])
+        setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
+        if (!r.data.name) {
+          // New/unnamed plan: focus name field
+          setTimeout(() => {
+            nameInputRef.current?.focus()
+            nameInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }, 0)
+        }
+      })
+      .catch(() => navigate('/test-plans'))
+      .finally(() => setLoading(false))
+  }, [planId, navigate])
+
+  // When returning from FieldEditor after creating a new field for this plan,
+  // wire the new field into the plan layout. Guard against React StrictMode
+  // double-invoking effects in dev by tracking the last handled id.
+  useEffect(() => {
+    const newFieldId = navState.newFieldId
+    if (!newFieldId) return
+    if (handledNewFieldIdRef.current === newFieldId) return
+    handledNewFieldIdRef.current = newFieldId
+    handleCreateField(newFieldId)
+    // Clear newFieldId from navigation state to avoid re-adding on refresh.
+    navigate(location.pathname, {
+      replace: true,
+      state: { returnTo, createdInline },
+    })
+  }, [navState.newFieldId])
+
+  useEffect(() => {
+    if (nameError && nameInputRef.current) {
+      nameInputRef.current.focus()
+      nameInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-  }, [planId, isNew, navigate])
+  }, [nameError])
 
   const handleCreateField = (newFieldId: string) => {
     api
@@ -181,7 +218,10 @@ export function TestPlanEditor() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return
+    if (!name.trim()) {
+      setNameError('Name must be entered')
+      return
+    }
     if (fieldIds.length < 1) {
       showAlert('Add at least one field to the plan before saving.')
       return
@@ -234,19 +274,7 @@ export function TestPlanEditor() {
     }
   }
 
-  if (loading) return <p className="text-foreground/60">Loading...</p>
-
-  if (showCreateField) {
-    return (
-      <div>
-        <h1 className="mb-6 text-2xl font-semibold text-foreground">Edit Test Plan</h1>
-        <CreateFieldForm
-          onSave={handleCreateField}
-          onCancel={() => setShowCreateField(false)}
-        />
-      </div>
-    )
-  }
+  if (!planId && loading) return <p className="text-foreground/60">Loading…</p>
 
   return (
     <div className="flex h-full flex-col min-h-0">
@@ -265,7 +293,16 @@ export function TestPlanEditor() {
           </button>
           <button
             type="button"
-            onClick={() => navigate(returnTo ?? '/test-plans')}
+            onClick={async () => {
+              if (createdInline && planId) {
+                try {
+                  await api.delete(`/test-plans/${planId}`)
+                } catch {
+                  // Ignore delete errors on cancel; still navigate away
+                }
+              }
+              navigate(returnTo ?? '/test-plans')
+            }}
             className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
           >
             Cancel
@@ -296,11 +333,15 @@ export function TestPlanEditor() {
         <div>
           <label className="block text-sm font-medium text-foreground">Name</label>
           <input
+            ref={nameInputRef}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (nameError) setNameError(null)
+            }}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-            required
           />
+          {nameError && <p className="mt-1 text-sm text-red-500">{nameError}</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
@@ -483,7 +524,55 @@ export function TestPlanEditor() {
               onHiddenFieldIdsChange={setHiddenFieldIdsAndReorder}
               requiredFieldIds={requiredFieldIds}
               onRequiredFieldIdsChange={setRequiredFieldIds}
-              onCreateNew={() => setShowCreateField(true)}
+              planId={planId ?? undefined}
+              onCreateNew={async () => {
+                if (!planId) {
+                  if (!name.trim()) {
+                    setNameError('Name must be entered')
+                    return
+                  }
+                  // First create the plan, then go to FieldEditor with context
+                  try {
+                    const { data } = await api.post<{ id: string }>('/test-plans', {
+                      name: name.trim(),
+                      description: description.trim() || undefined,
+                      testPlan: testPlan.trim() || undefined,
+                      constraints: constraints.trim() || undefined,
+                      fieldIds,
+                      formLayoutOrder: formLayoutOrder.length > 0 ? formLayoutOrder : undefined,
+                      defaultSortOrder: defaultSortOrder.length > 0 ? defaultSortOrder : undefined,
+                      fieldDefaults: Object.keys(fieldDefaults).length > 0 ? fieldDefaults : undefined,
+                      keyField: keyField.trim() || undefined,
+                      hiddenFieldIds: hiddenFieldIds.length > 0 ? hiddenFieldIds : undefined,
+                      requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
+                      defaultVisibleColumnIds:
+                        defaultVisibleColumnIds.length > 0 ? defaultVisibleColumnIds : undefined,
+                    })
+                    navigate('/fields/new', {
+                      replace: true,
+                      state: {
+                        fromPlan: true,
+                        ownerTestPlanId: data.id,
+                        returnTo: `/test-plans/${data.id}/edit`,
+                        createdInline: true,
+                      },
+                    })
+                    return
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    showAlert(msg || 'Failed to start a new test plan')
+                    return
+                  }
+                }
+                navigate('/fields/new', {
+                  state: {
+                    fromPlan: true,
+                    ownerTestPlanId: planId,
+                    returnTo: `/test-plans/${planId}/edit`,
+                    createdInline,
+                  },
+                })
+              }}
               fieldDefaults={fieldDefaults}
               renderAbovePreview={
                 planFields.length > 0 ? (
@@ -501,9 +590,14 @@ export function TestPlanEditor() {
                       {planFields.map((f) => {
                         const key = f.key
                         const val = fieldDefaults[key]
-                        const setVal = (v: string | number | boolean | string[]) =>
+                        const setVal = (v: string | number | boolean | string[] | TimerValue) =>
                           setFieldDefaults((prev) => {
                             if (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v))) {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            }
+                            if (Array.isArray(v) && v.length === 0) {
                               const next = { ...prev }
                               delete next[key]
                               return next
@@ -555,6 +649,37 @@ export function TestPlanEditor() {
                                   className="w-full"
                                 />
                               )}
+                              {f.type === 'radio_select' && (
+                                <SelectInput
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(v) => setVal(v)}
+                                  options={f.config?.options || []}
+                                  placeholder="(none)"
+                                  className="w-full"
+                                />
+                              )}
+                              {f.type === 'checkbox_select' && (
+                                <div className="max-h-36 space-y-1 overflow-y-auto rounded border border-border bg-background p-2">
+                                  <p className="text-[11px] text-foreground/50">Leave unchecked for no default</p>
+                                  {(f.config?.options ?? []).filter(Boolean).map((opt) => (
+                                    <label key={opt} className="flex cursor-pointer items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={Array.isArray(val) && val.includes(opt)}
+                                        onChange={() => {
+                                          const cur = Array.isArray(val) ? [...val] : []
+                                          const i = cur.indexOf(opt)
+                                          if (i >= 0) cur.splice(i, 1)
+                                          else cur.push(opt)
+                                          setVal(cur)
+                                        }}
+                                        className="h-4 w-4 rounded border-border"
+                                      />
+                                      <span className="text-sm text-foreground">{opt}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
                               {f.type === 'status' && (
                                 <SelectInput
                                   value={val === undefined ? '' : String(val)}
@@ -564,7 +689,7 @@ export function TestPlanEditor() {
                                   className="w-full"
                                 />
                               )}
-                              {!['number', 'text', 'longtext', 'boolean', 'select', 'status'].includes(f.type) && (
+                              {!['number', 'text', 'longtext', 'boolean', 'select', 'radio_select', 'checkbox_select', 'status'].includes(f.type) && (
                                 <input
                                   type="text"
                                   value={val === undefined ? '' : String(val)}

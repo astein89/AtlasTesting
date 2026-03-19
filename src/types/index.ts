@@ -5,6 +5,8 @@ export type FieldType =
   | 'boolean'
   | 'datetime'
   | 'select'
+  | 'radio_select'
+  | 'checkbox_select'
   | 'status'
   | 'fraction'
   | 'weight'
@@ -52,8 +54,14 @@ export interface FieldConfig {
   statusColors?: Record<string, string>
   /** For number/formula fields: max digits before decimal (integer part), optional display width */
   integerDigits?: number
-  /** For number/formula fields: decimal places for display (rounds numeric values) */
+  /** For number/formula fields: decimal places (see decimalPlacesMode where applicable). */
   decimalPlaces?: number
+  /**
+   * With decimalPlaces set:
+   * - `display` — round only for display (tables/read-only); entry or internal value keeps full precision.
+   * - `enforce` — round on entry (where applicable) and in stored/displayed value to decimalPlaces.
+   */
+  decimalPlacesMode?: 'display' | 'enforce'
   /** Excel-style: 'number' | 'percent' | 'currency' */
   numberFormat?: 'number' | 'percent' | 'currency'
   /** Use thousands separator (e.g. 1,234.56) */
@@ -80,6 +88,58 @@ export interface FieldConfig {
   dateTimeFormat?: string
   /** For datetime fields: what to show — short date, long date, date/time, long time, or short time. When set, used instead of dateTimeFormat. */
   dateTimeDisplay?: 'shortDate' | 'longDate' | 'dateTime' | 'longTime' | 'shortTime'
+  /** For radio_select fields: how to display options — 1 = one per line, 2+ = that many per line, or 'auto' = inline wrap. Legacy 'vertical'/'horizontal' map to 1/'auto'. */
+  radioLayout?: number | 'vertical' | 'horizontal' | 'auto'
+  /** For checkbox_select fields: same layout semantics as radioLayout. */
+  checkboxLayout?: number | 'vertical' | 'horizontal' | 'auto'
+  /**
+   * Excel-like conditional formatting for this field in data tables (first matching rule wins).
+   * Formula mode: same syntax as field formulas ([FieldKey], comparisons, AND, OR).
+   * Standard mode: compares this cell’s value only.
+   */
+  conditionalFormatting?: ConditionalFormatRule[]
+}
+
+  /** One conditional format rule: when it matches, apply style to the cell display. */
+export interface ConditionalFormatRule {
+  id: string
+  /**
+   * How this rule applies:
+   * - 'standard'  → compare this cell only (Cell value)
+   * - 'formula'   → full-row expression (Formula)
+   * - 'fallback'  → no condition; styles any rows not matched by earlier rules.
+   */
+  mode: 'formula' | 'standard' | 'fallback'
+  /** mode formula — e.g. [Amount] > 100 AND [Status] = "Fail" */
+  formula?: string
+  /** mode standard — how to compare this field’s raw value */
+  standardOp?:
+    | 'eq'
+    | 'neq'
+    | 'gt'
+    | 'gte'
+    | 'lt'
+    | 'lte'
+    | 'between'
+    | 'contains'
+    | 'not_contains'
+    | 'begins_with'
+    | 'ends_with'
+    | 'blank'
+    | 'not_blank'
+  standardValue?: string
+  /** second bound for between (inclusive) */
+  standardValue2?: string
+  /** Cell background; omit or empty = no fill */
+  backgroundColor?: string
+  /** Text color; omit or empty = inherit table text */
+  textColor?: string
+  fontBold?: boolean
+  /**
+   * When true (typically on a later rule), apply this formatting to all rows
+   * that did NOT match any earlier rule ("else" / fallback style).
+   */
+  appliesToOthers?: boolean
 }
 
 /** Options for a status field: custom config.options or default STATUS_OPTIONS. Blank options are preserved. */
@@ -101,6 +161,8 @@ export interface DataField {
   updatedBy?: string | null
   createdByName?: string | null
   updatedByName?: string | null
+  /** When set, this field is owned by a specific test plan and is plan-specific. When null/undefined, the field is global. */
+  ownerTestPlanId?: string | null
 }
 
 export interface TestPlan {
@@ -160,6 +222,8 @@ export interface DataRecord {
   testId?: string
   planName?: string
   recordedAt: string
+  /** Last edit timestamp (from record_history), or recordedAt when never edited. */
+  lastEditedAt?: string
   enteredBy: string
   status: 'pass' | 'fail' | 'partial'
   data: Record<string, string | number | boolean | string[] | TimerValue>

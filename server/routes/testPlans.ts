@@ -347,6 +347,23 @@ router.put('/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ error: 'name required' })
   }
 
+  // Enforce that plan-specific fields cannot be attached to other plans.
+  if (Array.isArray(fieldIds) && fieldIds.length > 0) {
+    const placeholders = fieldIds.map(() => '?').join(',')
+    const rows = db
+      .prepare(
+        `SELECT id, owner_test_plan_id FROM fields WHERE id IN (${placeholders})`
+      )
+      .all(...fieldIds) as Array<{ id: string; owner_test_plan_id: string | null }>
+    for (const row of rows) {
+      if (row.owner_test_plan_id && row.owner_test_plan_id !== id) {
+        return res
+          .status(400)
+          .json({ error: 'Cannot add plan-specific fields to other test plans' })
+      }
+    }
+  }
+
   const updates: string[] = []
   const values: unknown[] = []
   if (name !== undefined && name !== null) {
@@ -570,6 +587,8 @@ router.delete('/:id', requireAdmin, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })
   db.prepare('DELETE FROM test_runs WHERE test_plan_id = ?').run(id)
   db.prepare('DELETE FROM tests WHERE test_plan_id = ?').run(id)
+  // Also remove any plan-specific fields owned by this plan
+  db.prepare('DELETE FROM fields WHERE owner_test_plan_id = ?').run(id)
   db.prepare('DELETE FROM test_plans WHERE id = ?').run(id)
   res.status(204).send()
 })
