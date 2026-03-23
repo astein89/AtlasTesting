@@ -3,22 +3,30 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
+import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 
 interface LocationSchema {
   id: string
   name: string
   description?: string | null
-  codePattern?: string | null
+}
+
+interface ZoneRow {
+  id: string
+  name: string
+  schemaId: string
 }
 
 export function LocationSchemas() {
+  const { showConfirm, showAlert } = useAlertConfirm()
   const [schemas, setSchemas] = useState<LocationSchema[]>([])
+  const [zones, setZones] = useState<ZoneRow[]>([])
   const [newSchemaName, setNewSchemaName] = useState('')
+  const [newSchemaDescription, setNewSchemaDescription] = useState('')
   const [newSchemaOpen, setNewSchemaOpen] = useState(false)
   const [editSchema, setEditSchema] = useState<LocationSchema | null>(null)
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
-  const [editCodePattern, setEditCodePattern] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
   const navigate = useNavigate()
 
@@ -27,15 +35,35 @@ export function LocationSchemas() {
   }, [])
 
   async function refreshSchemas() {
-    const { data } = await api.get<LocationSchema[]>('/locations/schemas')
-    setSchemas(data)
+    const [schemasResp, zonesResp] = await Promise.all([
+      api.get<LocationSchema[]>('/locations/schemas'),
+      api.get<ZoneRow[]>('/locations/zones'),
+    ])
+    setSchemas(schemasResp.data)
+    setZones(zonesResp.data)
+  }
+
+  function schemaDeleteBlockedReason(schemaId: string): string | null {
+    const using = zones.filter((z) => z.schemaId === schemaId)
+    if (using.length === 0) return null
+    const maxList = 8
+    const names = using.map((z) => z.name)
+    const shown = names.slice(0, maxList).join(', ')
+    const extra = names.length > maxList ? ` (+${names.length - maxList} more)` : ''
+    const n = using.length
+    const zoneWord = n === 1 ? 'zone' : 'zones'
+    return `This schema is used by ${n} ${zoneWord}: ${shown}${extra}. Remove or reassign those zones first.`
   }
 
   async function handleCreateSchema(e: React.FormEvent) {
     e.preventDefault()
     if (!newSchemaName.trim()) return
-    await api.post('/locations/schemas', { name: newSchemaName.trim() })
+    await api.post('/locations/schemas', {
+      name: newSchemaName.trim(),
+      description: newSchemaDescription.trim() || undefined,
+    })
     setNewSchemaName('')
+    setNewSchemaDescription('')
     setNewSchemaOpen(false)
     void refreshSchemas()
   }
@@ -44,7 +72,6 @@ export function LocationSchemas() {
     setEditSchema(s)
     setEditName(s.name)
     setEditDescription(s.description ?? '')
-    setEditCodePattern(s.codePattern ?? '')
   }
 
   async function handleSaveEditSchema(e: React.FormEvent) {
@@ -55,7 +82,6 @@ export function LocationSchemas() {
       await api.put(`/locations/schemas/${editSchema.id}`, {
         name: editName.trim(),
         description: editDescription.trim(),
-        codePattern: editCodePattern.trim(),
       })
       setEditSchema(null)
       void refreshSchemas()
@@ -68,16 +94,29 @@ export function LocationSchemas() {
   }
 
   async function handleDeleteSchema(schemaId: string) {
+    const blocked = schemaDeleteBlockedReason(schemaId)
+    if (blocked) {
+      showAlert(blocked, 'Cannot delete schema')
+      return
+    }
     const s = schemas.find((x) => x.id === schemaId)
-    const ok = window.confirm(`Delete schema "${s?.name ?? 'this schema'}"?`)
+    const ok = await showConfirm(
+      `Delete schema "${s?.name ?? 'this schema'}"? This will remove its component definitions and custom fields. This cannot be undone.`,
+      {
+        title: 'Delete schema',
+        confirmLabel: 'Delete',
+        cancelLabel: 'Cancel',
+        variant: 'danger',
+      }
+    )
     if (!ok) return
     try {
       await api.delete(`/locations/schemas/${schemaId}`)
       void refreshSchemas()
-    } catch (e: any) {
-      const msg = (e?.response?.data?.error as string | undefined) ?? 'Failed to delete schema'
-      // eslint-disable-next-line no-alert
-      window.alert(msg)
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to delete schema'
+      showAlert(msg, 'Delete failed')
     }
   }
 
@@ -113,24 +152,30 @@ export function LocationSchemas() {
             label: '',
             width: '11rem',
             getValue: () => '',
-            render: (s) => (
+            render: (s) => {
+              const row = s as LocationSchema
+              const deleteBlocked = schemaDeleteBlockedReason(row.id)
+              return (
               <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
                   type="button"
                   className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-                  onClick={() => openEditSchema(s as LocationSchema)}
+                  onClick={() => openEditSchema(row)}
                 >
                   Edit
                 </button>
                 <button
                   type="button"
-                  className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
-                  onClick={() => void handleDeleteSchema((s as LocationSchema).id)}
+                  className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!!deleteBlocked}
+                  title={deleteBlocked ?? 'Delete this schema'}
+                  onClick={() => void handleDeleteSchema(row.id)}
                 >
                   Delete
                 </button>
               </div>
-            ),
+              )
+            },
           },
         ]}
       />
@@ -170,15 +215,6 @@ export function LocationSchemas() {
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
                     rows={3}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-foreground">Code pattern</label>
-                  <input
-                    type="text"
-                    value={editCodePattern}
-                    onChange={(e) => setEditCodePattern(e.target.value)}
                     className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   />
                 </div>
@@ -231,6 +267,15 @@ export function LocationSchemas() {
                     onChange={(e) => setNewSchemaName(e.target.value)}
                     className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                     autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Description</label>
+                  <textarea
+                    value={newSchemaDescription}
+                    onChange={(e) => setNewSchemaDescription(e.target.value)}
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   />
                 </div>
                 <div className="flex justify-end gap-2 pt-2">

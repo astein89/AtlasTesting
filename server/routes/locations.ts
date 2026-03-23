@@ -166,7 +166,7 @@ function validateFieldValuesFromInput(
 router.get('/schemas', (_req, res) => {
   const rows = db
     .prepare(
-      `SELECT id, name, description, code_pattern as codePattern, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, name, description, created_at as createdAt, updated_at as updatedAt
        FROM location_schemas
        ORDER BY name`
     )
@@ -175,21 +175,20 @@ router.get('/schemas', (_req, res) => {
 })
 
 router.post('/schemas', (req: AuthRequest, res) => {
-  const { name, description, codePattern } = req.body as {
+  const { name, description } = req.body as {
     name?: string
     description?: string
-    codePattern?: string
   }
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ error: 'Name is required' })
   }
   const id = uuidv4()
   db.prepare(
-    `INSERT INTO location_schemas (id, name, description, code_pattern) VALUES (?, ?, ?, ?)`
-  ).run(id, name.trim(), description ?? null, codePattern ?? null)
+    `INSERT INTO location_schemas (id, name, description) VALUES (?, ?, ?)`
+  ).run(id, name.trim(), description ?? null)
   const row = db
     .prepare(
-      `SELECT id, name, description, code_pattern as codePattern, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, name, description, created_at as createdAt, updated_at as updatedAt
        FROM location_schemas WHERE id = ?`
     )
     .get(id)
@@ -203,29 +202,26 @@ router.put('/schemas/:schemaId', (req: AuthRequest, res) => {
     .get(schemaId) as { id: string } | undefined
   if (!existing) return res.status(404).json({ error: 'Schema not found' })
 
-  const { name, description, codePattern } = req.body as {
+  const { name, description } = req.body as {
     name?: string
     description?: string
-    codePattern?: string
   }
 
   db.prepare(
     `UPDATE location_schemas
      SET name = COALESCE(?, name),
          description = COALESCE(?, description),
-         code_pattern = COALESCE(?, code_pattern),
          updated_at = datetime('now')
      WHERE id = ?`
   ).run(
     name != null ? String(name).trim() : null,
     description != null ? String(description) : null,
-    codePattern != null ? String(codePattern) : null,
     schemaId
   )
 
   const row = db
     .prepare(
-      `SELECT id, name, description, code_pattern as codePattern, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, name, description, created_at as createdAt, updated_at as updatedAt
        FROM location_schemas WHERE id = ?`
     )
     .get(schemaId)
@@ -234,11 +230,20 @@ router.put('/schemas/:schemaId', (req: AuthRequest, res) => {
 
 router.delete('/schemas/:schemaId', (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const hasZones = db
-    .prepare(`SELECT COUNT(*) as cnt FROM zones WHERE schema_id = ?`)
-    .get(schemaId) as { cnt: number }
-  if (hasZones.cnt > 0) {
-    return res.status(400).json({ error: 'Cannot delete schema while zones still reference it' })
+  const zoneRows = db
+    .prepare(`SELECT name FROM zones WHERE schema_id = ? ORDER BY name COLLATE NOCASE`)
+    .all(schemaId) as Array<{ name: string }>
+  if (zoneRows.length > 0) {
+    const maxList = 12
+    const names = zoneRows.map((z) => z.name)
+    const shown = names.slice(0, maxList)
+    const extra = names.length > maxList ? ` (+${names.length - maxList} more)` : ''
+    const list = `${shown.join(', ')}${extra}`
+    const n = zoneRows.length
+    const zoneWord = n === 1 ? 'zone' : 'zones'
+    return res.status(400).json({
+      error: `Cannot delete this schema: it is still assigned to ${n} ${zoneWord} (${list}). Remove those zones or change each zone to use a different schema first.`,
+    })
   }
   db.prepare(`DELETE FROM location_schema_components WHERE schema_id = ?`).run(schemaId)
   db.prepare(`DELETE FROM location_schema_fields WHERE schema_id = ?`).run(schemaId)

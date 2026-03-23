@@ -100,7 +100,6 @@ export function initSchema(db: DbWrapper) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
-      code_pattern TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT
     );
@@ -185,6 +184,7 @@ export function initSchema(db: DbWrapper) {
   migrateFieldsAudit(db)
   migrateRecordHistory(db)
   migrateLocationSchemaFieldsAndFieldValues(db)
+  migrateDropLocationSchemaCodePattern(db)
   migrateTestPlansAndTestsUpdatedAt(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
@@ -213,6 +213,19 @@ function migrateRecordHistory(db: DbWrapper) {
     `)
   } catch {
     // Ignore
+  }
+}
+
+function migrateDropLocationSchemaCodePattern(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(location_schemas)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasCodePattern = rows.some((r) => r[1] === 'code_pattern')
+    if (!hasCodePattern) return
+    db.run('ALTER TABLE location_schemas DROP COLUMN code_pattern')
+  } catch {
+    // Ignore (e.g. SQLite < 3.35 without DROP COLUMN — column remains unused)
   }
 }
 

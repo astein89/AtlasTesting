@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { SimpleDataTable } from '../data/SimpleDataTable'
 import type { LocationSchemaField, LocationSchemaFieldConfig, LocationSchemaFieldType } from '../../types/locationSchemaFields'
 import { uppercaseAsciiLetters } from '../../utils/asciiString'
+import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
 interface SelectOptionRow {
   value: string
@@ -49,6 +50,7 @@ interface LocationSchemaFieldsEditorProps {
 }
 
 export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchemaFieldsEditorProps) {
+  const { showConfirm } = useAlertConfirm()
   const [fields, setFields] = useState<LocationSchemaField[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -180,7 +182,15 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
 
   async function handleDelete(id: string) {
     const f = fields.find((x) => x.id === id)
-    const ok = window.confirm(`Delete field "${f?.label ?? id}"?`)
+    const ok = await showConfirm(
+      `Delete field "${f?.label ?? id}" (${f?.key ?? id})? Location field data that used this key may be affected.`,
+      {
+        title: 'Delete field',
+        confirmLabel: 'Delete',
+        cancelLabel: 'Cancel',
+        variant: 'danger',
+      }
+    )
     if (!ok) return
     try {
       await api.delete(`/locations/schemas/${schemaId}/fields/${id}`)

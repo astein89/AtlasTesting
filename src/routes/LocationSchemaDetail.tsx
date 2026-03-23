@@ -10,7 +10,6 @@ interface LocationSchema {
   id: string
   name: string
   description?: string | null
-  codePattern?: string | null
 }
 
 interface SchemaComponent {
@@ -46,7 +45,6 @@ export function LocationSchemaDetail() {
   const [editSchemaOpen, setEditSchemaOpen] = useState(false)
   const [editSchemaName, setEditSchemaName] = useState('')
   const [editSchemaDescription, setEditSchemaDescription] = useState('')
-  const [editSchemaCodePattern, setEditSchemaCodePattern] = useState('')
   const [savingSchema, setSavingSchema] = useState(false)
 
   useEffect(() => {
@@ -150,7 +148,6 @@ export function LocationSchemaDetail() {
     if (!schema) return
     setEditSchemaName(schema.name)
     setEditSchemaDescription(schema.description ?? '')
-    setEditSchemaCodePattern(schema.codePattern ?? '')
     setEditSchemaOpen(true)
   }
 
@@ -162,7 +159,6 @@ export function LocationSchemaDetail() {
       const resp = await api.put<LocationSchema>(`/locations/schemas/${schemaId}`, {
         name: editSchemaName.trim(),
         description: editSchemaDescription.trim(),
-        codePattern: editSchemaCodePattern.trim(),
       })
       setSchema(resp.data)
       setEditSchemaOpen(false)
@@ -342,15 +338,6 @@ export function LocationSchemaDetail() {
                   value={editSchemaDescription}
                   onChange={(e) => setEditSchemaDescription(e.target.value)}
                   rows={3}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground">Code pattern</label>
-                <input
-                  type="text"
-                  value={editSchemaCodePattern}
-                  onChange={(e) => setEditSchemaCodePattern(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                 />
               </div>
