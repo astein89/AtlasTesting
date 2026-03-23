@@ -23,6 +23,19 @@ const ResultDetail = lazy(() => import('./routes/ResultDetail').then((m) => ({ d
 const Users = lazy(() => import('./routes/Users').then((m) => ({ default: m.Users })))
 const DbTablesViewer = lazy(() => import('./routes/DbTablesViewer').then((m) => ({ default: m.DbTablesViewer })))
 const Settings = lazy(() => import('./routes/Settings').then((m) => ({ default: m.Settings })))
+const Locations = lazy(() => import('./routes/Locations').then((m) => ({ default: m.Locations })))
+const LocationSchemas = lazy(() =>
+  import('./routes/LocationSchemas').then((m) => ({ default: m.LocationSchemas }))
+)
+const LocationSchemaDetail = lazy(() =>
+  import('./routes/LocationSchemaDetail').then((m) => ({ default: m.LocationSchemaDetail }))
+)
+const LocationZones = lazy(() =>
+  import('./routes/LocationZones').then((m) => ({ default: m.LocationZones }))
+)
+const LocationZoneDetail = lazy(() =>
+  import('./routes/LocationZoneDetail').then((m) => ({ default: m.LocationZoneDetail }))
+)
 
 const REHYDRATE_DELAY_MS = 300
 
@@ -150,6 +163,46 @@ function App() {
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
           <Route path="settings" element={<AdminGuard><Settings /></AdminGuard>} />
+          <Route
+            path="locations"
+            element={
+              <AdminGuard>
+                <Locations />
+              </AdminGuard>
+            }
+          />
+          <Route
+            path="locations/schemas"
+            element={
+              <AdminGuard>
+                <LocationSchemas />
+              </AdminGuard>
+            }
+          />
+          <Route
+            path="locations/schemas/:schemaId"
+            element={
+              <AdminGuard>
+                <LocationSchemaDetail />
+              </AdminGuard>
+            }
+          />
+          <Route
+            path="locations/zones"
+            element={
+              <AdminGuard>
+                <LocationZones />
+              </AdminGuard>
+            }
+          />
+          <Route
+            path="locations/zones/:zoneId"
+            element={
+              <AdminGuard>
+                <LocationZoneDetail />
+              </AdminGuard>
+            }
+          />
           <Route path="export" element={<Navigate to="/test-plans" replace />} />
           <Route
             path="users"

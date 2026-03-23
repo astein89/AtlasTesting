@@ -94,6 +94,73 @@ export function initSchema(db: DbWrapper) {
       expires_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
+
+    -- Location schemas: user-configurable definition of location components/order.
+    CREATE TABLE IF NOT EXISTS location_schemas (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      code_pattern TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT
+    );
+
+    -- Components (parts) of a schema, ordered.
+    CREATE TABLE IF NOT EXISTS location_schema_components (
+      id TEXT PRIMARY KEY,
+      schema_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      type TEXT NOT NULL, -- 'alpha' | 'numeric'
+      width INTEGER NOT NULL,
+      min_value TEXT,
+      max_value TEXT,
+      order_index INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT,
+      FOREIGN KEY (schema_id) REFERENCES location_schemas(id)
+    );
+
+    -- Optional metadata fields per schema (number, text, select) — not part of location code.
+    CREATE TABLE IF NOT EXISTS location_schema_fields (
+      id TEXT PRIMARY KEY,
+      schema_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      type TEXT NOT NULL, -- 'number' | 'text' | 'select'
+      config TEXT,
+      order_index INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT,
+      FOREIGN KEY (schema_id) REFERENCES location_schemas(id),
+      UNIQUE(schema_id, key)
+    );
+
+    -- Zones/groupings for locations (each tied to one schema).
+    CREATE TABLE IF NOT EXISTS zones (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      schema_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT,
+      UNIQUE(name),
+      FOREIGN KEY (schema_id) REFERENCES location_schemas(id)
+    );
+
+    -- Concrete locations: one row per location, components stored as JSON.
+    CREATE TABLE IF NOT EXISTS locations (
+      id TEXT PRIMARY KEY,
+      schema_id TEXT NOT NULL,
+      zone_id TEXT NOT NULL,
+      code TEXT NOT NULL UNIQUE,
+      components TEXT NOT NULL, -- JSON: { key: value }
+      field_values TEXT, -- JSON: optional schema field values (number | text | select)
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT,
+      FOREIGN KEY (schema_id) REFERENCES location_schemas(id),
+      FOREIGN KEY (zone_id) REFERENCES zones(id)
+    );
   `)
   migrateEmailToUsername(db)
   migrateFieldsOwnerTestPlanId(db)
@@ -117,6 +184,7 @@ export function initSchema(db: DbWrapper) {
   migrateUserPreferences(db)
   migrateFieldsAudit(db)
   migrateRecordHistory(db)
+  migrateLocationSchemaFieldsAndFieldValues(db)
   migrateTestPlansAndTestsUpdatedAt(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
@@ -143,6 +211,38 @@ function migrateRecordHistory(db: DbWrapper) {
         new_status TEXT
       )
     `)
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateLocationSchemaFieldsAndFieldValues(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS location_schema_fields (
+        id TEXT PRIMARY KEY,
+        schema_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        type TEXT NOT NULL,
+        config TEXT,
+        order_index INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        FOREIGN KEY (schema_id) REFERENCES location_schemas(id),
+        UNIQUE(schema_id, key)
+      )
+    `)
+  } catch {
+    // Ignore
+  }
+  try {
+    const info = db.execQuery('PRAGMA table_info(locations)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const hasFv = rows.some((r) => r[1] === 'field_values')
+    if (hasFv) return
+    db.run('ALTER TABLE locations ADD COLUMN field_values TEXT')
   } catch {
     // Ignore
   }

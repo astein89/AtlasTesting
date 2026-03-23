@@ -12,6 +12,7 @@ import { recordsRouter } from './routes/records.js'
 import { usersRouter } from './routes/users.js'
 import { preferencesRouter } from './routes/preferences.js'
 import { uploadsRouter } from './routes/uploads.js'
+import { locationsRouter } from './routes/locations.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -35,6 +36,7 @@ apiRouter.use('/records', recordsRouter)
 apiRouter.use('/users', usersRouter)
 apiRouter.use('/preferences', preferencesRouter)
 apiRouter.use('/upload', uploadsRouter)
+apiRouter.use('/locations', locationsRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use(`${prefix}/api`, apiRouter)
 

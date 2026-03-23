@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 
 const baseLink =
@@ -11,6 +11,8 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const isAdmin = useAuthStore((s) => s.isAdmin())
+  const location = useLocation()
+  const inLocations = location.pathname.startsWith('/locations')
 
   return (
     <aside
@@ -19,41 +21,77 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
       }`}
     >
       <nav className="flex flex-col gap-1">
-        <NavLink
-          to="/"
-          onClick={onClose}
-          className={({ isActive }) =>
-            `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
-          }
-        >
-          Dashboard
-        </NavLink>
-        <NavLink
-          to="/test-plans"
-          onClick={onClose}
-          className={({ isActive }) =>
-            `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
-          }
-        >
-          Test Plans
-        </NavLink>
-        <NavLink
-          to="/results"
-          onClick={onClose}
-          className={({ isActive }) =>
-            `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
-          }
-        >
-          Results
-        </NavLink>
-        {isAdmin && (
+        {!inLocations && (
+          <>
+            <NavLink
+              to="/"
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Dashboard
+            </NavLink>
+            <NavLink
+              to="/test-plans"
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Test Plans
+            </NavLink>
+            {isAdmin && (
+              <NavLink
+                to="/locations"
+                end
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `${baseLink} ${
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-foreground hover:bg-background'
+                  }`
+                }
+              >
+                Locations
+              </NavLink>
+            )}
+            <NavLink
+              to="/results"
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Results
+            </NavLink>
+          </>
+        )}
+        {isAdmin && !inLocations && (
           <>
             <div className="my-2 border-t border-border" />
             <NavLink
               to="/fields"
               onClick={onClose}
               className={({ isActive }) =>
-                `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
               }
             >
               Data Fields
@@ -62,7 +100,11 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               to="/users"
               onClick={onClose}
               className={({ isActive }) =>
-                `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
               }
             >
               Users
@@ -71,7 +113,11 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               to="/admin/db"
               onClick={onClose}
               className={({ isActive }) =>
-                `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
               }
             >
               DB Tables
@@ -80,10 +126,59 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               to="/settings"
               onClick={onClose}
               className={({ isActive }) =>
-                `${baseLink} ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'}`
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
               }
             >
               Settings
+            </NavLink>
+          </>
+        )}
+        {isAdmin && inLocations && (
+          <>
+            <NavLink
+              to="/test-plans"
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Testing
+            </NavLink>
+            <NavLink
+              to="/locations"
+              end
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Locations
+            </NavLink>
+            <NavLink
+              to="/locations/schemas"
+              end
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Schema
             </NavLink>
           </>
         )}
