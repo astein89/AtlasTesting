@@ -197,7 +197,8 @@ export function ResultsList() {
                       selected={columnFilters['plan'] ?? new Set()}
                       onChange={(s) => setColumnFilters((p) => ({ ...p, plan: s }))}
                       onClose={() => setOpenFilterColumn(null)}
-                      anchorRef={{ current: filterAnchorRefs.current['plan'] }}
+                      tableAnchorRefs={filterAnchorRefs}
+                      tableAnchorKey="plan"
                     />
                   )}
                 </th>
@@ -229,7 +230,8 @@ export function ResultsList() {
                       selected={columnFilters['runAt'] ?? new Set()}
                       onChange={(s) => setColumnFilters((p) => ({ ...p, runAt: s }))}
                       onClose={() => setOpenFilterColumn(null)}
-                      anchorRef={{ current: filterAnchorRefs.current['runAt'] }}
+                      tableAnchorRefs={filterAnchorRefs}
+                      tableAnchorKey="runAt"
                     />
                   )}
                 </th>

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { parseFormattedFraction } from '../../utils/fraction'
 
@@ -9,7 +9,13 @@ interface ColumnFilterDropdownProps {
   selected: Set<string>
   onChange: (selected: Set<string>) => void
   onClose: () => void
-  anchorRef: React.RefObject<HTMLElement | null | undefined>
+  /**
+   * Preferred: stable ref object from useRef + key (avoids new ref identity each parent render).
+   */
+  tableAnchorRefs?: React.MutableRefObject<Record<string, HTMLElement | null>>
+  tableAnchorKey?: string
+  /** @deprecated Prefer tableAnchorRefs + tableAnchorKey; inline `{ current: el }` reruns layout every render. */
+  anchorRef?: React.RefObject<HTMLElement | null | undefined>
   /** When set, sort list by numeric value (smallest to largest) instead of string order */
   valueType?: 'fraction' | 'number'
 }
@@ -21,6 +27,8 @@ export function ColumnFilterDropdown({
   selected,
   onChange,
   onClose,
+  tableAnchorRefs,
+  tableAnchorKey,
   anchorRef,
   valueType,
 }: ColumnFilterDropdownProps) {
@@ -29,7 +37,14 @@ export function ColumnFilterDropdown({
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
 
-  const uniqueValues = (() => {
+  const resolveAnchor = useCallback((): HTMLElement | null => {
+    if (tableAnchorRefs && tableAnchorKey != null) {
+      return tableAnchorRefs.current[tableAnchorKey] ?? null
+    }
+    return anchorRef?.current ?? null
+  }, [tableAnchorRefs, tableAnchorKey, anchorRef])
+
+  const uniqueValues = useMemo(() => {
     const uniq = [...new Set(values)].filter((v) => v !== '' && v != null)
     if (valueType === 'fraction') {
       return uniq.sort((a, b) => {
@@ -51,16 +66,17 @@ export function ColumnFilterDropdown({
         return na - nb
       })
     }
-    return uniq.sort()
-  })()
-  const filteredValues = search.trim()
-    ? uniqueValues.filter((v) =>
-        String(v).toLowerCase().includes(search.toLowerCase())
-      )
-    : uniqueValues
+    return uniq.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }))
+  }, [values, valueType])
+
+  const searchLower = search.trim().toLowerCase()
+  const filteredValues = useMemo(() => {
+    if (!searchLower) return uniqueValues
+    return uniqueValues.filter((v) => String(v).toLowerCase().includes(searchLower))
+  }, [uniqueValues, searchLower])
 
   useLayoutEffect(() => {
-    const anchor = anchorRef.current
+    const anchor = resolveAnchor()
     if (!anchor) return
     const rect = anchor.getBoundingClientRect()
     const dropdownWidth = 280
@@ -72,31 +88,32 @@ export function ColumnFilterDropdown({
     if (left < 0) left = 0
     if (top + dropdownHeight > window.innerHeight) top = Math.max(0, rect.top - dropdownHeight - gap)
     setPosition({ top, left })
-  }, [anchorRef])
+  }, [resolveAnchor, columnKey, tableAnchorKey])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
+      const anchor = resolveAnchor()
       if (
         ref.current &&
         !ref.current.contains(e.target as Node) &&
-        anchorRef.current &&
-        !anchorRef.current.contains(e.target as Node)
+        anchor &&
+        !anchor.contains(e.target as Node)
       ) {
         onClose()
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [onClose, anchorRef])
+  }, [onClose, resolveAnchor])
 
-  const toggle = (val: string) => {
+  const toggle = useCallback((val: string) => {
     setLocalSelected((prev) => {
       const next = new Set(prev)
       if (next.has(val)) next.delete(val)
       else next.add(val)
       return next
     })
-  }
+  }, [])
 
   const selectAll = () => {
     setLocalSelected(new Set(filteredValues))
@@ -116,7 +133,6 @@ export function ColumnFilterDropdown({
     onClose()
   }
 
-  const allSelected = filteredValues.length > 0 && filteredValues.every((v) => localSelected.has(v))
   const someSelected = localSelected.size > 0
 
   const dropdown = (
@@ -135,6 +151,7 @@ export function ColumnFilterDropdown({
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          aria-label={`Filter ${columnLabel}`}
           className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-foreground/50"
           autoFocus
         />

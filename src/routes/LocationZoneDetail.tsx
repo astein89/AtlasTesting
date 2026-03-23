@@ -5,8 +5,8 @@ import { SimpleDataTable, type SimpleColumn } from '../components/data/SimpleDat
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { formatSelectOptionLabel, selectOptionTitle, type LocationSchemaField } from '../types/locationSchemaFields'
-import { uppercaseAsciiLetters } from '../utils/asciiString'
 import { downloadCsvFromApi } from '../utils/downloadCsv'
+import { expandLocationGenerationRange, sanitizeGenerateRangeInput } from '../utils/expandLocationGenerationRange'
 import { sanitizeFilenameSegment } from '../utils/safeFilename'
 
 interface Zone {
@@ -171,30 +171,6 @@ export function LocationZoneDetail() {
       setError('Failed to load locations')
       setLocations([])
       setSelectedLocationIds(new Set())
-    }
-  }
-
-  async function handleGenerate(e: React.FormEvent) {
-    e.preventDefault()
-    if (!zoneId) return
-    try {
-      setGenerating(true)
-      const fv: Record<string, unknown> = {}
-      for (const f of schemaFields) {
-        const raw = (generateFieldValues[f.key] ?? '').trim()
-        if (raw === '') continue
-        fv[f.key] = f.type === 'number' ? Number(raw) : raw
-      }
-      await api.post(`/locations/zones/${zoneId}/locations/generate`, {
-        components: ranges,
-        ...(Object.keys(fv).length > 0 ? { fieldValues: fv } : {}),
-      })
-      setGenerateOpen(false)
-      void refreshLocations(zoneId)
-    } catch {
-      setError('Failed to generate locations')
-    } finally {
-      setGenerating(false)
     }
   }
 
@@ -524,65 +500,21 @@ export function LocationZoneDetail() {
     const byKey: Record<string, string[]> = {}
     const errors: string[] = []
 
-    const alphaToNum = (ch: string) => ch.toUpperCase().charCodeAt(0) - 65
-    const numToAlpha = (n: number) => String.fromCharCode(65 + n)
-
-    const expand = (exprRaw: string, type: 'alpha' | 'numeric', width: number): string[] => {
-      const expr = (exprRaw ?? '').trim()
-      if (!expr) return []
-      const parts = expr
-        .split(/[;,]+/g)
-        .map((p) => p.trim())
-        .filter(Boolean)
-      const out: string[] = []
-      for (const part of parts) {
-        const m = part.match(/^([A-Za-z0-9]+)\s*-\s*([A-Za-z0-9]+)$/)
-        if (m) {
-          const start = m[1]
-          const end = m[2]
-          if (type === 'numeric') {
-            const a = parseInt(start, 10)
-            const b = parseInt(end, 10)
-            if (Number.isNaN(a) || Number.isNaN(b)) continue
-            const step = a <= b ? 1 : -1
-            for (let n = a; step > 0 ? n <= b : n >= b; n += step) {
-              out.push(String(n).padStart(width, '0'))
-            }
-          } else {
-            const a = alphaToNum(start[0] ?? '')
-            const b = alphaToNum(end[0] ?? '')
-            if (a < 0 || b < 0 || a > 25 || b > 25) continue
-            const step = a <= b ? 1 : -1
-            for (let n = a; step > 0 ? n <= b : n >= b; n += step) {
-              out.push(numToAlpha(n).padStart(width, 'A'))
-            }
-          }
-          continue
-        }
-        // Single value
-        if (type === 'numeric') {
-          const n = parseInt(part, 10)
-          if (Number.isNaN(n)) continue
-          out.push(String(n).padStart(width, '0'))
-        } else {
-          const ch = (part[0] ?? '').toUpperCase()
-          if (!/^[A-Z]$/.test(ch)) continue
-          out.push(ch.padStart(width, 'A'))
-        }
-      }
-      return Array.from(new Set(out))
-    }
-
     for (const c of order) {
-      const values = expand(ranges[c.key] ?? '', c.type, c.width)
-      if (values.length === 0) {
-        // allow empty while editing; preview will show 0
+      const raw = (ranges[c.key] ?? '').trim()
+      if (!raw) {
+        byKey[c.key] = []
+        continue
+      }
+      const { values, error } = expandLocationGenerationRange(raw, c.type, c.width)
+      if (error) {
+        errors.push(`${c.displayName}: ${error}`)
+        byKey[c.key] = []
+      } else if (values.length === 0) {
+        errors.push(`${c.displayName}: no values produced`)
         byKey[c.key] = []
       } else {
         byKey[c.key] = values
-      }
-      if ((ranges[c.key] ?? '').trim() && byKey[c.key].length === 0) {
-        errors.push(`${c.displayName} (${c.key}) has no valid values`)
       }
     }
 
@@ -637,6 +569,37 @@ export function LocationZoneDetail() {
     const last5 = total <= 5 ? [] : buildCodes('last', 5)
     return { total, first5, last5, errors }
   }, [components, ranges])
+
+  async function handleGenerate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!zoneId) return
+    if (preview.errors.length > 0 || preview.total === 0) return
+    try {
+      setGenerating(true)
+      const fv: Record<string, unknown> = {}
+      for (const f of schemaFields) {
+        const raw = (generateFieldValues[f.key] ?? '').trim()
+        if (raw === '') continue
+        fv[f.key] = f.type === 'number' ? Number(raw) : raw
+      }
+      await api.post(`/locations/zones/${zoneId}/locations/generate`, {
+        components: ranges,
+        ...(Object.keys(fv).length > 0 ? { fieldValues: fv } : {}),
+      })
+      const clearedRanges: Record<string, string> = {}
+      for (const c of components) clearedRanges[c.key] = ''
+      setRanges(clearedRanges)
+      const clearedFv: Record<string, string> = {}
+      for (const f of schemaFields) clearedFv[f.key] = ''
+      setGenerateFieldValues(clearedFv)
+      setGenerateOpen(false)
+      void refreshLocations(zoneId)
+    } catch {
+      setError('Failed to generate locations')
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   const locationColumns = useMemo(() => {
     const cols: Array<SimpleColumn<LocationRow>> = [
@@ -770,6 +733,7 @@ export function LocationZoneDetail() {
             selectedKeys={selectedLocationIds}
             onSelectedKeysChange={setSelectedLocationIds}
             onFilterSnapshotChange={onLocationsFilterSnapshot}
+            showFooterRowCount
             columns={[
               ...locationColumns,
               {
@@ -1351,28 +1315,40 @@ export function LocationZoneDetail() {
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]">
                 <form onSubmit={handleGenerate} className="flex min-h-0 flex-col gap-4 text-sm">
                   <div className="space-y-2.5">
-                    {components.map((c) => (
+                    {components.map((c) => {
+                      const w = c.width
+                      const charWord = w === 1 ? 'char' : 'chars'
+                      const typeAndCount =
+                        c.type === 'alpha'
+                          ? `Letters (A–Z) · ${w} ${charWord}`
+                          : `Digits (0–9) · ${w} ${charWord}`
+                      return (
                       <div key={c.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
                         <label className="shrink-0 text-sm font-medium text-foreground sm:w-44">
-                          {c.displayName}{' '}
-                          <span className="font-normal text-foreground/60">({c.width})</span>
+                          <span className="block text-foreground">{c.displayName}</span>
+                          <span className="mt-0.5 block text-xs font-normal text-foreground/60">
+                            {typeAndCount}
+                          </span>
                         </label>
                         <input
                           type="text"
                           value={ranges[c.key] ?? ''}
                           onChange={(e) => {
-                            const v =
-                              c.type === 'alpha' ? uppercaseAsciiLetters(e.target.value) : e.target.value
+                            const v = sanitizeGenerateRangeInput(e.target.value, c.type)
                             setRanges((prev) => ({
                               ...prev,
                               [c.key]: v,
                             }))
                           }}
+                          inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
+                          autoCapitalize={c.type === 'alpha' ? 'characters' : 'off'}
+                          spellCheck={false}
                           className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
                           placeholder={c.type === 'alpha' ? 'e.g. A-C' : 'e.g. 1-3,5'}
                         />
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
 
                   {schemaFields.length > 0 && (

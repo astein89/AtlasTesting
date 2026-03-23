@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
 import { ColumnFilterDropdown } from './ColumnFilterDropdown'
 import { useUserPreference } from '../../hooks/useUserPreference'
 
@@ -46,7 +46,11 @@ interface SimpleDataTableProps<Row> {
    * Use for export flows that distinguish “all rows” vs “visible filtered rows”.
    */
   onFilterSnapshotChange?: (snapshot: { hasActiveFilters: boolean; filteredRows: Row[] }) => void
+  /** When true, shows a footer bar with “filtered of total” as two numbers (e.g. 3 of 12). */
+  showFooterRowCount?: boolean
 }
+
+const EMPTY_COLUMN_FILTER_SET = new Set<string>()
 
 export function SimpleDataTable<Row>({
   preferenceKey,
@@ -63,6 +67,7 @@ export function SimpleDataTable<Row>({
   onSelectedKeysChange,
   fillViewportHeight = false,
   onFilterSnapshotChange,
+  showFooterRowCount,
 }: SimpleDataTableProps<Row>) {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortKey, setSortKey] = useState<string>(disableSort ? '' : (columns[0]?.key ?? ''))
@@ -138,11 +143,22 @@ export function SimpleDataTable<Row>({
     })
   }, [hasActiveFilters, displayRows, onFilterSnapshotChange])
 
-  const getColumnValues = (key: string): string[] => {
-    const col = columns.find((c) => c.key === key)
+  /** Distinct values for the open filter only — avoids rebuilding/sorting all columns each render. */
+  const openColumnDistinctValues = useMemo(() => {
+    if (!openFilterColumn) return [] as string[]
+    const col = columns.find((c) => c.key === openFilterColumn)
     if (!col) return []
-    return rows.map((r) => col.getValue(r))
-  }
+    const s = new Set<string>()
+    for (const r of rows) {
+      const v = col.getValue(r)
+      if (v === '' || v == null) continue
+      const t = String(v).trim()
+      if (t !== '') s.add(t)
+    }
+    return Array.from(s).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    )
+  }, [openFilterColumn, rows, columns])
 
   const toggleHidden = (key: string) => {
     setHiddenColumnKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
@@ -240,7 +256,7 @@ export function SimpleDataTable<Row>({
             Clear filters
           </button>
         )}
-        {hasActiveFilters && (
+        {hasActiveFilters && !showFooterRowCount && (
           <span className="text-sm text-foreground/60">
             {displayRows.length} of {rows.length} rows
           </span>
@@ -345,16 +361,19 @@ export function SimpleDataTable<Row>({
                       <ColumnFilterDropdown
                         columnKey={c.key}
                         columnLabel={c.label}
-                        values={getColumnValues(c.key)}
-                        selected={filterSets[c.key] ?? new Set()}
-                        onChange={(s) =>
-                          setColumnFilters((prev) => ({
-                            ...prev,
-                            [c.key]: Array.from(s),
-                          }))
-                        }
+                        values={openColumnDistinctValues}
+                        selected={filterSets[c.key] ?? EMPTY_COLUMN_FILTER_SET}
+                        onChange={(s) => {
+                          startTransition(() => {
+                            setColumnFilters((prev) => ({
+                              ...prev,
+                              [c.key]: Array.from(s),
+                            }))
+                          })
+                        }}
                         onClose={() => setOpenFilterColumn(null)}
-                        anchorRef={{ current: filterAnchorRefs.current[c.key] }}
+                        tableAnchorRefs={filterAnchorRefs}
+                        tableAnchorKey={c.key}
                       />
                     )}
                   </th>
@@ -473,6 +492,19 @@ export function SimpleDataTable<Row>({
           </tbody>
         </table>
         </div>
+        {showFooterRowCount && (
+          <div
+            className={`shrink-0 border-t border-border bg-muted/40 px-4 py-2.5 text-left text-sm text-foreground/90 ${
+              fillViewportHeight ? '' : 'w-full min-w-0'
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            <span className="tabular-nums font-medium text-foreground">{displayRows.length}</span>
+            <span className="text-foreground/80"> of </span>
+            <span className="tabular-nums text-foreground/90">{rows.length}</span>
+          </div>
+        )}
       </div>
     </div>
   )

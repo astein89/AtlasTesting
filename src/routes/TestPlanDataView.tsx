@@ -1716,7 +1716,8 @@ export function TestPlanDataView() {
                       selected={columnFilters['date'] ?? new Set()}
                       onChange={(s) => setColumnFilters((p) => ({ ...p, date: s }))}
                       onClose={() => setOpenFilterColumn(null)}
-                      anchorRef={{ current: filterAnchorRefs.current['date'] }}
+                      tableAnchorRefs={filterAnchorRefs}
+                      tableAnchorKey="date"
                     />
                   )}
                 </div>
@@ -1750,7 +1751,8 @@ export function TestPlanDataView() {
                         selected={columnFilters[f.key] ?? new Set()}
                         onChange={(s) => setColumnFilters((p) => ({ ...p, [f.key]: s }))}
                         onClose={() => setOpenFilterColumn(null)}
-                        anchorRef={{ current: filterAnchorRefs.current[f.key] }}
+                        tableAnchorRefs={filterAnchorRefs}
+                        tableAnchorKey={f.key}
                         valueType={f.type === 'fraction' ? 'fraction' : f.type === 'number' ? 'number' : undefined}
                       />
                     )}
@@ -2012,7 +2014,8 @@ export function TestPlanDataView() {
                       selected={columnFilters['date'] ?? new Set()}
                       onChange={(s) => setColumnFilters((p) => ({ ...p, date: s }))}
                       onClose={() => setOpenFilterColumn(null)}
-                      anchorRef={{ current: filterAnchorRefs.current['date'] }}
+                      tableAnchorRefs={filterAnchorRefs}
+                      tableAnchorKey="date"
                     />
                   )}
                 </th>
@@ -2066,7 +2069,8 @@ export function TestPlanDataView() {
                         selected={columnFilters[f.key] ?? new Set()}
                         onChange={(s) => setColumnFilters((p) => ({ ...p, [f.key]: s }))}
                         onClose={() => setOpenFilterColumn(null)}
-                        anchorRef={{ current: filterAnchorRefs.current[f.key] }}
+                        tableAnchorRefs={filterAnchorRefs}
+                        tableAnchorKey={f.key}
                         valueType={f.type === 'fraction' ? 'fraction' : f.type === 'number' ? 'number' : undefined}
                       />
                     )}

@@ -962,43 +962,153 @@ interface SchemaComponent {
   orderIndex: number
 }
 
-// Expand range expressions like \"1-3,5,7-9\" or \"A-C,Z\"
-function expandRange(expr: string, type: 'alpha' | 'numeric', width: number): string[] {
-  const parts = expr.split(',').map((p) => p.trim()).filter(Boolean)
+// Expand range expressions like "1-3,5" or "A-C,Z" — must match src/utils/expandLocationGenerationRange.ts
+function expandRange(
+  expr: string,
+  type: 'alpha' | 'numeric',
+  width: number
+): { values: string[]; error?: string } {
+  const trimmed = expr.trim()
+  if (!trimmed) return { values: [] }
+
+  const parts = trimmed
+    .split(/[;,]+/g)
+    .map((p) => p.trim())
+    .filter(Boolean)
   const out: string[] = []
+
+  function alphaRangeCartesian(
+    startRaw: string,
+    endRaw: string
+  ): { values: string[]; error?: string } {
+    const start = startRaw.toUpperCase()
+    const end = endRaw.toUpperCase()
+    if (start.length !== end.length) {
+      return { values: [], error: `Range ends must match length (${startRaw}–${endRaw})` }
+    }
+    if (start.length !== width) {
+      return { values: [], error: `Range must be exactly ${width} letter(s) for this part` }
+    }
+    const cols: string[][] = []
+    for (let i = 0; i < start.length; i++) {
+      const a = start.charCodeAt(i)
+      const b = end.charCodeAt(i)
+      if (a < 65 || a > 90 || b < 65 || b > 90) {
+        return { values: [], error: `Use letters A–Z at each position` }
+      }
+      const lo = Math.min(a, b)
+      const hi = Math.max(a, b)
+      const col: string[] = []
+      for (let c = lo; c <= hi; c++) {
+        col.push(String.fromCharCode(c))
+      }
+      cols.push(col)
+    }
+    function cartesian(c: string[][]): string[] {
+      if (c.length === 0) return ['']
+      const [head, ...tail] = c
+      const rest = cartesian(tail)
+      const acc: string[] = []
+      for (const ch of head) {
+        for (const s of rest) {
+          acc.push(ch + s)
+        }
+      }
+      return acc
+    }
+    return { values: cartesian(cols) }
+  }
+
   for (const part of parts) {
-    if (part.includes('-')) {
-      const [startRaw, endRaw] = part.split('-').map((p) => p.trim())
-      if (!startRaw || !endRaw) continue
+    const m = part.match(/^([A-Za-z0-9]+)\s*-\s*([A-Za-z0-9]+)$/)
+    if (m) {
+      const start = m[1]
+      const end = m[2]
       if (type === 'numeric') {
-        const start = Number(startRaw)
-        const end = Number(endRaw)
-        if (!Number.isFinite(start) || !Number.isFinite(end)) continue
-        const lo = Math.min(start, end)
-        const hi = Math.max(start, end)
+        const a = parseInt(start, 10)
+        const b = parseInt(end, 10)
+        if (Number.isNaN(a) || Number.isNaN(b)) {
+          return { values: [], error: `Invalid numeric range: ${part}` }
+        }
+        const lo = Math.min(a, b)
+        const hi = Math.max(a, b)
         for (let n = lo; n <= hi; n++) {
-          out.push(n.toString().padStart(width, '0'))
+          if (!Number.isInteger(n) || n < 0) {
+            return { values: [], error: `Invalid number in range: ${n}` }
+          }
+          const padded = String(n).padStart(width, '0')
+          if (padded.length !== width) {
+            return { values: [], error: `Value ${n} does not fit in ${width} digit(s)` }
+          }
+          out.push(padded)
         }
       } else {
-        const start = startRaw.toUpperCase().charCodeAt(0)
-        const end = endRaw.toUpperCase().charCodeAt(0)
-        const lo = Math.min(start, end)
-        const hi = Math.max(start, end)
-        for (let c = lo; c <= hi; c++) {
-          out.push(String.fromCharCode(c))
+        if (width >= 2 && start.length === 1 && end.length === 1) {
+          return {
+            values: [],
+            error: `Use ${width} letters on each side (e.g. AA–BB), not single letters like ${part}`,
+          }
+        }
+        if (start.length === 1 && end.length === 1) {
+          const a = start.toUpperCase().charCodeAt(0)
+          const b = end.toUpperCase().charCodeAt(0)
+          if (a < 65 || a > 90 || b < 65 || b > 90) {
+            return { values: [], error: `Use letters A–Z in range: ${part}` }
+          }
+          const lo = Math.min(a, b)
+          const hi = Math.max(a, b)
+          for (let c = lo; c <= hi; c++) {
+            const ch = String.fromCharCode(c)
+            out.push(ch.padStart(width, 'A'))
+          }
+        } else {
+          const expanded = alphaRangeCartesian(start, end)
+          if (expanded.error) {
+            return { values: [], error: expanded.error }
+          }
+          out.push(...expanded.values)
         }
       }
+      continue
+    }
+
+    if (type === 'numeric') {
+      const n = parseInt(part, 10)
+      if (Number.isNaN(n)) {
+        return { values: [], error: `Invalid number: ${part}` }
+      }
+      if (!Number.isInteger(n) || n < 0) {
+        return { values: [], error: `Invalid number: ${part}` }
+      }
+      const padded = String(n).padStart(width, '0')
+      if (padded.length !== width) {
+        return { values: [], error: `Value ${n} does not fit in ${width} digit(s)` }
+      }
+      out.push(padded)
     } else {
-      if (type === 'numeric') {
-        const n = Number(part)
-        if (!Number.isFinite(n)) continue
-        out.push(n.toString().padStart(width, '0'))
-      } else {
-        out.push(uppercaseAsciiLetters(part))
+      const letters = uppercaseAsciiLetters(part)
+        .replace(/[^A-Za-z]/g, '')
+        .toUpperCase()
+      if (!letters) {
+        return { values: [], error: `Invalid letters: ${part}` }
       }
+      if (letters.length > width) {
+        return { values: [], error: `Use at most ${width} letter(s) in ${part}` }
+      }
+      if (!/^[A-Z]+$/.test(letters)) {
+        return { values: [], error: `Use letters A–Z only: ${part}` }
+      }
+      if (width >= 2 && letters.length < width) {
+        return {
+          values: [],
+          error: `Each value must be exactly ${width} letters (e.g. HH not H): ${part}`,
+        }
+      }
+      out.push(letters.padStart(width, 'A'))
     }
   }
-  return Array.from(new Set(out))
+
+  return { values: Array.from(new Set(out)) }
 }
 
 router.post('/zones/:zoneId/locations/generate', (req: AuthRequest, res) => {
@@ -1039,11 +1149,14 @@ router.post('/zones/:zoneId/locations/generate', (req: AuthRequest, res) => {
     if (!raw) {
       return res.status(400).json({ error: `Missing range for component ${comp.displayName}` })
     }
-    const values = expandRange(raw, comp.type, comp.width)
-    if (values.length === 0) {
+    const expanded = expandRange(raw, comp.type, comp.width)
+    if (expanded.error) {
+      return res.status(400).json({ error: `${comp.displayName}: ${expanded.error}` })
+    }
+    if (expanded.values.length === 0) {
       return res.status(400).json({ error: `No values produced for component ${comp.displayName}` })
     }
-    expandedPerKey.set(comp.key, values)
+    expandedPerKey.set(comp.key, expanded.values)
   }
 
   // Build cartesian product with a simple recursive generator
