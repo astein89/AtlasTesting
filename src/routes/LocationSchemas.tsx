@@ -58,7 +58,7 @@ export function LocationSchemas() {
   async function handleCreateSchema(e: React.FormEvent) {
     e.preventDefault()
     if (!newSchemaName.trim()) return
-    await api.post('/locations/schemas', {
+    const { data } = await api.post<LocationSchema>('/locations/schemas', {
       name: newSchemaName.trim(),
       description: newSchemaDescription.trim() || undefined,
     })
@@ -66,6 +66,7 @@ export function LocationSchemas() {
     setNewSchemaDescription('')
     setNewSchemaOpen(false)
     void refreshSchemas()
+    navigate(`/locations/schemas/${data.id}`)
   }
 
   function openEditSchema(s: LocationSchema) {

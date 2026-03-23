@@ -679,8 +679,15 @@ export function LocationZoneDetail() {
             <h1 className="text-2xl font-semibold text-foreground">
               Zone: {zone?.name ?? 'Loading…'}
             </h1>
+            {zone?.description?.trim() && (
+              <p className="mt-2 max-w-3xl whitespace-pre-wrap text-sm text-foreground/80">
+                {zone.description.trim()}
+              </p>
+            )}
             {zone && (
-              <p className="mt-1 text-sm text-foreground/70">
+              <p
+                className={`text-sm text-foreground/70 ${zone.description?.trim() ? 'mt-2' : 'mt-1'}`}
+              >
                 Schema: <span className="font-medium">{zone.schemaName}</span>
               </p>
             )}
@@ -1348,7 +1355,7 @@ export function LocationZoneDetail() {
                       <div key={c.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
                         <label className="shrink-0 text-sm font-medium text-foreground sm:w-44">
                           {c.displayName}{' '}
-                          <span className="font-normal text-foreground/60">({c.key})</span>
+                          <span className="font-normal text-foreground/60">({c.width})</span>
                         </label>
                         <input
                           type="text"
