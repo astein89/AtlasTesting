@@ -12,6 +12,9 @@ import { downloadCsvFromApi } from '../utils/downloadCsv'
 import { expandLocationGenerationRange, sanitizeGenerateRangeInput } from '../utils/expandLocationGenerationRange'
 import { sanitizeFilenameSegment } from '../utils/safeFilename'
 
+/** Must match server generation caps in `server/routes/locations.ts`. */
+const MAX_GENERATE_LOCATIONS = 25_000
+
 interface Zone {
   id: string
   name: string
@@ -711,6 +714,7 @@ export function LocationZoneDetail() {
     e.preventDefault()
     if (!zoneId) return
     if (preview.errors.length > 0 || preview.total === 0) return
+    if (preview.total > MAX_GENERATE_LOCATIONS) return
     try {
       setGenerating(true)
       setGenerateProgress({ processed: 0, total: preview.total })
@@ -1632,6 +1636,21 @@ export function LocationZoneDetail() {
                     </div>
                   )}
 
+                  {preview.errors.length === 0 && preview.total > MAX_GENERATE_LOCATIONS && (
+                    <div
+                      className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-900 dark:text-amber-100"
+                      role="alert"
+                    >
+                      <span className="font-medium">Too many locations.</span> This run would create{' '}
+                      <span className="tabular-nums font-semibold">{preview.total.toLocaleString()}</span>{' '}
+                      locations; the maximum per generation is{' '}
+                      <span className="tabular-nums font-semibold">
+                        {MAX_GENERATE_LOCATIONS.toLocaleString()}
+                      </span>
+                      . Narrow your ranges and try again.
+                    </div>
+                  )}
+
                   {generating && generateProgress && generateProgress.total > 0 && (
                     <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-3">
                       <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
@@ -1674,8 +1693,18 @@ export function LocationZoneDetail() {
                     <button
                       type="submit"
                       className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                      disabled={generating || preview.total === 0}
-                      title={preview.total === 0 ? 'Enter valid ranges to generate' : 'Generate locations'}
+                      disabled={
+                        generating ||
+                        preview.total === 0 ||
+                        preview.total > MAX_GENERATE_LOCATIONS
+                      }
+                      title={
+                        preview.total === 0
+                          ? 'Enter valid ranges to generate'
+                          : preview.total > MAX_GENERATE_LOCATIONS
+                            ? `At most ${MAX_GENERATE_LOCATIONS.toLocaleString()} locations per generation`
+                            : 'Generate locations'
+                      }
                     >
                       {generating ? 'Generating…' : `Generate (${preview.total.toLocaleString()})`}
                     </button>
