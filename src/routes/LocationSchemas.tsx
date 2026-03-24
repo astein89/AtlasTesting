@@ -142,6 +142,7 @@ export function LocationSchemas() {
 
       <SimpleDataTable
         preferenceKey="atlas-locations-schemas"
+        pagination
         rows={schemas}
         getRowKey={(s) => s.id}
         onRowClick={(s) => navigate(`/locations/schemas/${s.id}`)}

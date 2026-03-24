@@ -22,7 +22,8 @@ const isProd = process.env.NODE_ENV === 'production'
 const basePath = (process.env.BASE_PATH ?? '').replace(/\/$/, '')
 
 app.use(cors({ origin: true, credentials: true }))
-app.use(express.json())
+/** Default 100kb is too small for bulk location ops (many UUIDs). Override with JSON_BODY_LIMIT (e.g. 32mb). */
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? '15mb' }))
 
 // When BASE_PATH is unset, prefix should be '' so API mounts at `/api`, not `//api`
 const prefix = basePath || ''

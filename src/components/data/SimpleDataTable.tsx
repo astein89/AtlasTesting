@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ColumnFilterDropdown } from './ColumnFilterDropdown'
 import { useUserPreference } from '../../hooks/useUserPreference'
 
@@ -48,9 +48,39 @@ interface SimpleDataTableProps<Row> {
   onFilterSnapshotChange?: (snapshot: { hasActiveFilters: boolean; filteredRows: Row[] }) => void
   /** When true, shows a footer bar with “filtered of total” as two numbers (e.g. 3 of 12). */
   showFooterRowCount?: boolean
+  /**
+   * When true, only a page of rows is rendered at a time. Ignored if `enableRowReorder` is true.
+   * Full filtered rows are still passed to `onFilterSnapshotChange`.
+   */
+  pagination?: boolean
+}
+
+/** Numeric page sizes; `0` means show all rows (no slicing). */
+const PAGE_SIZE_OPTIONS = [100, 250, 500, 1000, 2500, 5000] as const
+const PAGE_SIZE_ALL = 0
+
+function deserializePageSize(s: string): number {
+  try {
+    const n = JSON.parse(s) as number
+    if (n === PAGE_SIZE_ALL) return PAGE_SIZE_ALL
+    if (PAGE_SIZE_OPTIONS.includes(n as (typeof PAGE_SIZE_OPTIONS)[number])) return n
+  } catch {
+    /* ignore */
+  }
+  return 500
 }
 
 const EMPTY_COLUMN_FILTER_SET = new Set<string>()
+
+function stableFilterFingerprint(filters: Record<string, string[]>): string {
+  const keys = Object.keys(filters).sort()
+  const normalized: Record<string, string[]> = {}
+  for (const k of keys) {
+    const arr = filters[k]
+    normalized[k] = Array.isArray(arr) ? [...arr].sort() : []
+  }
+  return JSON.stringify(normalized)
+}
 
 export function SimpleDataTable<Row>({
   preferenceKey,
@@ -68,7 +98,17 @@ export function SimpleDataTable<Row>({
   fillViewportHeight = false,
   onFilterSnapshotChange,
   showFooterRowCount,
+  pagination = false,
 }: SimpleDataTableProps<Row>) {
+  const pagingActive = !!pagination && !enableRowReorder
+  const [pageIndex, setPageIndex] = useState(0)
+  const [pageSize, setPageSize] = useUserPreference<number>(
+    `${preferenceKey}-page-size`,
+    500,
+    JSON.stringify,
+    deserializePageSize
+  )
+
   const [searchQuery, setSearchQuery] = useState('')
   const [sortKey, setSortKey] = useState<string>(disableSort ? '' : (columns[0]?.key ?? ''))
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -122,26 +162,77 @@ export function SimpleDataTable<Row>({
     return out
   }, [rows, columns, searchQuery, filterSets, sortKey, sortDir, disableSort, disableSearchAndFilters])
 
-  const displayRows = filteredRows
-  const displayRowKeys = useMemo(
-    () => displayRows.map((r, i) => (getRowKey ? getRowKey(r, i) : String(i))),
-    [displayRows, getRowKey]
+  const effectivePageSize = useMemo(() => {
+    if (pageSize === PAGE_SIZE_ALL) return PAGE_SIZE_ALL
+    const n = Number(pageSize)
+    if (Number.isFinite(n) && PAGE_SIZE_OPTIONS.includes(n as (typeof PAGE_SIZE_OPTIONS)[number])) return n
+    return 500
+  }, [pageSize])
+
+  /** Reset page only from real user actions — never from effects (prefs/columns refs break Next/Prev). */
+  const goToFirstPage = useCallback(() => {
+    if (pagingActive) setPageIndex(0)
+  }, [pagingActive])
+
+  const showAllRows = effectivePageSize === PAGE_SIZE_ALL
+  const pageSizeSafe = showAllRows
+    ? Math.max(1, filteredRows.length || 1)
+    : Math.max(1, effectivePageSize)
+  const totalFiltered = filteredRows.length
+  const totalPages =
+    totalFiltered === 0 || showAllRows ? 1 : Math.ceil(totalFiltered / pageSizeSafe)
+  const maxPageIndex = totalFiltered === 0 || showAllRows ? 0 : totalPages - 1
+
+  useEffect(() => {
+    if (!pagingActive) return
+    setPageIndex((i) => (i > maxPageIndex ? maxPageIndex : i))
+  }, [pagingActive, maxPageIndex])
+
+  const pageStart =
+    pagingActive && !showAllRows ? pageIndex * pageSizeSafe : 0
+  const pagedRows = useMemo(() => {
+    if (!pagingActive) return filteredRows
+    if (showAllRows) return filteredRows
+    return filteredRows.slice(pageStart, pageStart + pageSizeSafe)
+  }, [pagingActive, filteredRows, pageStart, pageSizeSafe, showAllRows])
+
+  /** Keys for all rows matching current filters — used for header “Select all” (includes every page when paginated). */
+  const allFilteredRowKeys = useMemo(
+    () => filteredRows.map((r, i) => (getRowKey ? getRowKey(r, i) : String(i))),
+    [filteredRows, getRowKey]
   )
+
   const selection = selectedKeys ?? new Set<string>()
   const displayAllSelected =
-    enableSelection && displayRowKeys.length > 0 && displayRowKeys.every((k) => selection.has(k))
+    enableSelection &&
+    allFilteredRowKeys.length > 0 &&
+    allFilteredRowKeys.every((k) => selection.has(k))
 
   const hasActiveFilters =
     !disableSearchAndFilters &&
     (searchQuery.trim() !== '' || Object.values(filterSets).some((s) => s.size > 0))
 
+  const filterFingerprint = useMemo(() => stableFilterFingerprint(columnFilters), [columnFilters])
+
+  const filteredRowsRef = useRef(filteredRows)
+  filteredRowsRef.current = filteredRows
+
   useEffect(() => {
     if (!onFilterSnapshotChange) return
     onFilterSnapshotChange({
       hasActiveFilters,
-      filteredRows: displayRows,
+      filteredRows: filteredRowsRef.current,
     })
-  }, [hasActiveFilters, displayRows, onFilterSnapshotChange])
+  }, [
+    hasActiveFilters,
+    rows,
+    filteredRows.length,
+    sortKey,
+    sortDir,
+    searchQuery,
+    filterFingerprint,
+    onFilterSnapshotChange,
+  ])
 
   /** Distinct values for the open filter only — avoids rebuilding/sorting all columns each render. */
   const openColumnDistinctValues = useMemo(() => {
@@ -161,10 +252,12 @@ export function SimpleDataTable<Row>({
   }, [openFilterColumn, rows, columns])
 
   const toggleHidden = (key: string) => {
+    goToFirstPage()
     setHiddenColumnKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
   }
 
   const clearAllFilters = () => {
+    goToFirstPage()
     setSearchQuery('')
     setColumnFilters({})
     setOpenFilterColumn(null)
@@ -189,7 +282,10 @@ export function SimpleDataTable<Row>({
               type="search"
               placeholder="Search..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
+                goToFirstPage()
+              }}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 pl-9 text-sm text-foreground placeholder:text-foreground/50"
             />
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground/50">
@@ -258,7 +354,7 @@ export function SimpleDataTable<Row>({
         )}
         {hasActiveFilters && !showFooterRowCount && (
           <span className="text-sm text-foreground/60">
-            {displayRows.length} of {rows.length} rows
+            {filteredRows.length} of {rows.length} rows
           </span>
         )}
       </div>
@@ -292,9 +388,9 @@ export function SimpleDataTable<Row>({
                         if (!onSelectedKeysChange) return
                         const next = new Set(selection)
                         if (e.target.checked) {
-                          for (const k of displayRowKeys) next.add(k)
+                          for (const k of allFilteredRowKeys) next.add(k)
                         } else {
-                          for (const k of displayRowKeys) next.delete(k)
+                          for (const k of allFilteredRowKeys) next.delete(k)
                         }
                         onSelectedKeysChange(next)
                       }}
@@ -323,6 +419,7 @@ export function SimpleDataTable<Row>({
                     }`}
                     onClick={() => {
                       if (disableSort) return
+                      goToFirstPage()
                       if (sortKey !== c.key) {
                         setSortKey(c.key)
                         setSortDir('asc')
@@ -364,6 +461,7 @@ export function SimpleDataTable<Row>({
                         values={openColumnDistinctValues}
                         selected={filterSets[c.key] ?? EMPTY_COLUMN_FILTER_SET}
                         onChange={(s) => {
+                          goToFirstPage()
                           startTransition(() => {
                             setColumnFilters((prev) => ({
                               ...prev,
@@ -382,12 +480,13 @@ export function SimpleDataTable<Row>({
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((r, idx) => {
-              const k = getRowKey ? getRowKey(r, idx) : String(idx)
+            {(pagingActive ? pagedRows : filteredRows).map((r, idx) => {
+              const globalIdx = pagingActive ? pageStart + idx : idx
+              const k = getRowKey ? getRowKey(r, globalIdx) : String(globalIdx)
               const isDragOver = enableRowReorder && dragOverKey === k && draggingKey && draggingKey !== k
               const rowIndex = idx
               const draggingIndex = draggingKey
-                ? displayRows.findIndex((row, i) => (getRowKey ? getRowKey(row, i) : String(i)) === draggingKey)
+                ? filteredRows.findIndex((row, i) => (getRowKey ? getRowKey(row, i) : String(i)) === draggingKey)
                 : -1
               const showDropAbove = !!isDragOver && draggingIndex >= 0 && draggingIndex < rowIndex
               const showDropBelow = !!isDragOver && draggingIndex >= 0 && draggingIndex > rowIndex
@@ -479,7 +578,7 @@ export function SimpleDataTable<Row>({
                 </tr>
               )
             })}
-            {displayRows.length === 0 && (
+            {filteredRows.length === 0 && (
               <tr>
                 <td
                   className="px-4 py-6 text-center text-sm text-foreground/60"
@@ -492,17 +591,87 @@ export function SimpleDataTable<Row>({
           </tbody>
         </table>
         </div>
-        {showFooterRowCount && (
+        {(showFooterRowCount || (pagingActive && totalFiltered > 0)) && (
           <div
             className={`shrink-0 border-t border-border bg-muted/40 px-4 py-2.5 text-left text-sm text-foreground/90 ${
               fillViewportHeight ? '' : 'w-full min-w-0'
-            }`}
+            } ${showFooterRowCount && pagingActive && totalFiltered > 0 ? 'flex flex-col gap-2' : ''}`}
             role="status"
             aria-live="polite"
           >
-            <span className="tabular-nums font-medium text-foreground">{displayRows.length}</span>
-            <span className="text-foreground/80"> of </span>
-            <span className="tabular-nums text-foreground/90">{rows.length}</span>
+            {pagingActive && totalFiltered > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded border border-border bg-background px-2 py-1 text-sm hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={showAllRows || pageIndex <= 0}
+                    aria-label="Previous page"
+                    onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-border bg-background px-2 py-1 text-sm hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={showAllRows || pageIndex >= maxPageIndex}
+                    aria-label="Next page"
+                    onClick={() => setPageIndex((i) => Math.min(maxPageIndex, i + 1))}
+                  >
+                    Next
+                  </button>
+                  {!showAllRows && totalPages > 1 && (
+                    <span className="text-foreground/80">
+                      Page{' '}
+                      <span className="tabular-nums font-medium text-foreground">{pageIndex + 1}</span>
+                      {' of '}
+                      <span className="tabular-nums text-foreground/90">{totalPages}</span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {!showAllRows && (
+                    <span className="text-foreground/80">
+                      Showing{' '}
+                      <span className="tabular-nums font-medium text-foreground">{pageStart + 1}</span>
+                      <span className="text-foreground/80">–</span>
+                      <span className="tabular-nums font-medium text-foreground">
+                        {pageStart + pagedRows.length}
+                      </span>
+                      {' of '}
+                      <span className="tabular-nums text-foreground/90">{totalFiltered}</span>
+                    </span>
+                  )}
+                  <label className="flex items-center gap-2 text-foreground/80">
+                    <span className="whitespace-nowrap">Rows per page</span>
+                    <select
+                      className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                      value={effectivePageSize === PAGE_SIZE_ALL ? 'all' : String(effectivePageSize)}
+                      aria-label="Rows per page"
+                      onChange={(e) => {
+                        const v = e.target.value
+                        goToFirstPage()
+                        setPageSize(v === 'all' ? PAGE_SIZE_ALL : Number(v))
+                      }}
+                    >
+                      {PAGE_SIZE_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                      <option value="all">All</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            )}
+            {showFooterRowCount && (
+              <div>
+                <span className="tabular-nums font-medium text-foreground">{filteredRows.length}</span>
+                <span className="text-foreground/80"> of </span>
+                <span className="tabular-nums text-foreground/90">{rows.length}</span>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { SimpleDataTable, type SimpleColumn } from '../components/data/SimpleDataTable'
+import { getBasePath } from '../lib/basePath'
+import { useAuthStore } from '../store/authStore'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { formatSelectOptionLabel, selectOptionTitle, type LocationSchemaField } from '../types/locationSchemaFields'
@@ -91,6 +94,109 @@ function validateSchemaFieldInput(f: LocationSchemaField, raw: string): string |
   return null
 }
 
+async function postGenerateLocationsStream(
+  zoneId: string,
+  body: Record<string, unknown>,
+  onProgress: (processed: number, total: number) => void
+): Promise<{ created: number; skipped: number; totalRequested: number }> {
+  const basePath = (getBasePath() ?? '').replace(/\/$/, '')
+  const url = `${basePath}/api/locations/zones/${encodeURIComponent(zoneId)}/locations/generate?stream=1`
+  const token = useAuthStore.getState().accessToken
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`
+    try {
+      const text = await res.text()
+      const json = JSON.parse(text) as { error?: string }
+      if (json?.error) message = json.error
+      else if (text) message = text.slice(0, 300)
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message)
+  }
+
+  const reader = res.body?.getReader()
+  if (!reader) throw new Error('No response body')
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let complete: { created: number; skipped: number; totalRequested: number } | null = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+
+    let newlineIdx: number
+    while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newlineIdx).trim()
+      buffer = buffer.slice(newlineIdx + 1)
+      if (!line) continue
+      let msg: {
+        type?: string
+        processed?: number
+        total?: number
+        created?: number
+        skipped?: number
+        totalRequested?: number
+      }
+      try {
+        msg = JSON.parse(line) as typeof msg
+      } catch {
+        continue
+      }
+      if (msg.type === 'progress' && typeof msg.processed === 'number' && typeof msg.total === 'number') {
+        const pr = msg.processed
+        const tot = msg.total
+        // Flush so multiple NDJSON lines in one chunk still update the bar (React 18 batches otherwise).
+        flushSync(() => {
+          onProgress(pr, tot)
+        })
+      } else if (msg.type === 'complete') {
+        complete = {
+          created: msg.created ?? 0,
+          skipped: msg.skipped ?? 0,
+          totalRequested: msg.totalRequested ?? 0,
+        }
+      }
+    }
+
+    if (done) break
+  }
+
+  const tail = buffer.trim()
+  if (tail) {
+    try {
+      const msg = JSON.parse(tail) as {
+        type?: string
+        created?: number
+        skipped?: number
+        totalRequested?: number
+      }
+      if (msg.type === 'complete') {
+        complete = {
+          created: msg.created ?? 0,
+          skipped: msg.skipped ?? 0,
+          totalRequested: msg.totalRequested ?? 0,
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!complete) throw new Error('Generate finished without a result')
+  return complete
+}
+
 export function LocationZoneDetail() {
   const { showConfirm } = useAlertConfirm()
   const { zoneId } = useParams<{ zoneId: string }>()
@@ -103,6 +209,9 @@ export function LocationZoneDetail() {
   const [error, setError] = useState<string | null>(null)
   const [generateOpen, setGenerateOpen] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [generateProgress, setGenerateProgress] = useState<{ processed: number; total: number } | null>(
+    null
+  )
   const [selectedLocationIds, setSelectedLocationIds] = useState<Set<string>>(new Set())
   const [exportChoiceOpen, setExportChoiceOpen] = useState(false)
   const [tableFilterActive, setTableFilterActive] = useState(false)
@@ -124,6 +233,18 @@ export function LocationZoneDetail() {
   const [editLocationFieldErrors, setEditLocationFieldErrors] = useState<Record<string, string>>({})
   const [editLocationSchemaFieldValues, setEditLocationSchemaFieldValues] = useState<Record<string, string>>({})
   const [editLocationSchemaFieldErrors, setEditLocationSchemaFieldErrors] = useState<Record<string, string>>({})
+
+  /** Progress for bulk edit (stepped) or bulk delete (one-shot; count for label only). */
+  const [mutationProgress, setMutationProgress] = useState<
+    | { kind: 'bulk-edit'; processed: number; total: number }
+    | { kind: 'bulk-delete'; count: number }
+    | null
+  >(null)
+  /** Indeterminate busy state for single-location save or delete. */
+  const [singleMutation, setSingleMutation] = useState<'save' | 'delete' | null>(null)
+
+  const mutationBusy =
+    mutationProgress !== null || singleMutation !== null || savingBulkLocations
 
   useEffect(() => {
     if (!zoneId) return
@@ -150,7 +271,7 @@ export function LocationZoneDetail() {
     }
   }
 
-  async function refreshLocations(id: string) {
+  const refreshLocations = useCallback(async (id: string) => {
     setError(null)
     try {
       const { data } = await api.get<LocationRow[]>(`/locations/zones/${id}/locations`)
@@ -172,7 +293,7 @@ export function LocationZoneDetail() {
       setLocations([])
       setSelectedLocationIds(new Set())
     }
-  }
+  }, [])
 
   const onLocationsFilterSnapshot = useCallback(
     (snapshot: { hasActiveFilters: boolean; filteredRows: LocationRow[] }) => {
@@ -268,32 +389,38 @@ export function LocationZoneDetail() {
     URL.revokeObjectURL(url)
   }
 
-  async function handleDeleteLocation(locationId: string) {
-    if (!zoneId) return
-    const loc = locations.find((l) => l.id === locationId)
-    const ok = await showConfirm(
-      `Delete location "${loc?.code ?? 'this location'}"? This cannot be undone.`,
-      {
-        title: 'Delete location',
-        confirmLabel: 'Delete',
-        cancelLabel: 'Cancel',
-        variant: 'danger',
+  const handleDeleteLocation = useCallback(
+    async (locationId: string) => {
+      if (!zoneId) return
+      const loc = locations.find((l) => l.id === locationId)
+      const ok = await showConfirm(
+        `Delete location "${loc?.code ?? 'this location'}"? This cannot be undone.`,
+        {
+          title: 'Delete location',
+          confirmLabel: 'Delete',
+          cancelLabel: 'Cancel',
+          variant: 'danger',
+        }
+      )
+      if (!ok) return
+      try {
+        setSingleMutation('delete')
+        await api.delete(`/locations/zones/${zoneId}/locations/${locationId}`)
+        setSelectedLocationIds((prev) => {
+          const next = new Set(prev)
+          next.delete(locationId)
+          return next
+        })
+        void refreshLocations(zoneId)
+      } catch {
+        // eslint-disable-next-line no-alert
+        window.alert('Failed to delete location')
+      } finally {
+        setSingleMutation(null)
       }
-    )
-    if (!ok) return
-    try {
-      await api.delete(`/locations/zones/${zoneId}/locations/${locationId}`)
-      setSelectedLocationIds((prev) => {
-        const next = new Set(prev)
-        next.delete(locationId)
-        return next
-      })
-      void refreshLocations(zoneId)
-    } catch {
-      // eslint-disable-next-line no-alert
-      window.alert('Failed to delete location')
-    }
-  }
+    },
+    [zoneId, locations, showConfirm, refreshLocations]
+  )
 
   function openEditZoneModal() {
     if (!zone) return
@@ -321,23 +448,26 @@ export function LocationZoneDetail() {
     }
   }
 
-  function openEditLocation(loc: LocationRow) {
-    const next: Record<string, string> = {}
-    for (const c of components) {
-      const raw = String(loc.components?.[c.key] ?? '')
-      next[c.key] = sanitizeLocationComponentInput(c, raw)
-    }
-    setEditLocationComponents(next)
-    setEditLocationFieldErrors({})
-    const fvv: Record<string, string> = {}
-    for (const f of schemaFields) {
-      const v = loc.fieldValues?.[f.key]
-      fvv[f.key] = v === undefined || v === null ? '' : String(v)
-    }
-    setEditLocationSchemaFieldValues(fvv)
-    setEditLocationSchemaFieldErrors({})
-    setEditingLocation(loc)
-  }
+  const openEditLocation = useCallback(
+    (loc: LocationRow) => {
+      const next: Record<string, string> = {}
+      for (const c of components) {
+        const raw = String(loc.components?.[c.key] ?? '')
+        next[c.key] = sanitizeLocationComponentInput(c, raw)
+      }
+      setEditLocationComponents(next)
+      setEditLocationFieldErrors({})
+      const fvv: Record<string, string> = {}
+      for (const f of schemaFields) {
+        const v = loc.fieldValues?.[f.key]
+        fvv[f.key] = v === undefined || v === null ? '' : String(v)
+      }
+      setEditLocationSchemaFieldValues(fvv)
+      setEditLocationSchemaFieldErrors({})
+      setEditingLocation(loc)
+    },
+    [components, schemaFields]
+  )
 
   async function handleSaveLocation(e: React.FormEvent) {
     e.preventDefault()
@@ -361,6 +491,7 @@ export function LocationZoneDetail() {
     setEditLocationSchemaFieldErrors({})
     try {
       setSavingLocation(true)
+      setSingleMutation('save')
       const fvPayload: Record<string, unknown> = {}
       for (const f of schemaFields) {
         const raw = (editLocationSchemaFieldValues[f.key] ?? '').trim()
@@ -379,6 +510,7 @@ export function LocationZoneDetail() {
       window.alert(msg ?? 'Failed to save location')
     } finally {
       setSavingLocation(false)
+      setSingleMutation(null)
     }
   }
 
@@ -440,12 +572,16 @@ export function LocationZoneDetail() {
     setBulkSchemaFieldErrors({})
     try {
       setSavingBulkLocations(true)
+      setMutationProgress({ kind: 'bulk-edit', processed: 0, total: ids.length })
       let ok = 0
       let failed = 0
       const body: { components?: Record<string, string>; fieldValues?: Record<string, unknown> } = {}
       if (Object.keys(partial).length > 0) body.components = partial
       if (Object.keys(fieldPartial).length > 0) body.fieldValues = fieldPartial
-      for (const id of ids) {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i]!
+        setMutationProgress({ kind: 'bulk-edit', processed: i, total: ids.length })
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
         try {
           // eslint-disable-next-line no-await-in-loop
           await api.put(`/locations/zones/${zoneId}/locations/${id}`, body)
@@ -453,6 +589,7 @@ export function LocationZoneDetail() {
         } catch {
           failed++
         }
+        setMutationProgress({ kind: 'bulk-edit', processed: i + 1, total: ids.length })
       }
       setBulkLocationsOpen(false)
       setSelectedLocationIds(new Set())
@@ -463,6 +600,7 @@ export function LocationZoneDetail() {
       }
     } finally {
       setSavingBulkLocations(false)
+      setMutationProgress(null)
     }
   }
 
@@ -480,18 +618,17 @@ export function LocationZoneDetail() {
       }
     )
     if (!ok) return
+    const ids = Array.from(selectedLocationIds)
     try {
-      const ids = Array.from(selectedLocationIds)
-      for (const id of ids) {
-        // sequential to keep it simple & avoid overloading
-        // eslint-disable-next-line no-await-in-loop
-        await api.delete(`/locations/zones/${zoneId}/locations/${id}`)
-      }
+      setMutationProgress({ kind: 'bulk-delete', count: ids.length })
+      await api.post<{ deleted: number }>(`/locations/zones/${zoneId}/locations/bulk-delete`, { ids })
       setSelectedLocationIds(new Set())
       void refreshLocations(zoneId)
     } catch {
       // eslint-disable-next-line no-alert
       window.alert('Failed to delete selected locations')
+    } finally {
+      setMutationProgress(null)
     }
   }
 
@@ -576,15 +713,19 @@ export function LocationZoneDetail() {
     if (preview.errors.length > 0 || preview.total === 0) return
     try {
       setGenerating(true)
+      setGenerateProgress({ processed: 0, total: preview.total })
       const fv: Record<string, unknown> = {}
       for (const f of schemaFields) {
         const raw = (generateFieldValues[f.key] ?? '').trim()
         if (raw === '') continue
         fv[f.key] = f.type === 'number' ? Number(raw) : raw
       }
-      await api.post(`/locations/zones/${zoneId}/locations/generate`, {
+      const body: Record<string, unknown> = {
         components: ranges,
         ...(Object.keys(fv).length > 0 ? { fieldValues: fv } : {}),
+      }
+      await postGenerateLocationsStream(zoneId, body, (processed, total) => {
+        setGenerateProgress({ processed, total })
       })
       const clearedRanges: Record<string, string> = {}
       for (const c of components) clearedRanges[c.key] = ''
@@ -598,6 +739,7 @@ export function LocationZoneDetail() {
       setError('Failed to generate locations')
     } finally {
       setGenerating(false)
+      setGenerateProgress(null)
     }
   }
 
@@ -627,6 +769,41 @@ export function LocationZoneDetail() {
     }
     return cols
   }, [components, schemaFields])
+
+  const getLocationRowKey = useCallback((l: LocationRow) => l.id, [])
+
+  const tableColumnsWithActions = useMemo(
+    () => [
+      ...locationColumns,
+      {
+        key: 'actions',
+        label: '',
+        width: '8rem',
+        getValue: () => '',
+        render: (l: LocationRow) => (
+          <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background disabled:opacity-50"
+              onClick={() => openEditLocation(l)}
+              disabled={mutationBusy}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+              onClick={() => void handleDeleteLocation(l.id)}
+              disabled={mutationBusy}
+            >
+              Delete
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [locationColumns, openEditLocation, handleDeleteLocation, mutationBusy]
+  )
 
   return (
     <div className="flex h-[calc(100dvh-5rem)] max-h-[calc(100dvh-5rem)] min-h-0 flex-col gap-4">
@@ -681,37 +858,37 @@ export function LocationZoneDetail() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
-            onClick={openBulkLocationsModal}
-            disabled={selectedLocationIds.size <= 1}
-            title={
-              selectedLocationIds.size <= 1
-                ? 'Select at least two locations to use bulk edit'
-                : 'Apply component or field values to selected locations'
-            }
-          >
-            Bulk edit…
-          </button>
-          <button
-            type="button"
-            className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
-            onClick={handleExportSelected}
-            disabled={selectedLocationIds.size === 0}
-            title={selectedLocationIds.size === 0 ? 'Select one or more locations first' : 'Export selected locations (CSV)'}
-          >
-            Export selected
-          </button>
-          <button
-            type="button"
-            className="rounded border border-red-500/50 bg-background px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10 disabled:opacity-50"
-            onClick={() => void handleDeleteSelectedLocations()}
-            disabled={selectedLocationIds.size === 0}
-            title={selectedLocationIds.size === 0 ? 'Select one or more locations first' : 'Delete selected locations'}
-          >
-            Delete selected
-          </button>
+            <button
+              type="button"
+              className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
+              onClick={openBulkLocationsModal}
+              disabled={mutationBusy || selectedLocationIds.size <= 1}
+              title={
+                selectedLocationIds.size <= 1
+                  ? 'Select at least two locations to use bulk edit'
+                  : 'Apply component or field values to selected locations'
+              }
+            >
+              Bulk edit…
+            </button>
+            <button
+              type="button"
+              className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
+              onClick={handleExportSelected}
+              disabled={mutationBusy || selectedLocationIds.size === 0}
+              title={selectedLocationIds.size === 0 ? 'Select one or more locations first' : 'Export selected locations (CSV)'}
+            >
+              Export selected
+            </button>
+            <button
+              type="button"
+              className="rounded border border-red-500/50 bg-background px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+              onClick={() => void handleDeleteSelectedLocations()}
+              disabled={mutationBusy || selectedLocationIds.size === 0}
+              title={selectedLocationIds.size === 0 ? 'Select one or more locations first' : 'Delete selected locations'}
+            >
+              Delete selected
+            </button>
           <button
             type="button"
             className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
@@ -726,41 +903,16 @@ export function LocationZoneDetail() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <SimpleDataTable
             fillViewportHeight
+            pagination
             preferenceKey={`atlas-locations-zone-${zoneId ?? 'unknown'}-locations`}
             rows={locations}
-            getRowKey={(l) => l.id}
+            getRowKey={getLocationRowKey}
             enableSelection
             selectedKeys={selectedLocationIds}
             onSelectedKeysChange={setSelectedLocationIds}
             onFilterSnapshotChange={onLocationsFilterSnapshot}
             showFooterRowCount
-            columns={[
-              ...locationColumns,
-              {
-                key: 'actions',
-                label: '',
-                width: '8rem',
-                getValue: () => '',
-                render: (l) => (
-                  <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-                      onClick={() => openEditLocation(l as LocationRow)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
-                      onClick={() => void handleDeleteLocation((l as LocationRow).id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ),
-              },
-            ]}
+            columns={tableColumnsWithActions}
           />
       </div>
       {bulkLocationsOpen && (
@@ -816,6 +968,37 @@ export function LocationZoneDetail() {
                   length, or select options.
                 </div>
               )}
+              {savingBulkLocations &&
+                mutationProgress?.kind === 'bulk-edit' &&
+                mutationProgress.total > 0 && (
+                  <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-3">
+                    <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
+                      <span>Applying bulk edit</span>
+                      <span className="tabular-nums font-medium text-foreground">
+                        {mutationProgress.processed.toLocaleString()} /{' '}
+                        {mutationProgress.total.toLocaleString()}
+                      </span>
+                    </div>
+                    <div
+                      className="h-2.5 w-full overflow-hidden rounded-full bg-background"
+                      role="progressbar"
+                      aria-valuenow={mutationProgress.processed}
+                      aria-valuemin={0}
+                      aria-valuemax={mutationProgress.total}
+                      aria-label="Bulk edit progress"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.round((mutationProgress.processed / mutationProgress.total) * 100)
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               {components.map((c) => (
                 <div key={c.id}>
                   <label className="block text-sm font-medium text-foreground">
@@ -1088,6 +1271,7 @@ export function LocationZoneDetail() {
           <div
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
             onClick={() => {
+              if (savingLocation) return
               setEditingLocation(null)
               setEditLocationFieldErrors({})
               setEditLocationSchemaFieldErrors({})
@@ -1108,11 +1292,13 @@ export function LocationZoneDetail() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (savingLocation) return
                     setEditingLocation(null)
                     setEditLocationFieldErrors({})
                     setEditLocationSchemaFieldErrors({})
                   }}
                   className="shrink-0 rounded-lg px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                  disabled={savingLocation}
                 >
                   Close
                 </button>
@@ -1261,10 +1447,26 @@ export function LocationZoneDetail() {
                     ))}
                   </div>
                 )}
+                {savingLocation && singleMutation === 'save' && (
+                  <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-3">
+                    <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
+                      <span>Saving location</span>
+                    </div>
+                    <div
+                      className="h-2.5 w-full overflow-hidden rounded-full bg-background"
+                      role="progressbar"
+                      aria-busy="true"
+                      aria-label="Saving location"
+                    >
+                      <div className="h-full w-full animate-pulse rounded-full bg-primary/85" />
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"
                     onClick={() => {
+                      if (savingLocation) return
                       setEditingLocation(null)
                       setEditLocationFieldErrors({})
                       setEditLocationSchemaFieldErrors({})
@@ -1289,7 +1491,9 @@ export function LocationZoneDetail() {
         {generateOpen && (
           <div
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => setGenerateOpen(false)}
+            onClick={() => {
+              if (!generating) setGenerateOpen(false)
+            }}
           >
             <div
               className="w-full max-w-4xl rounded-xl border border-border bg-card p-6 shadow-lg"
@@ -1305,8 +1509,11 @@ export function LocationZoneDetail() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setGenerateOpen(false)}
-                  className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm text-foreground/70 hover:bg-background"
+                  onClick={() => {
+                    if (!generating) setGenerateOpen(false)
+                  }}
+                  disabled={generating}
+                  className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm text-foreground/70 hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Close
                 </button>
@@ -1425,6 +1632,36 @@ export function LocationZoneDetail() {
                     </div>
                   )}
 
+                  {generating && generateProgress && generateProgress.total > 0 && (
+                    <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-3">
+                      <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
+                        <span>Generating locations</span>
+                        <span className="tabular-nums font-medium text-foreground">
+                          {generateProgress.processed.toLocaleString()} /{' '}
+                          {generateProgress.total.toLocaleString()}
+                        </span>
+                      </div>
+                      <div
+                        className="h-2.5 w-full overflow-hidden rounded-full bg-background"
+                        role="progressbar"
+                        aria-valuenow={generateProgress.processed}
+                        aria-valuemin={0}
+                        aria-valuemax={generateProgress.total}
+                        aria-label="Generate progress"
+                      >
+                        <div
+                          className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round((generateProgress.processed / generateProgress.total) * 100)
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-auto flex flex-wrap justify-end gap-2 border-t border-border pt-4">
                     <button
                       type="button"
@@ -1492,6 +1729,44 @@ export function LocationZoneDetail() {
             </div>
           </div>
         )}
+      {mutationProgress?.kind === 'bulk-delete' || singleMutation === 'delete' ? (
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-[110] border-t border-border bg-card/95 px-4 py-3 shadow-[0_-4px_24px_rgba(0,0,0,0.12)] backdrop-blur supports-[backdrop-filter]:bg-card/85 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.35)]">
+          <div className="pointer-events-auto mx-auto max-w-3xl space-y-1.5">
+            {mutationProgress?.kind === 'bulk-delete' ? (
+              <>
+                <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
+                  <span>
+                    Deleting {mutationProgress.count.toLocaleString()} location
+                    {mutationProgress.count === 1 ? '' : 's'}…
+                  </span>
+                </div>
+                <div
+                  className="h-2.5 w-full overflow-hidden rounded-full bg-background"
+                  role="progressbar"
+                  aria-busy="true"
+                  aria-label="Bulk delete in progress"
+                >
+                  <div className="h-full w-full animate-pulse rounded-full bg-primary/85" />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
+                  <span>Deleting location</span>
+                </div>
+                <div
+                  className="h-2.5 w-full overflow-hidden rounded-full bg-background"
+                  role="progressbar"
+                  aria-busy="true"
+                  aria-label="Deleting location"
+                >
+                  <div className="h-full w-full animate-pulse rounded-full bg-primary/85" />
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

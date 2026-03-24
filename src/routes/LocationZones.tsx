@@ -371,6 +371,7 @@ export function LocationZones() {
       )}
       <SimpleDataTable
         preferenceKey="atlas-locations-zones"
+        pagination
         rows={zones}
         getRowKey={(z) => z.id}
         enableSelection

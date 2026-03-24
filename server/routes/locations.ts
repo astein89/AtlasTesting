@@ -7,6 +7,21 @@ const router = Router()
 
 router.use(authMiddleware, requireAdmin)
 
+/** Cap for cartesian product size in POST .../locations/generate (memory + insert time). Override with LOCATION_GENERATE_MAX_ROWS. */
+const DEFAULT_MAX_GENERATE_ROWS = 100_000
+const ABSOLUTE_MAX_GENERATE_ROWS = 500_000
+/** Old server hard cap; many deployments set LOCATION_GENERATE_MAX_ROWS=5000 to match — treat as “use default”, not a literal max. */
+const LEGACY_ENV_MAX_ROWS = 5000
+
+function getMaxGenerateRows(): number {
+  const raw = process.env.LOCATION_GENERATE_MAX_ROWS
+  if (raw == null || raw === '') return DEFAULT_MAX_GENERATE_ROWS
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_MAX_GENERATE_ROWS
+  if (n === LEGACY_ENV_MAX_ROWS) return DEFAULT_MAX_GENERATE_ROWS
+  return Math.min(Math.floor(n), ABSOLUTE_MAX_GENERATE_ROWS)
+}
+
 /** Safe segment for Content-Disposition filename (ASCII). */
 function sanitizeFilenameSegment(raw: string): string {
   const s = String(raw || 'zone')
@@ -809,6 +824,37 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
   res.json(out)
 })
 
+/** Delete many locations in this zone in one round-trip (batched SQL; avoids N sequential HTTP deletes). */
+router.post('/zones/:zoneId/locations/bulk-delete', (req: AuthRequest, res) => {
+  const { zoneId } = req.params
+  const zone = db.prepare(`SELECT id FROM zones WHERE id = ?`).get(zoneId) as { id: string } | undefined
+  if (!zone) return res.status(404).json({ error: 'Zone not found' })
+
+  const body = req.body as { ids?: unknown }
+  const ids = Array.isArray(body.ids)
+    ? body.ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : []
+  if (ids.length === 0) return res.status(400).json({ error: 'Provide a non-empty ids array' })
+
+  const MAX_IDS = 100_000
+  if (ids.length > MAX_IDS) {
+    return res.status(400).json({ error: `At most ${MAX_IDS.toLocaleString()} ids per request` })
+  }
+
+  const chunkSize = 400
+  let deleted = 0
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    const ph = chunk.map(() => '?').join(',')
+    const info = db
+      .prepare(`DELETE FROM locations WHERE zone_id = ? AND id IN (${ph})`)
+      .run(zoneId, ...chunk)
+    deleted += info.changes
+  }
+
+  res.json({ deleted })
+})
+
 router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
   const { zoneId, locationId } = req.params
   const zone = db
@@ -1111,7 +1157,13 @@ function expandRange(
   return { values: Array.from(new Set(out)) }
 }
 
-router.post('/zones/:zoneId/locations/generate', (req: AuthRequest, res) => {
+/** Yield so Node can flush streamed `res.write` chunks; long sync loops starve the event loop. */
+function yieldEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) => {
+  try {
   const { zoneId } = req.params
   const zone = db
     .prepare(`SELECT id, schema_id as schemaId FROM zones WHERE id = ?`)
@@ -1178,11 +1230,23 @@ router.post('/zones/:zoneId/locations/generate', (req: AuthRequest, res) => {
 
   build(0, {})
 
-  const MAX_ROWS = 5000
-  if (rows.length > MAX_ROWS) {
-    return res
-      .status(400)
-      .json({ error: `Too many locations to generate (${rows.length}). Please narrow your ranges.` })
+  const maxRows = getMaxGenerateRows()
+  if (rows.length > maxRows) {
+    return res.status(400).json({
+      error: `Too many locations to generate (${rows.length.toLocaleString()}). Maximum is ${maxRows.toLocaleString()}. Narrow your ranges, or set LOCATION_GENERATE_MAX_ROWS on the server (cap ${ABSOLUTE_MAX_GENERATE_ROWS.toLocaleString()}).`,
+    })
+  }
+
+  const streamProgress =
+    req.query.stream === '1' ||
+    req.query.stream === 'true' ||
+    String(req.query.stream ?? '').toLowerCase() === 'yes'
+
+  if (streamProgress) {
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
   }
 
   let created = 0
@@ -1193,9 +1257,12 @@ router.post('/zones/:zoneId/locations/generate', (req: AuthRequest, res) => {
      VALUES (?, ?, ?, ?, ?, ?)`
   )
 
-  for (const r of rows) {
+  const totalRows = rows.length
+  const progressEvery = Math.max(1, Math.ceil(totalRows / 200))
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!
     const id = uuidv4()
-    // Combined code: concatenate component values in order.
     const code = components.map((c) => r[c.key]).join('')
     const result = insertStmt.run(
       id,
@@ -1205,11 +1272,46 @@ router.post('/zones/:zoneId/locations/generate', (req: AuthRequest, res) => {
       JSON.stringify(r),
       optionalFieldValuesJson
     )
-    if ((result as any).changes > 0) created++
+    if (((result as { changes?: number }).changes ?? 0) > 0) created++
     else skipped++
+
+    if (
+      streamProgress &&
+      ((i + 1) % progressEvery === 0 || i === rows.length - 1)
+    ) {
+      res.write(
+        JSON.stringify({ type: 'progress', processed: i + 1, total: totalRows }) + '\n'
+      )
+      await yieldEventLoop()
+    }
   }
 
-  res.json({ created, skipped, totalRequested: rows.length })
+  if (streamProgress) {
+    res.write(
+      JSON.stringify({
+        type: 'complete',
+        created,
+        skipped,
+        totalRequested: totalRows,
+      }) + '\n'
+    )
+    await yieldEventLoop()
+    res.end()
+  } else {
+    res.json({ created, skipped, totalRequested: totalRows })
+  }
+  } catch (err) {
+    console.error('[locations/generate]', err)
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate locations' })
+    } else {
+      try {
+        res.end()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 })
 
 // Export all locations for selected zones as CSV (simple aggregate).
