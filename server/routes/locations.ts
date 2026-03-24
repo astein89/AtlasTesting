@@ -7,9 +7,9 @@ const router = Router()
 
 router.use(authMiddleware, requireAdmin)
 
-/** Cap for cartesian product size in POST .../locations/generate (memory + insert time). Override with LOCATION_GENERATE_MAX_ROWS. */
-const DEFAULT_MAX_GENERATE_ROWS = 100_000
-const ABSOLUTE_MAX_GENERATE_ROWS = 500_000
+/** Cap for cartesian product size in POST .../locations/generate (memory + insert time). Override with LOCATION_GENERATE_MAX_ROWS (cannot exceed absolute cap). */
+const DEFAULT_MAX_GENERATE_ROWS = 25_000
+const ABSOLUTE_MAX_GENERATE_ROWS = 25_000
 /** Old server hard cap; many deployments set LOCATION_GENERATE_MAX_ROWS=5000 to match — treat as “use default”, not a literal max. */
 const LEGACY_ENV_MAX_ROWS = 5000
 
