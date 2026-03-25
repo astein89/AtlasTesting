@@ -92,7 +92,7 @@ export function ColumnFilterDropdown({
     return uniqueValues.filter((v) => String(v).toLowerCase().includes(searchLower))
   }, [uniqueValues, searchLower])
 
-  useLayoutEffect(() => {
+  const updatePosition = useCallback(() => {
     const anchor = resolveAnchor()
     if (!anchor) return
     const rect = anchor.getBoundingClientRect()
@@ -105,7 +105,39 @@ export function ColumnFilterDropdown({
     if (left < 0) left = 0
     if (top + dropdownHeight > window.innerHeight) top = Math.max(0, rect.top - dropdownHeight - gap)
     setPosition({ top, left })
-  }, [resolveAnchor, columnKey, tableAnchorKey])
+  }, [resolveAnchor])
+
+  useLayoutEffect(() => {
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 12
+    const run = () => {
+      if (cancelled) return
+      const anchor = resolveAnchor()
+      if (!anchor) {
+        attempts += 1
+        if (attempts < maxAttempts) {
+          requestAnimationFrame(run)
+        }
+        return
+      }
+      updatePosition()
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [resolveAnchor, columnKey, tableAnchorKey, uniqueValues.length, updatePosition])
+
+  useEffect(() => {
+    const onScrollOrResize = () => updatePosition()
+    window.addEventListener('resize', onScrollOrResize)
+    window.addEventListener('scroll', onScrollOrResize, true)
+    return () => {
+      window.removeEventListener('resize', onScrollOrResize)
+      window.removeEventListener('scroll', onScrollOrResize, true)
+    }
+  }, [updatePosition])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {

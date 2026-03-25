@@ -58,15 +58,21 @@ export function LocationSchemas() {
   async function handleCreateSchema(e: React.FormEvent) {
     e.preventDefault()
     if (!newSchemaName.trim()) return
-    const { data } = await api.post<LocationSchema>('/locations/schemas', {
-      name: newSchemaName.trim(),
-      description: newSchemaDescription.trim() || undefined,
-    })
-    setNewSchemaName('')
-    setNewSchemaDescription('')
-    setNewSchemaOpen(false)
-    void refreshSchemas()
-    navigate(`/locations/schemas/${data.id}`)
+    try {
+      const { data } = await api.post<LocationSchema>('/locations/schemas', {
+        name: newSchemaName.trim(),
+        description: newSchemaDescription.trim() || undefined,
+      })
+      setNewSchemaName('')
+      setNewSchemaDescription('')
+      setNewSchemaOpen(false)
+      void refreshSchemas()
+      navigate(`/locations/schemas/${data.id}`)
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to create schema'
+      showAlert(msg, 'Create failed')
+    }
   }
 
   function openEditSchema(s: LocationSchema) {

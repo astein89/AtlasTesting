@@ -2,10 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
 import { SimpleDataTable } from '../data/SimpleDataTable'
 import type { LocationSchemaField, LocationSchemaFieldConfig, LocationSchemaFieldType } from '../../types/locationSchemaFields'
-import { uppercaseAsciiLetters } from '../../utils/asciiString'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 
+const localeCompare = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: 'base' })
+
+function newRowId(): string {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `opt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+}
+
 interface SelectOptionRow {
+  rid: string
   value: string
   description: string
 }
@@ -13,9 +22,10 @@ interface SelectOptionRow {
 function selectRowsFromConfig(config: LocationSchemaFieldConfig): SelectOptionRow[] {
   const opts = config.options ?? []
   const descs = config.optionDescriptions
-  if (opts.length === 0) return [{ value: '', description: '' }]
+  if (opts.length === 0) return [{ rid: newRowId(), value: '', description: '' }]
   return opts.map((value, i) => ({
-    value: uppercaseAsciiLetters(String(value)),
+    rid: newRowId(),
+    value: String(value),
     description: descs != null && i < descs.length ? String(descs[i] ?? '') : '',
   }))
 }
@@ -60,9 +70,14 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
   const [formLabel, setFormLabel] = useState('')
   const [formType, setFormType] = useState<LocationSchemaFieldType>('text')
   const [formMaxLength, setFormMaxLength] = useState('')
-  const [formSelectRows, setFormSelectRows] = useState<SelectOptionRow[]>([{ value: '', description: '' }])
+  const [formSelectRows, setFormSelectRows] = useState<SelectOptionRow[]>([
+    { rid: newRowId(), value: '', description: '' },
+  ])
+  const [draggedSelectIndex, setDraggedSelectIndex] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [reordering, setReordering] = useState(false)
+  /** Shown inside the field modal — parent `onError` is above the fold and hidden behind z-[100] overlay. */
+  const [editorError, setEditorError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -81,13 +96,20 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
     void load()
   }, [load])
 
+  function closeEditorModal() {
+    if (saving) return
+    setEditorOpen(false)
+    setEditorError(null)
+  }
+
   function openCreate() {
     setEditingId(null)
     setFormKey('')
     setFormLabel('')
     setFormType('text')
     setFormMaxLength('')
-    setFormSelectRows([{ value: '', description: '' }])
+    setFormSelectRows([{ rid: newRowId(), value: '', description: '' }])
+    setEditorError(null)
     setEditorOpen(true)
   }
 
@@ -97,7 +119,10 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
     setFormLabel(f.label)
     setFormType(f.type)
     setFormMaxLength(f.type === 'text' && f.config.maxLength != null ? String(f.config.maxLength) : '')
-    setFormSelectRows(f.type === 'select' ? selectRowsFromConfig(f.config) : [{ value: '', description: '' }])
+    setFormSelectRows(
+      f.type === 'select' ? selectRowsFromConfig(f.config) : [{ rid: newRowId(), value: '', description: '' }]
+    )
+    setEditorError(null)
     setEditorOpen(true)
   }
 
@@ -112,13 +137,22 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
     return {}
   }
 
+  function setSaveError(message: string) {
+    setEditorError(message)
+    onError?.(message)
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
-    if (!formKey.trim() || !formLabel.trim()) return
+    setEditorError(null)
+    if (!formKey.trim() || !formLabel.trim()) {
+      setSaveError('Key and label are required.')
+      return
+    }
     if (formType === 'select') {
       const opts = formSelectRows.map((r) => r.value.trim()).filter(Boolean)
       if (opts.length === 0) {
-        onError?.('Select fields need at least one option')
+        setSaveError('Select fields need at least one option with a value.')
         return
       }
     }
@@ -144,10 +178,18 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
         })
         setFields((prev) => [...prev, data])
       }
+      setEditorError(null)
       setEditorOpen(false)
     } catch (err: unknown) {
+      const ax = err as { response?: { data?: { error?: unknown } }; message?: string }
+      const fromBody = ax.response?.data?.error
       const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to save field'
+        (typeof fromBody === 'string' && fromBody.trim()
+          ? fromBody.trim()
+          : null) ??
+        (typeof ax.message === 'string' && ax.message.trim() ? ax.message.trim() : null) ??
+        'Failed to save field'
+      setEditorError(msg)
       onError?.(msg)
     } finally {
       setSaving(false)
@@ -205,12 +247,58 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
     [fields]
   )
 
+  function handleSelectDragStart(e: React.DragEvent, index: number) {
+    setDraggedSelectIndex(index)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+  }
+
+  function handleSelectDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (draggedSelectIndex === null || draggedSelectIndex === index) return
+    setFormSelectRows((rows) => {
+      const next = [...rows]
+      const [removed] = next.splice(draggedSelectIndex, 1)
+      next.splice(index, 0, removed)
+      return next
+    })
+    setDraggedSelectIndex(index)
+  }
+
+  function handleSelectDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDraggedSelectIndex(null)
+  }
+
+  function handleSelectDragEnd() {
+    setDraggedSelectIndex(null)
+  }
+
+  function sortSelectRowsByValue(ascending: boolean) {
+    setFormSelectRows((rows) => {
+      const copy = [...rows]
+      copy.sort((a, b) => {
+        const av = a.value.trim()
+        const bv = b.value.trim()
+        if (!av && !bv) return 0
+        if (!av) return 1
+        if (!bv) return -1
+        const cmp = localeCompare(av, bv)
+        return ascending ? cmp : -cmp
+      })
+      return copy
+    })
+  }
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2 border-t border-border pt-8">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Fields</h2>
-          <p className="mt-1 text-sm text-foreground/70">Drag rows to change order. Order is used in zone forms and tables.</p>
+          <p className="mt-1 text-sm text-foreground/70">
+            Drag ⋮⋮ to reorder. Order is used in zone forms and tables.
+          </p>
         </div>
         <button
           type="button"
@@ -276,13 +364,16 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
       {editorOpen && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !saving && setEditorOpen(false)}
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !saving) closeEditorModal()
+          }}
         >
           <div
             className={`w-full rounded-xl border border-border bg-card p-5 shadow-lg ${
               formType === 'select' ? 'max-w-2xl' : 'max-w-lg'
             }`}
-            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-start justify-between gap-2">
               <h2 className="text-base font-semibold text-foreground">
@@ -290,12 +381,20 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
               </h2>
               <button
                 type="button"
-                onClick={() => !saving && setEditorOpen(false)}
+                onClick={() => closeEditorModal()}
                 className="shrink-0 rounded-lg px-2 py-1 text-sm text-foreground/70 hover:bg-background"
               >
                 Close
               </button>
             </div>
+            {editorError && (
+              <div
+                className="mb-4 rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2.5 text-sm text-red-700 dark:text-red-300"
+                role="alert"
+              >
+                {editorError}
+              </div>
+            )}
             <form onSubmit={handleSave} className="space-y-4">
               {!editingId && (
                 <div>
@@ -333,7 +432,9 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
                     const t = e.target.value as LocationSchemaFieldType
                     setFormType(t)
                     if (t === 'select') {
-                      setFormSelectRows((rows) => (rows.length ? rows : [{ value: '', description: '' }]))
+                      setFormSelectRows((rows) =>
+                        rows.length ? rows : [{ rid: newRowId(), value: '', description: '' }]
+                      )
                     }
                   }}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
@@ -358,68 +459,111 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
               )}
               {formType === 'select' && (
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <label className="block text-sm font-medium text-foreground">Options</label>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-                      onClick={() =>
-                        setFormSelectRows((rows) => [...rows, { value: '', description: '' }])
-                      }
-                    >
-                      Add option
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {formSelectRows.length >= 2 && (
+                        <>
+                          <button
+                            type="button"
+                            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                            onClick={() => sortSelectRowsByValue(true)}
+                            title="Sort options by value (A–Z)"
+                          >
+                            Sort A→Z
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                            onClick={() => sortSelectRowsByValue(false)}
+                            title="Sort options by value (Z–A)"
+                          >
+                            Sort Z→A
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                        onClick={() =>
+                          setFormSelectRows((rows) => [...rows, { rid: newRowId(), value: '', description: '' }])
+                        }
+                      >
+                        Add option
+                      </button>
+                    </div>
                   </div>
-                  <div className="max-h-64 space-y-2 overflow-y-auto rounded-lg border border-border p-2">
-                    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-xs font-medium text-foreground/70">
+                  <p className="text-xs text-foreground/65">Drag ⋮⋮ to reorder. Order is used in dropdowns and filters.</p>
+                  <div className="max-h-64 overflow-y-auto rounded-lg border border-border p-2">
+                    <div className="mb-2 grid grid-cols-[auto_1fr_1fr_auto] gap-2 text-xs font-medium text-foreground/70">
+                      <span className="w-8 shrink-0" aria-hidden />
                       <span>Value</span>
                       <span>Description</span>
                       <span className="sr-only">Remove</span>
                     </div>
-                    {formSelectRows.map((row, idx) => (
-                      <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-                        <input
-                          type="text"
-                          value={row.value}
-                          onChange={(e) =>
-                            setFormSelectRows((rows) =>
-                              rows.map((r, i) =>
-                                i === idx ? { ...r, value: uppercaseAsciiLetters(e.target.value) } : r
-                              )
-                            )
-                          }
-                          className="rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                        />
-                        <input
-                          type="text"
-                          value={row.description}
-                          onChange={(e) =>
-                            setFormSelectRows((rows) =>
-                              rows.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r))
-                            )
-                          }
-                          className="rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                        />
-                        <button
-                          type="button"
-                          className="rounded border border-border px-2 py-1 text-xs text-foreground/70 hover:bg-background disabled:opacity-40"
-                          disabled={formSelectRows.length <= 1}
-                          onClick={() =>
-                            setFormSelectRows((rows) => rows.filter((_, i) => i !== idx))
-                          }
-                          title="Remove row"
+                    <div className="space-y-1">
+                      {formSelectRows.map((row, idx) => (
+                        <div
+                          key={row.rid}
+                          className={`grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center rounded border border-transparent px-1 py-0.5 ${
+                            draggedSelectIndex === idx ? 'opacity-50' : 'hover:bg-background/50'
+                          }`}
+                          onDragOver={(e) => handleSelectDragOver(e, idx)}
+                          onDrop={handleSelectDrop}
                         >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
+                          <span
+                            className="flex w-8 shrink-0 cursor-grab select-none justify-center text-foreground/45"
+                            title="Drag to reorder"
+                            draggable
+                            onDragStart={(e) => handleSelectDragStart(e, idx)}
+                            onDragEnd={handleSelectDragEnd}
+                            aria-label="Drag to reorder"
+                          >
+                            ⋮⋮
+                          </span>
+                          <input
+                            type="text"
+                            value={row.value}
+                            onChange={(e) =>
+                              setFormSelectRows((rows) =>
+                                rows.map((r, i) =>
+                                  i === idx ? { ...r, value: e.target.value } : r
+                                )
+                              )
+                            }
+                            onDragOver={(e) => handleSelectDragOver(e, idx)}
+                            className="min-w-0 rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                          />
+                          <input
+                            type="text"
+                            value={row.description}
+                            onChange={(e) =>
+                              setFormSelectRows((rows) =>
+                                rows.map((r, i) => (i === idx ? { ...r, description: e.target.value } : r))
+                              )
+                            }
+                            onDragOver={(e) => handleSelectDragOver(e, idx)}
+                            className="min-w-0 rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                          />
+                          <button
+                            type="button"
+                            className="shrink-0 rounded border border-border px-2 py-1 text-xs text-foreground/70 hover:bg-background disabled:opacity-40"
+                            disabled={formSelectRows.length <= 1}
+                            onClick={() => setFormSelectRows((rows) => rows.filter((_, i) => i !== idx))}
+                            title="Remove row"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setEditorOpen(false)}
+                  onClick={() => closeEditorModal()}
                   className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
                   disabled={saving}
                 >
@@ -429,6 +573,11 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
                   type="submit"
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
                   disabled={!formKey.trim() || !formLabel.trim() || saving}
+                  title={
+                    !formKey.trim() || !formLabel.trim()
+                      ? 'Enter a key and label first'
+                      : undefined
+                  }
                 >
                   {saving ? 'Saving…' : editingId ? 'Save' : 'Create'}
                 </button>

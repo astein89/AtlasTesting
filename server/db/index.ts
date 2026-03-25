@@ -32,8 +32,10 @@ function createDbWrapper() {
             }
             stmt.step()
             stmt.free()
+            // Read before save(): export in save() can leave getRowsModified() as 0 in sql.js.
+            const changes = sqlDb.getRowsModified()
             save()
-            return { changes: sqlDb.getRowsModified() }
+            return { changes }
           } catch (e) {
             throw e
           }

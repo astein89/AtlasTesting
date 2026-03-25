@@ -1123,10 +1123,12 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
   const locationValue = schemaComponents.map((c) => next[c.key]).join('')
 
   const conflict = db
-    .prepare(`SELECT id FROM locations WHERE location = ? AND id != ?`)
-    .get(locationValue, locationId) as { id: string } | undefined
+    .prepare(
+      `SELECT id FROM locations WHERE zone_id = ? AND location = ? AND id != ?`
+    )
+    .get(zoneId, locationValue, locationId) as { id: string } | undefined
   if (conflict) {
-    return res.status(409).json({ error: 'Another location already uses this value' })
+    return res.status(409).json({ error: 'Another location in this zone already uses this value' })
   }
 
   const fvJson =
@@ -1566,29 +1568,63 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
 
   let created = 0
   let skipped = 0
+  /** Cap how many failed rows we return in the response (full `skipped` count is always reported). */
+  const MAX_FAILURE_DETAILS = 2000
+  const failures: Array<{ location: string; reason: string }> = []
 
+  const existsStmt = db.prepare(
+    `SELECT 1 FROM locations WHERE zone_id = ? AND location = ? LIMIT 1`
+  )
   const insertStmt = db.prepare(
-    `INSERT OR IGNORE INTO locations (id, schema_id, zone_id, location, components, field_values)
+    `INSERT INTO locations (id, schema_id, zone_id, location, components, field_values)
      VALUES (?, ?, ?, ?, ?, ?)`
   )
 
+  const insertedThisBatch = new Set<string>()
   const totalRows = rows.length
   const progressEvery = Math.max(1, Math.ceil(totalRows / 200))
+
+  function recordFailure(locationValue: string, reason: string) {
+    skipped++
+    if (failures.length < MAX_FAILURE_DETAILS) {
+      failures.push({ location: locationValue, reason })
+    }
+  }
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!
     const id = uuidv4()
     const locationValue = components.map((c) => r[c.key]).join('')
-    const result = insertStmt.run(
-      id,
-      zone.schemaId,
-      zoneId,
-      locationValue,
-      JSON.stringify(r),
-      optionalFieldValuesJson
-    )
-    if (((result as { changes?: number }).changes ?? 0) > 0) created++
-    else skipped++
+
+    if (insertedThisBatch.has(locationValue)) {
+      recordFailure(
+        locationValue,
+        'Duplicate in this generation (the same code appears more than once in the requested ranges)'
+      )
+    } else if (existsStmt.get(zoneId, locationValue)) {
+      recordFailure(locationValue, 'Already exists in this zone')
+    } else {
+      try {
+        insertStmt.run(
+          id,
+          zone.schemaId,
+          zoneId,
+          locationValue,
+          JSON.stringify(r),
+          optionalFieldValuesJson
+        )
+        // Do not use sql.js getRowsModified() for success: the db wrapper calls save() before
+        // reading changes and may report 0 even when the INSERT succeeded.
+        created++
+        insertedThisBatch.add(locationValue)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        const reason = msg.includes('UNIQUE')
+          ? 'Already exists in this zone'
+          : msg.trim().slice(0, 300) || 'Insert failed'
+        recordFailure(locationValue, reason)
+      }
+    }
 
     if (
       streamProgress &&
@@ -1601,6 +1637,8 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
     }
   }
 
+  const failuresTruncated = skipped > failures.length
+
   if (streamProgress) {
     res.write(
       JSON.stringify({
@@ -1608,12 +1646,14 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
         created,
         skipped,
         totalRequested: totalRows,
+        failures,
+        failuresTruncated,
       }) + '\n'
     )
     await yieldEventLoop()
     res.end()
   } else {
-    res.json({ created, skipped, totalRequested: totalRows })
+    res.json({ created, skipped, totalRequested: totalRows, failures, failuresTruncated })
   }
   } catch (err) {
     console.error('[locations/generate]', err)

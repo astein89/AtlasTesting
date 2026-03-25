@@ -324,6 +324,7 @@ export function LocationSchemaDetail() {
       {error && <p className="text-sm text-red-500">{error}</p>}
       {reorderError && <p className="text-sm text-red-500">{reorderError}</p>}
 
+      <p className="text-xs text-foreground/65">Drag ⋮⋮ to reorder parts of the location code.</p>
       <SimpleDataTable
         preferenceKey={`atlas-locations-schema-${schemaId ?? 'unknown'}-components`}
         rows={sortedComponents}

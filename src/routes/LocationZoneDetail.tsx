@@ -179,7 +179,13 @@ async function postGenerateLocationsStream(
   zoneId: string,
   body: Record<string, unknown>,
   onProgress: (processed: number, total: number) => void
-): Promise<{ created: number; skipped: number; totalRequested: number }> {
+): Promise<{
+  created: number
+  skipped: number
+  totalRequested: number
+  failures: Array<{ location: string; reason: string }>
+  failuresTruncated: boolean
+}> {
   const basePath = (getBasePath() ?? '').replace(/\/$/, '')
   const url = `${basePath}/api/locations/zones/${encodeURIComponent(zoneId)}/locations/generate?stream=1`
   const token = useAuthStore.getState().accessToken
@@ -221,7 +227,30 @@ async function postGenerateLocationsStream(
 
   const decoder = new TextDecoder()
   let buffer = ''
-  let complete: { created: number; skipped: number; totalRequested: number } | null = null
+  const parseComplete = (msg: Record<string, unknown>) => {
+    const raw = msg.failures
+    const failures = Array.isArray(raw)
+      ? raw
+          .map((row) => {
+            if (!row || typeof row !== 'object') return null
+            const o = row as { location?: unknown; reason?: unknown }
+            const loc = typeof o.location === 'string' ? o.location : ''
+            const reason = typeof o.reason === 'string' ? o.reason : 'Unknown reason'
+            if (!loc && !reason) return null
+            return { location: loc, reason }
+          })
+          .filter((x): x is { location: string; reason: string } => x != null)
+      : []
+    return {
+      created: typeof msg.created === 'number' ? msg.created : 0,
+      skipped: typeof msg.skipped === 'number' ? msg.skipped : 0,
+      totalRequested: typeof msg.totalRequested === 'number' ? msg.totalRequested : 0,
+      failures,
+      failuresTruncated: Boolean(msg.failuresTruncated),
+    }
+  }
+
+  let complete: ReturnType<typeof parseComplete> | null = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -232,16 +261,9 @@ async function postGenerateLocationsStream(
       const line = buffer.slice(0, newlineIdx).trim()
       buffer = buffer.slice(newlineIdx + 1)
       if (!line) continue
-      let msg: {
-        type?: string
-        processed?: number
-        total?: number
-        created?: number
-        skipped?: number
-        totalRequested?: number
-      }
+      let msg: Record<string, unknown>
       try {
-        msg = JSON.parse(line) as typeof msg
+        msg = JSON.parse(line) as Record<string, unknown>
       } catch {
         continue
       }
@@ -253,11 +275,7 @@ async function postGenerateLocationsStream(
           onProgress(pr, tot)
         })
       } else if (msg.type === 'complete') {
-        complete = {
-          created: msg.created ?? 0,
-          skipped: msg.skipped ?? 0,
-          totalRequested: msg.totalRequested ?? 0,
-        }
+        complete = parseComplete(msg)
       }
     }
 
@@ -267,18 +285,9 @@ async function postGenerateLocationsStream(
   const tail = buffer.trim()
   if (tail) {
     try {
-      const msg = JSON.parse(tail) as {
-        type?: string
-        created?: number
-        skipped?: number
-        totalRequested?: number
-      }
+      const msg = JSON.parse(tail) as Record<string, unknown>
       if (msg.type === 'complete') {
-        complete = {
-          created: msg.created ?? 0,
-          skipped: msg.skipped ?? 0,
-          totalRequested: msg.totalRequested ?? 0,
-        }
+        complete = parseComplete(msg)
       }
     } catch {
       /* ignore */
@@ -318,6 +327,17 @@ export function LocationZoneDetail() {
   const [generateProgress, setGenerateProgress] = useState<{ processed: number; total: number } | null>(
     null
   )
+  /** After a successful run: optionally clear inputs and/or close the dialog. */
+  const [generateCloseAfterRun, setGenerateCloseAfterRun] = useState(false)
+  const [generateClearAfterRun, setGenerateClearAfterRun] = useState(true)
+  /** Shown after a generate run when some rows were skipped (with reasons from the server). */
+  const [generateFailureReport, setGenerateFailureReport] = useState<{
+    created: number
+    skipped: number
+    totalRequested: number
+    failures: Array<{ location: string; reason: string }>
+    failuresTruncated: boolean
+  } | null>(null)
   const [selectedLocationIds, setSelectedLocationIds] = useState<Set<string>>(new Set())
   const [exportChoiceOpen, setExportChoiceOpen] = useState(false)
   const [tableFilterActive, setTableFilterActive] = useState(false)
@@ -843,6 +863,16 @@ export function LocationZoneDetail() {
     return { total, first5, last5, errors }
   }, [components, ranges])
 
+  const clearGenerateInputs = useCallback(() => {
+    const clearedRanges: Record<string, string> = {}
+    for (const c of components) clearedRanges[c.key] = ''
+    setRanges(clearedRanges)
+    const clearedFv: Record<string, string> = {}
+    for (const f of schemaFields) clearedFv[f.key] = ''
+    setGenerateFieldValues(clearedFv)
+    setGenerateError(null)
+  }, [components, schemaFields])
+
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault()
     if (!zoneId) return
@@ -850,6 +880,7 @@ export function LocationZoneDetail() {
     if (preview.total > MAX_GENERATE_LOCATIONS) return
     try {
       setGenerateError(null)
+      setGenerateFailureReport(null)
       setGenerating(true)
       setGenerateProgress({ processed: 0, total: preview.total })
       const fv: Record<string, unknown> = {}
@@ -862,17 +893,28 @@ export function LocationZoneDetail() {
         components: ranges,
         ...(Object.keys(fv).length > 0 ? { fieldValues: fv } : {}),
       }
-      await postGenerateLocationsStream(zoneId, body, (processed, total) => {
+      const genResult = await postGenerateLocationsStream(zoneId, body, (processed, total) => {
         setGenerateProgress({ processed, total })
       })
-      const clearedRanges: Record<string, string> = {}
-      for (const c of components) clearedRanges[c.key] = ''
-      setRanges(clearedRanges)
-      const clearedFv: Record<string, string> = {}
-      for (const f of schemaFields) clearedFv[f.key] = ''
-      setGenerateFieldValues(clearedFv)
-      setGenerateOpen(false)
-      setGenerateError(null)
+      if (genResult.skipped > 0) {
+        setGenerateFailureReport({
+          created: genResult.created,
+          skipped: genResult.skipped,
+          totalRequested: genResult.totalRequested,
+          failures: genResult.failures,
+          failuresTruncated: genResult.failuresTruncated,
+        })
+      } else {
+        setGenerateFailureReport(null)
+      }
+      if (generateClearAfterRun) {
+        clearGenerateInputs()
+      } else {
+        setGenerateError(null)
+      }
+      if (generateCloseAfterRun) {
+        setGenerateOpen(false)
+      }
       void refreshLocations(zoneId)
     } catch (err) {
       setGenerateError(formatGenerateFailureMessage(err))
@@ -985,10 +1027,17 @@ export function LocationZoneDetail() {
               type="button"
               className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
               onClick={() => {
-                const init: Record<string, string> = {}
-                for (const f of schemaFields) init[f.key] = ''
-                setGenerateFieldValues(init)
+                setGenerateFieldValues((prev) => {
+                  const next = { ...prev }
+                  for (const f of schemaFields) {
+                    if (!(f.key in next)) next[f.key] = ''
+                  }
+                  return next
+                })
                 setGenerateError(null)
+                setGenerateFailureReport(null)
+                setGenerateCloseAfterRun(false)
+                setGenerateClearAfterRun(true)
                 setGenerateOpen(true)
               }}
               disabled={components.length === 0}
@@ -1099,37 +1148,6 @@ export function LocationZoneDetail() {
                   length, or select options.
                 </div>
               )}
-              {savingBulkLocations &&
-                mutationProgress?.kind === 'bulk-edit' &&
-                mutationProgress.total > 0 && (
-                  <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-3">
-                    <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
-                      <span>Applying bulk edit</span>
-                      <span className="tabular-nums font-medium text-foreground">
-                        {mutationProgress.processed.toLocaleString()} /{' '}
-                        {mutationProgress.total.toLocaleString()}
-                      </span>
-                    </div>
-                    <div
-                      className="h-2.5 w-full overflow-hidden rounded-full bg-background"
-                      role="progressbar"
-                      aria-valuenow={mutationProgress.processed}
-                      aria-valuemin={0}
-                      aria-valuemax={mutationProgress.total}
-                      aria-label="Bulk edit progress"
-                    >
-                      <div
-                        className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            Math.round((mutationProgress.processed / mutationProgress.total) * 100)
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
               {components.map((c) => {
                 const hint = locationComponentHint(c)
                 return (
@@ -1291,6 +1309,37 @@ export function LocationZoneDetail() {
                   ))}
                 </div>
               )}
+              {savingBulkLocations &&
+                mutationProgress?.kind === 'bulk-edit' &&
+                mutationProgress.total > 0 && (
+                  <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 px-3 py-3">
+                    <div className="flex items-center justify-between gap-2 text-xs text-foreground/80">
+                      <span>Applying bulk edit</span>
+                      <span className="tabular-nums font-medium text-foreground">
+                        {mutationProgress.processed.toLocaleString()} /{' '}
+                        {mutationProgress.total.toLocaleString()}
+                      </span>
+                    </div>
+                    <div
+                      className="h-2.5 w-full overflow-hidden rounded-full bg-background"
+                      role="progressbar"
+                      aria-valuenow={mutationProgress.processed}
+                      aria-valuemin={0}
+                      aria-valuemax={mutationProgress.total}
+                      aria-label="Bulk edit progress"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.round((mutationProgress.processed / mutationProgress.total) * 100)
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -1891,36 +1940,69 @@ export function LocationZoneDetail() {
                     </div>
                   )}
 
-                  <div className="mt-auto flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
-                      onClick={() => {
-                        setGenerateError(null)
-                        setGenerateOpen(false)
-                      }}
-                      disabled={generating}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                      disabled={
-                        generating ||
-                        preview.total === 0 ||
-                        preview.total > MAX_GENERATE_LOCATIONS
-                      }
-                      title={
-                        preview.total === 0
-                          ? 'Enter valid ranges to generate'
-                          : preview.total > MAX_GENERATE_LOCATIONS
-                            ? `At most ${MAX_GENERATE_LOCATIONS.toLocaleString()} locations per generation`
-                            : 'Generate locations'
-                      }
-                    >
-                      {generating ? 'Generating…' : `Generate (${preview.total.toLocaleString()})`}
-                    </button>
+                  <div className="mt-auto flex flex-col gap-3 border-t border-border pt-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="mr-auto rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background disabled:opacity-50"
+                        onClick={clearGenerateInputs}
+                        disabled={generating}
+                        title="Clear range inputs and optional attributes"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
+                        onClick={() => {
+                          setGenerateError(null)
+                          setGenerateOpen(false)
+                        }}
+                        disabled={generating}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                        disabled={
+                          generating ||
+                          preview.total === 0 ||
+                          preview.total > MAX_GENERATE_LOCATIONS
+                        }
+                        title={
+                          preview.total === 0
+                            ? 'Enter valid ranges to generate'
+                            : preview.total > MAX_GENERATE_LOCATIONS
+                              ? `At most ${MAX_GENERATE_LOCATIONS.toLocaleString()} locations per generation`
+                              : 'Generate locations'
+                        }
+                      >
+                        {generating ? 'Generating…' : `Generate (${preview.total.toLocaleString()})`}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground/85">
+                        <span>Clear after run</span>
+                        <input
+                          type="checkbox"
+                          checked={generateClearAfterRun}
+                          onChange={(e) => setGenerateClearAfterRun(e.target.checked)}
+                          disabled={generating}
+                          className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary"
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground/85">
+                        <span>Close after run</span>
+                        <input
+                          type="checkbox"
+                          checked={generateCloseAfterRun}
+                          onChange={(e) => setGenerateCloseAfterRun(e.target.checked)}
+                          disabled={generating}
+                          className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary"
+                        />
+                      </label>
+                    </div>
                   </div>
                 </form>
 
@@ -1967,6 +2049,94 @@ export function LocationZoneDetail() {
                     </div>
                   </div>
                 </aside>
+              </div>
+            </div>
+          </div>
+        )}
+        {generateFailureReport && (
+          <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4"
+            role="presentation"
+            onClick={() => setGenerateFailureReport(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="generate-failure-modal-title"
+              className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-amber-500/40 bg-card shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="shrink-0 border-b border-border px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <h2
+                      id="generate-failure-modal-title"
+                      className="text-base font-semibold text-amber-950 dark:text-amber-100"
+                    >
+                      Some locations were not created
+                    </h2>
+                    <p className="text-sm text-foreground/85">
+                      Created {generateFailureReport.created.toLocaleString()} of{' '}
+                      {generateFailureReport.totalRequested.toLocaleString()}. Skipped{' '}
+                      {generateFailureReport.skipped.toLocaleString()}.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm text-foreground/70 hover:bg-background"
+                    onClick={() => setGenerateFailureReport(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              {generateFailureReport.failures.length > 0 && (
+                <div className="flex min-h-0 flex-1 flex-col px-5 py-3">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-background">
+                    <div
+                      className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 border-b border-border bg-muted px-3 py-2 text-xs font-semibold text-foreground"
+                      role="row"
+                    >
+                      <div role="columnheader">Location</div>
+                      <div role="columnheader">Reason</div>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                      <ul className="divide-y divide-border/70 text-xs" role="list">
+                        {generateFailureReport.failures.map((f, idx) => (
+                          <li
+                            key={`${f.location}-${idx}`}
+                            className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 px-3 py-1.5"
+                            role="row"
+                          >
+                            <div className="min-w-0 break-all font-mono tabular-nums text-foreground" role="cell">
+                              {f.location}
+                            </div>
+                            <div className="min-w-0 text-foreground/90" role="cell">
+                              {f.reason}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {generateFailureReport.failuresTruncated && (
+                <div className="shrink-0 border-t border-border px-5 py-3">
+                  <p className="text-xs text-foreground/75">
+                    List shows the first {generateFailureReport.failures.length.toLocaleString()} skipped
+                    location(s); {generateFailureReport.skipped.toLocaleString()} skipped in total.
+                  </p>
+                </div>
+              )}
+              <div className="shrink-0 border-t border-border px-5 py-3">
+                <button
+                  type="button"
+                  className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+                  onClick={() => setGenerateFailureReport(null)}
+                >
+                  OK
+                </button>
               </div>
             </div>
           </div>

@@ -145,7 +145,7 @@ export function SimpleDataTable<Row>({
     {}
   )
   const [openFilterColumn, setOpenFilterColumn] = useState<string | null>(null)
-  const filterAnchorRefs = useRef<Record<string, HTMLTableCellElement | null>>({})
+  const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
   const [draggingKey, setDraggingKey] = useState<string | null>(null)
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
 
@@ -390,7 +390,7 @@ export function SimpleDataTable<Row>({
         <table className="w-full">
           <colgroup>
             {enableSelection && <col style={{ width: '2.5rem' }} />}
-            {enableRowReorder && <col style={{ width: '2.5rem' }} />}
+            {enableRowReorder && <col style={{ width: '2rem' }} />}
             {visibleColumns.map((c) => (
               <col key={c.key} style={c.width ? { width: c.width } : undefined} />
             ))}
@@ -430,9 +430,6 @@ export function SimpleDataTable<Row>({
                 return (
                   <th
                     key={c.key}
-                    ref={(el) => {
-                      filterAnchorRefs.current[c.key] = el
-                    }}
                     className={`relative min-w-0 select-none px-4 py-3 text-left text-sm font-medium text-foreground ${
                       disableSort ? '' : 'cursor-pointer hover:bg-background/50'
                     }`}
@@ -458,6 +455,9 @@ export function SimpleDataTable<Row>({
                       {!disableSearchAndFilters && (
                         <button
                           type="button"
+                          ref={(el) => {
+                            filterAnchorRefs.current[c.key] = el
+                          }}
                           onClick={(e) => {
                             e.stopPropagation()
                             setOpenFilterColumn((col) => (col === c.key ? null : c.key))
@@ -512,18 +512,6 @@ export function SimpleDataTable<Row>({
               return (
                 <tr
                   key={k}
-                  draggable={!!enableRowReorder}
-                  onDragStart={(e) => {
-                    if (!enableRowReorder) return
-                    e.dataTransfer.setData('text/plain', k)
-                    e.dataTransfer.effectAllowed = 'move'
-                    setDraggingKey(k)
-                  }}
-                  onDragEnd={() => {
-                    if (!enableRowReorder) return
-                    setDraggingKey(null)
-                    setDragOverKey(null)
-                  }}
                   onDragOver={(e) => {
                     if (!enableRowReorder) return
                     e.preventDefault()
@@ -546,7 +534,7 @@ export function SimpleDataTable<Row>({
                     setDragOverKey(null)
                   }}
                   className={`${onRowClick ? 'cursor-pointer hover:bg-background/50' : ''} ${
-                    enableRowReorder ? 'cursor-grab' : ''
+                    enableRowReorder && draggingKey === k ? 'opacity-50' : ''
                   } ${isDragOver ? 'bg-background/30' : ''} border-b border-border/60 ${
                     showDropAbove ? 'border-t-2 border-t-primary' : ''
                   } ${showDropBelow ? 'border-b-2 border-b-primary' : ''}`}
@@ -571,8 +559,9 @@ export function SimpleDataTable<Row>({
                     </td>
                   )}
                   {enableRowReorder && (
-                    <td className="px-2 py-3 text-foreground/60" onClick={(e) => e.stopPropagation()}>
+                    <td className="w-8 px-1 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
                       <span
+                        className="flex w-8 shrink-0 cursor-grab select-none justify-center text-foreground/45"
                         title="Drag to reorder"
                         draggable
                         onDragStart={(e) => {
@@ -581,11 +570,14 @@ export function SimpleDataTable<Row>({
                           e.dataTransfer.effectAllowed = 'move'
                           setDraggingKey(k)
                         }}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded hover:bg-background/50"
+                        onDragEnd={(e) => {
+                          e.stopPropagation()
+                          setDraggingKey(null)
+                          setDragOverKey(null)
+                        }}
+                        aria-label="Drag to reorder"
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
-                        </svg>
+                        ⋮⋮
                       </span>
                     </td>
                   )}

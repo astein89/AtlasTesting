@@ -149,17 +149,19 @@ export function initSchema(db: DbWrapper) {
     );
 
     -- Concrete locations: one row per location, components stored as JSON.
+    -- Same location string may exist in different zones; uniqueness is per zone.
     CREATE TABLE IF NOT EXISTS locations (
       id TEXT PRIMARY KEY,
       schema_id TEXT NOT NULL,
       zone_id TEXT NOT NULL,
-      location TEXT NOT NULL UNIQUE,
+      location TEXT NOT NULL,
       components TEXT NOT NULL, -- JSON: { key: value }
       field_values TEXT, -- JSON: optional schema field values (number | text | select)
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT,
       FOREIGN KEY (schema_id) REFERENCES location_schemas(id),
-      FOREIGN KEY (zone_id) REFERENCES zones(id)
+      FOREIGN KEY (zone_id) REFERENCES zones(id),
+      UNIQUE(zone_id, location)
     );
   `)
   migrateEmailToUsername(db)
@@ -188,6 +190,7 @@ export function initSchema(db: DbWrapper) {
   migrateLocationSchemaComponentPatternMask(db)
   migrateLocationSchemaComponentMixToMixed(db)
   migrateLocationsCodeToLocationColumn(db)
+  migrateLocationsUniquePerZone(db)
   migrateDropLocationSchemaCodePattern(db)
   migrateTestPlansAndTestsUpdatedAt(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
@@ -250,6 +253,38 @@ function migrateLocationsCodeToLocationColumn(db: DbWrapper) {
     if (colNames.includes('location')) return
     if (!colNames.includes('code')) return
     db.run('ALTER TABLE locations RENAME COLUMN code TO location')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Replace global UNIQUE(location) with UNIQUE(zone_id, location) so the same code can exist in different zones. */
+function migrateLocationsUniquePerZone(db: DbWrapper) {
+  try {
+    const row = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='locations'`)
+      .get() as { sql?: string } | undefined
+    const sql = row?.sql
+    if (!sql || typeof sql !== 'string') return
+    if (sql.includes('UNIQUE (zone_id, location)') || sql.includes('UNIQUE(zone_id, location)')) return
+    db.exec(`
+      CREATE TABLE locations_new (
+        id TEXT PRIMARY KEY,
+        schema_id TEXT NOT NULL,
+        zone_id TEXT NOT NULL,
+        location TEXT NOT NULL,
+        components TEXT NOT NULL,
+        field_values TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        FOREIGN KEY (schema_id) REFERENCES location_schemas(id),
+        FOREIGN KEY (zone_id) REFERENCES zones(id),
+        UNIQUE(zone_id, location)
+      );
+      INSERT INTO locations_new SELECT * FROM locations;
+      DROP TABLE locations;
+      ALTER TABLE locations_new RENAME TO locations;
+    `)
   } catch {
     // Ignore
   }
