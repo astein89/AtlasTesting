@@ -1715,11 +1715,12 @@ export function LocationZoneDetail() {
           </div>
         )}
         {generateOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-            <div
-              className="w-full max-w-4xl rounded-xl border border-border bg-card p-6 shadow-lg"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <div className="fixed inset-0 z-[100] overflow-y-auto overscroll-contain bg-black/50">
+            <div className="flex min-h-full items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:p-6">
+              <div
+                className="my-auto w-full max-h-[min(90dvh,calc(100dvh-2rem))] max-w-4xl overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-6 shadow-lg"
+                onClick={(e) => e.stopPropagation()}
+              >
               <div className="mb-5 flex items-start justify-between gap-3 border-b border-border pb-4">
                 <div className="space-y-1">
                   <h2 className="text-lg font-semibold tracking-tight text-foreground">Generate locations</h2>
@@ -2049,6 +2050,7 @@ export function LocationZoneDetail() {
                     </div>
                   </div>
                 </aside>
+              </div>
               </div>
             </div>
           </div>
