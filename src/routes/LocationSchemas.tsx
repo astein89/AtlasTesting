@@ -142,7 +142,6 @@ export function LocationSchemas() {
 
       <SimpleDataTable
         preferenceKey="atlas-locations-schemas"
-        pagination
         rows={schemas}
         getRowKey={(s) => s.id}
         onRowClick={(s) => navigate(`/locations/schemas/${s.id}`)}
@@ -182,10 +181,7 @@ export function LocationSchemas() {
         ]}
       />
         {editSchema && (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => !savingEdit && setEditSchema(null)}
-          >
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
               onClick={(e) => e.stopPropagation()}
@@ -242,10 +238,7 @@ export function LocationSchemas() {
           </div>
         )}
         {newSchemaOpen && (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => setNewSchemaOpen(false)}
-          >
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
               onClick={(e) => e.stopPropagation()}

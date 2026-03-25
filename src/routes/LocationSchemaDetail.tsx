@@ -5,6 +5,7 @@ import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { LocationSchemaFieldsEditor } from '../components/locations/LocationSchemaFieldsEditor'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { validateLocationPatternMask } from '../utils/locationPatternMask'
 
 interface LocationSchema {
   id: string
@@ -17,9 +18,28 @@ interface SchemaComponent {
   schemaId: string
   key: string
   displayName: string
-  type: 'alpha' | 'numeric'
+  type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
   width: number
+  patternMask?: string | null
+  minValue?: string | null
   orderIndex?: number
+}
+
+function normalizeComponentRow(c: SchemaComponent): SchemaComponent {
+  const r = c as Record<string, unknown>
+  const typeRaw = r.type === 'mix' ? 'mixed' : r.type
+  const pm = r.patternMask ?? r.pattern_mask
+  const mv = r.minValue ?? r.min_value
+  const patternMask =
+    pm != null && String(pm).trim() !== '' ? String(pm).trim() : null
+  const minValue =
+    mv != null && String(mv).trim() !== '' ? String(mv).trim() : null
+  return {
+    ...c,
+    type: typeRaw as SchemaComponent['type'],
+    patternMask,
+    minValue,
+  }
 }
 
 export function LocationSchemaDetail() {
@@ -33,14 +53,18 @@ export function LocationSchemaDetail() {
   const [newComponentOpen, setNewComponentOpen] = useState(false)
   const [newComponentKey, setNewComponentKey] = useState('')
   const [newComponentName, setNewComponentName] = useState('')
-  const [newComponentType, setNewComponentType] = useState<'alpha' | 'numeric'>('numeric')
+  const [newComponentType, setNewComponentType] = useState<'alpha' | 'numeric' | 'mixed' | 'fixed'>('numeric')
   const [newComponentWidth, setNewComponentWidth] = useState<number>(2)
+  const [newComponentPatternMask, setNewComponentPatternMask] = useState('')
+  const [newComponentFixedValue, setNewComponentFixedValue] = useState('')
 
   const [editComponentOpen, setEditComponentOpen] = useState(false)
   const [editComponentId, setEditComponentId] = useState<string | null>(null)
   const [editComponentName, setEditComponentName] = useState('')
-  const [editComponentType, setEditComponentType] = useState<'alpha' | 'numeric'>('numeric')
+  const [editComponentType, setEditComponentType] = useState<'alpha' | 'numeric' | 'mixed' | 'fixed'>('numeric')
   const [editComponentWidth, setEditComponentWidth] = useState<number>(2)
+  const [editComponentPatternMask, setEditComponentPatternMask] = useState('')
+  const [editComponentFixedValue, setEditComponentFixedValue] = useState('')
 
   const [editSchemaOpen, setEditSchemaOpen] = useState(false)
   const [editSchemaName, setEditSchemaName] = useState('')
@@ -61,7 +85,7 @@ export function LocationSchemaDetail() {
         api.get<SchemaComponent[]>(`/locations/schemas/${id}/components`),
       ])
       setSchema(schemasResp.data.find((s) => s.id === id) || null)
-      setComponents(compsResp.data)
+      setComponents(compsResp.data.map(normalizeComponentRow))
     } catch {
       setError('Failed to load schema')
       setSchema(null)
@@ -73,18 +97,40 @@ export function LocationSchemaDetail() {
 
   async function handleAddComponent(e: React.FormEvent) {
     e.preventDefault()
-    if (!schemaId || !newComponentKey.trim() || !newComponentName.trim() || !newComponentWidth) return
+    const pm = newComponentType === 'mixed' ? newComponentPatternMask.trim() : ''
+    if (!schemaId || !newComponentKey.trim() || !newComponentName.trim()) return
+    if (newComponentType === 'fixed') {
+      if (!newComponentFixedValue.trim()) return
+    } else if (!pm && !newComponentWidth) return
+    if (pm) {
+      const pmErr = validateLocationPatternMask(pm)
+      if (pmErr) {
+        setError(pmErr)
+        return
+      }
+    }
     try {
-      const resp = await api.post<SchemaComponent>(`/locations/schemas/${schemaId}/components`, {
+      const body: Record<string, unknown> = {
         key: newComponentKey.trim(),
         displayName: newComponentName.trim(),
         type: newComponentType,
-        width: newComponentWidth,
-      })
-      setComponents((prev) => [...prev, resp.data])
+      }
+      if (newComponentType === 'fixed') {
+        body.minValue = newComponentFixedValue.trim()
+        body.width = newComponentFixedValue.trim().length
+      } else if (newComponentType === 'mixed' && pm) {
+        body.patternMask = pm
+        body.width = pm.length
+      } else {
+        body.width = newComponentWidth
+      }
+      const resp = await api.post<SchemaComponent>(`/locations/schemas/${schemaId}/components`, body)
+      setComponents((prev) => [...prev, normalizeComponentRow(resp.data)])
       setNewComponentKey('')
       setNewComponentName('')
       setNewComponentWidth(2)
+      setNewComponentPatternMask('')
+      setNewComponentFixedValue('')
       setNewComponentOpen(false)
     } catch {
       setError('Failed to add schema item')
@@ -115,7 +161,7 @@ export function LocationSchemaDetail() {
       const resp = await api.put<SchemaComponent[]>(`/locations/schemas/${schemaId}/components/reorder`, {
         orderedIds,
       })
-      setComponents(resp.data)
+      setComponents(resp.data.map(normalizeComponentRow))
     } catch {
       setComponents(prev)
       setReorderError('Failed to save order')
@@ -141,6 +187,8 @@ export function LocationSchemaDetail() {
     setEditComponentName(c.displayName)
     setEditComponentType(c.type)
     setEditComponentWidth(c.width)
+    setEditComponentPatternMask(c.patternMask?.trim() ?? '')
+    setEditComponentFixedValue(c.minValue?.trim() ?? '')
     setEditComponentOpen(true)
   }
 
@@ -173,15 +221,35 @@ export function LocationSchemaDetail() {
     e.preventDefault()
     if (!schemaId || !editComponentId) return
     try {
+      const pm = editComponentType === 'mixed' ? editComponentPatternMask.trim() : ''
+      if (pm) {
+        const pmErr = validateLocationPatternMask(pm)
+        if (pmErr) {
+          setError(pmErr)
+          return
+        }
+      }
+      const payload: Record<string, unknown> = {
+        displayName: editComponentName.trim(),
+        type: editComponentType,
+      }
+      if (editComponentType === 'fixed') {
+        payload.minValue = editComponentFixedValue.trim()
+        payload.width = editComponentFixedValue.trim().length
+        payload.patternMask = null
+      } else {
+        payload.width = editComponentType === 'mixed' && pm ? pm.length : editComponentWidth
+        payload.patternMask = editComponentType === 'mixed' ? editComponentPatternMask.trim() : null
+        payload.minValue = null
+        payload.maxValue = null
+      }
       const resp = await api.put<SchemaComponent>(
         `/locations/schemas/${schemaId}/components/${editComponentId}`,
-        {
-          displayName: editComponentName.trim(),
-          type: editComponentType,
-          width: editComponentWidth,
-        }
+        payload
       )
-      setComponents((prev) => prev.map((c) => (c.id === editComponentId ? resp.data : c)))
+      setComponents((prev) =>
+        prev.map((c) => (c.id === editComponentId ? normalizeComponentRow(resp.data) : c))
+      )
       setEditComponentOpen(false)
       setEditComponentId(null)
     } catch {
@@ -272,7 +340,29 @@ export function LocationSchemaDetail() {
           { key: 'displayName', label: 'Display name', getValue: (c) => c.displayName, width: '18rem' },
           { key: 'key', label: 'Key', getValue: (c) => c.key, width: '10rem' },
           { key: 'type', label: 'Type', getValue: (c) => c.type, width: '10rem' },
-          { key: 'width', label: 'Chars', getValue: (c) => String(c.width), width: '10rem' },
+          {
+            key: 'fixedValue',
+            label: 'Fixed',
+            getValue: (c) => (c.type === 'fixed' ? (c.minValue ?? '').trim() : ''),
+            width: '10rem',
+            render: (c) => (
+              <span className="font-mono text-xs text-foreground/90">
+                {c.type === 'fixed' && (c.minValue ?? '').trim() ? (c.minValue ?? '').trim() : '—'}
+              </span>
+            ),
+          },
+          {
+            key: 'patternMask',
+            label: 'Pattern',
+            getValue: (c) => c.patternMask?.trim() ?? '',
+            width: '12rem',
+            render: (c) => (
+              <span className="font-mono text-xs text-foreground/90">
+                {c.patternMask?.trim() ? c.patternMask.trim() : '—'}
+              </span>
+            ),
+          },
+          { key: 'width', label: 'Chars', getValue: (c) => String(c.width), width: '6rem' },
           {
             key: 'actions',
             label: '',
@@ -303,10 +393,7 @@ export function LocationSchemaDetail() {
       {schemaId && <LocationSchemaFieldsEditor schemaId={schemaId} onError={(msg) => setError(msg)} />}
 
       {editSchemaOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !savingSchema && setEditSchemaOpen(false)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -364,10 +451,7 @@ export function LocationSchemaDetail() {
       )}
 
       {newComponentOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setNewComponentOpen(false)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -407,11 +491,17 @@ export function LocationSchemaDetail() {
                   <label className="block text-sm font-medium text-foreground">Type</label>
                   <select
                     value={newComponentType}
-                    onChange={(e) => setNewComponentType(e.target.value as 'alpha' | 'numeric')}
+                    onChange={(e) => {
+                      setNewComponentType(e.target.value as 'alpha' | 'numeric' | 'mixed' | 'fixed')
+                      setNewComponentPatternMask('')
+                      setNewComponentFixedValue('')
+                    }}
                     className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   >
-                    <option value="numeric">numeric</option>
-                    <option value="alpha">alpha</option>
+                    <option value="numeric">numeric (0–9)</option>
+                    <option value="alpha">alpha (A–Z)</option>
+                    <option value="mixed">mixed (A–Z and 0–9)</option>
+                    <option value="fixed">fixed (literal)</option>
                   </select>
                 </div>
                 <div>
@@ -421,15 +511,55 @@ export function LocationSchemaDetail() {
                     min={1}
                     max={10}
                     value={newComponentWidth}
+                    disabled={
+                      newComponentType === 'fixed' ||
+                      (newComponentType === 'mixed' && !!newComponentPatternMask.trim())
+                    }
                     onChange={(e) =>
                       setNewComponentWidth(
                         e.target.value === '' ? 1 : Math.max(1, Math.min(10, Number(e.target.value)))
                       )
                     }
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-50"
                   />
                 </div>
               </div>
+              {newComponentType === 'fixed' && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Fixed text</label>
+                  <p className="mt-1 mb-1 text-xs text-foreground/60">
+                    Shown in location UIs; always included in the location string. Max 32 characters.
+                  </p>
+                  <input
+                    type="text"
+                    value={newComponentFixedValue}
+                    onChange={(e) => setNewComponentFixedValue(e.target.value)}
+                    maxLength={32}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                    placeholder="e.g. - or SR"
+                  />
+                </div>
+              )}
+              {newComponentType === 'mixed' && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Pattern mask (optional)</label>
+                  <p className="mt-1 mb-1 text-xs text-foreground/60">
+                    @ = letter (A–Z), # = digit (0–9). Any other character is fixed in the value. * is not allowed. If
+                    set, length overrides “Chars”.
+                  </p>
+                  <input
+                    type="text"
+                    value={newComponentPatternMask}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setNewComponentPatternMask(v)
+                      if (v.trim()) setNewComponentWidth(v.trim().length)
+                    }}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                    placeholder="e.g. @@-##"
+                  />
+                </div>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -441,7 +571,14 @@ export function LocationSchemaDetail() {
                 <button
                   type="submit"
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                  disabled={!newComponentKey.trim() || !newComponentName.trim() || !newComponentWidth}
+                  disabled={
+                    !newComponentKey.trim() ||
+                    !newComponentName.trim() ||
+                    (newComponentType === 'fixed' && !newComponentFixedValue.trim()) ||
+                    (newComponentType !== 'fixed' &&
+                      !(newComponentType === 'mixed' && newComponentPatternMask.trim()) &&
+                      !newComponentWidth)
+                  }
                 >
                   Create
                 </button>
@@ -452,10 +589,7 @@ export function LocationSchemaDetail() {
       )}
 
       {editComponentOpen && editComponentId && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setEditComponentOpen(false)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -485,11 +619,17 @@ export function LocationSchemaDetail() {
                   <label className="block text-sm font-medium text-foreground">Type</label>
                   <select
                     value={editComponentType}
-                    onChange={(e) => setEditComponentType(e.target.value as 'alpha' | 'numeric')}
+                    onChange={(e) => {
+                      setEditComponentType(e.target.value as 'alpha' | 'numeric' | 'mixed' | 'fixed')
+                      setEditComponentPatternMask('')
+                      setEditComponentFixedValue('')
+                    }}
                     className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   >
-                    <option value="numeric">numeric</option>
-                    <option value="alpha">alpha</option>
+                    <option value="numeric">numeric (0–9)</option>
+                    <option value="alpha">alpha (A–Z)</option>
+                    <option value="mixed">mixed (A–Z and 0–9)</option>
+                    <option value="fixed">fixed (literal)</option>
                   </select>
                 </div>
                 <div>
@@ -499,15 +639,54 @@ export function LocationSchemaDetail() {
                     min={1}
                     max={10}
                     value={editComponentWidth}
+                    disabled={
+                      editComponentType === 'fixed' ||
+                      (editComponentType === 'mixed' && !!editComponentPatternMask.trim())
+                    }
                     onChange={(e) =>
                       setEditComponentWidth(
                         e.target.value === '' ? 1 : Math.max(1, Math.min(10, Number(e.target.value)))
                       )
                     }
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-50"
                   />
                 </div>
               </div>
+              {editComponentType === 'fixed' && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Fixed text</label>
+                  <p className="mt-1 mb-1 text-xs text-foreground/60">
+                    Shown in location UIs; max 32 characters. Width matches text length.
+                  </p>
+                  <input
+                    type="text"
+                    value={editComponentFixedValue}
+                    onChange={(e) => setEditComponentFixedValue(e.target.value)}
+                    maxLength={32}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                  />
+                </div>
+              )}
+              {editComponentType === 'mixed' && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Pattern mask (optional)</label>
+                  <p className="mt-1 mb-1 text-xs text-foreground/60">
+                    @ = letter, # = digit; other characters are literals. * is not allowed. If set, length matches the
+                    pattern.
+                  </p>
+                  <input
+                    type="text"
+                    value={editComponentPatternMask}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setEditComponentPatternMask(v)
+                      if (v.trim()) setEditComponentWidth(v.trim().length)
+                    }}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                    placeholder="e.g. @@-##"
+                  />
+                </div>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -519,7 +698,13 @@ export function LocationSchemaDetail() {
                 <button
                   type="submit"
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                  disabled={!editComponentName.trim()}
+                  disabled={
+                    !editComponentName.trim() ||
+                    (editComponentType === 'fixed' && !editComponentFixedValue.trim()) ||
+                    (editComponentType !== 'fixed' &&
+                      !(editComponentType === 'mixed' && editComponentPatternMask.trim()) &&
+                      !editComponentWidth)
+                  }
                 >
                   Save
                 </button>

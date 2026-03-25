@@ -2,6 +2,39 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 import { parseFormattedFraction } from '../../utils/fraction'
 
+/** Dedupe, drop blanks, sort — must match the list shown in the dropdown. */
+function buildUniqueColumnFilterValues(
+  values: string[],
+  valueType?: 'fraction' | 'number'
+): string[] {
+  const uniq = [...new Set(values)].filter((v) => v !== '' && v != null) as string[]
+  if (valueType === 'fraction') {
+    return uniq.sort((a, b) => {
+      const na = parseFormattedFraction(a)
+      const nb = parseFormattedFraction(b)
+      if (Number.isNaN(na) && Number.isNaN(nb)) return String(a).localeCompare(String(b))
+      if (Number.isNaN(na)) return 1
+      if (Number.isNaN(nb)) return -1
+      return na - nb
+    })
+  }
+  if (valueType === 'number') {
+    return uniq.sort((a, b) => {
+      const na = parseFloat(a)
+      const nb = parseFloat(b)
+      if (Number.isNaN(na) && Number.isNaN(nb)) return String(a).localeCompare(String(b))
+      if (Number.isNaN(na)) return 1
+      if (Number.isNaN(nb)) return -1
+      return na - nb
+    })
+  }
+  return uniq.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }))
+}
+
+function selectionCoversAllValues(selected: Set<string>, all: string[]): boolean {
+  return all.length > 0 && selected.size === all.length && all.every((v) => selected.has(v))
+}
+
 interface ColumnFilterDropdownProps {
   columnKey: string
   columnLabel: string
@@ -33,7 +66,11 @@ export function ColumnFilterDropdown({
   valueType,
 }: ColumnFilterDropdownProps) {
   const [search, setSearch] = useState('')
-  const [localSelected, setLocalSelected] = useState(selected)
+  /** No saved filter: default every faceted value checked (matches current table result set). */
+  const [localSelected, setLocalSelected] = useState<Set<string>>(() => {
+    if (selected.size > 0) return new Set(selected)
+    return new Set(buildUniqueColumnFilterValues(values, valueType))
+  })
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
 
@@ -44,30 +81,10 @@ export function ColumnFilterDropdown({
     return anchorRef?.current ?? null
   }, [tableAnchorRefs, tableAnchorKey, anchorRef])
 
-  const uniqueValues = useMemo(() => {
-    const uniq = [...new Set(values)].filter((v) => v !== '' && v != null)
-    if (valueType === 'fraction') {
-      return uniq.sort((a, b) => {
-        const na = parseFormattedFraction(a)
-        const nb = parseFormattedFraction(b)
-        if (Number.isNaN(na) && Number.isNaN(nb)) return String(a).localeCompare(String(b))
-        if (Number.isNaN(na)) return 1
-        if (Number.isNaN(nb)) return -1
-        return na - nb
-      })
-    }
-    if (valueType === 'number') {
-      return uniq.sort((a, b) => {
-        const na = parseFloat(a)
-        const nb = parseFloat(b)
-        if (Number.isNaN(na) && Number.isNaN(nb)) return String(a).localeCompare(String(b))
-        if (Number.isNaN(na)) return 1
-        if (Number.isNaN(nb)) return -1
-        return na - nb
-      })
-    }
-    return uniq.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }))
-  }, [values, valueType])
+  const uniqueValues = useMemo(
+    () => buildUniqueColumnFilterValues(values, valueType),
+    [values, valueType]
+  )
 
   const searchLower = search.trim().toLowerCase()
   const filteredValues = useMemo(() => {
@@ -124,7 +141,10 @@ export function ColumnFilterDropdown({
   }
 
   const apply = () => {
-    onChange(localSelected)
+    const next = selectionCoversAllValues(localSelected, uniqueValues)
+      ? new Set<string>()
+      : localSelected
+    onChange(next)
     onClose()
   }
 

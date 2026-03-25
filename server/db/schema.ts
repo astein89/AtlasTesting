@@ -110,8 +110,9 @@ export function initSchema(db: DbWrapper) {
       schema_id TEXT NOT NULL,
       key TEXT NOT NULL,
       display_name TEXT NOT NULL,
-      type TEXT NOT NULL, -- 'alpha' | 'numeric'
+      type TEXT NOT NULL, -- 'alpha' | 'numeric' | 'mixed' | 'fixed'
       width INTEGER NOT NULL,
+      pattern_mask TEXT, -- mixed only: @ letter, # digit, other chars literal (stricter than field masks)
       min_value TEXT,
       max_value TEXT,
       order_index INTEGER NOT NULL,
@@ -152,7 +153,7 @@ export function initSchema(db: DbWrapper) {
       id TEXT PRIMARY KEY,
       schema_id TEXT NOT NULL,
       zone_id TEXT NOT NULL,
-      code TEXT NOT NULL UNIQUE,
+      location TEXT NOT NULL UNIQUE,
       components TEXT NOT NULL, -- JSON: { key: value }
       field_values TEXT, -- JSON: optional schema field values (number | text | select)
       created_at TEXT DEFAULT (datetime('now')),
@@ -184,6 +185,9 @@ export function initSchema(db: DbWrapper) {
   migrateFieldsAudit(db)
   migrateRecordHistory(db)
   migrateLocationSchemaFieldsAndFieldValues(db)
+  migrateLocationSchemaComponentPatternMask(db)
+  migrateLocationSchemaComponentMixToMixed(db)
+  migrateLocationsCodeToLocationColumn(db)
   migrateDropLocationSchemaCodePattern(db)
   migrateTestPlansAndTestsUpdatedAt(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
@@ -211,6 +215,41 @@ function migrateRecordHistory(db: DbWrapper) {
         new_status TEXT
       )
     `)
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateLocationSchemaComponentPatternMask(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(location_schema_components)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const has = rows.some((r) => r[1] === 'pattern_mask')
+    if (has) return
+    db.run('ALTER TABLE location_schema_components ADD COLUMN pattern_mask TEXT')
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateLocationSchemaComponentMixToMixed(db: DbWrapper) {
+  try {
+    db.run(`UPDATE location_schema_components SET type = 'mixed' WHERE type = 'mix'`)
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateLocationsCodeToLocationColumn(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(locations)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const colNames = rows.map((r) => r[1] as string)
+    if (colNames.includes('location')) return
+    if (!colNames.includes('code')) return
+    db.run('ALTER TABLE locations RENAME COLUMN code TO location')
   } catch {
     // Ignore
   }

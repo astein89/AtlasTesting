@@ -218,10 +218,7 @@ export function LocationZones() {
         </button>
       </div>
       {editZone && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setEditZone(null)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -281,10 +278,7 @@ export function LocationZones() {
         </div>
       )}
       {newZoneOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setNewZoneOpen(false)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -371,7 +365,6 @@ export function LocationZones() {
       )}
       <SimpleDataTable
         preferenceKey="atlas-locations-zones"
-        pagination
         rows={zones}
         getRowKey={(z) => z.id}
         enableSelection

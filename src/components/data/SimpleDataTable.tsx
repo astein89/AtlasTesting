@@ -82,6 +82,29 @@ function stableFilterFingerprint(filters: Record<string, string[]>): string {
   return JSON.stringify(normalized)
 }
 
+/** Apply global search + column filters. Omit one column so its dropdown only lists values still possible given the rest. */
+function filterRowsBySearchAndColumnFilters<Row>(
+  rows: Row[],
+  columns: Array<SimpleColumn<Row>>,
+  searchQuery: string,
+  filterSets: Record<string, Set<string>>,
+  excludeColumnKey?: string | null
+): Row[] {
+  let out = rows
+  const q = searchQuery.trim().toLowerCase()
+  if (q) {
+    out = out.filter((r) => columns.some((c) => c.getValue(r).toLowerCase().includes(q)))
+  }
+  for (const [k, allowed] of Object.entries(filterSets)) {
+    if (excludeColumnKey != null && k === excludeColumnKey) continue
+    if (allowed.size === 0) continue
+    const col = columns.find((c) => c.key === k)
+    if (!col) continue
+    out = out.filter((r) => allowed.has(col.getValue(r)))
+  }
+  return out
+}
+
 export function SimpleDataTable<Row>({
   preferenceKey,
   columns,
@@ -140,18 +163,7 @@ export function SimpleDataTable<Row>({
   const filteredRows = useMemo(() => {
     let out = rows
     if (disableSearchAndFilters) return out
-    const q = searchQuery.trim().toLowerCase()
-    if (q) {
-      out = out.filter((r) =>
-        columns.some((c) => c.getValue(r).toLowerCase().includes(q))
-      )
-    }
-    for (const [k, allowed] of Object.entries(filterSets)) {
-      if (allowed.size === 0) continue
-      const col = columns.find((c) => c.key === k)
-      if (!col) continue
-      out = out.filter((r) => allowed.has(col.getValue(r)))
-    }
+    out = filterRowsBySearchAndColumnFilters(rows, columns, searchQuery, filterSets)
     if (sortKey && !disableSort) {
       const col = columns.find((c) => c.key === sortKey)
       if (col) {
@@ -234,13 +246,20 @@ export function SimpleDataTable<Row>({
     onFilterSnapshotChange,
   ])
 
-  /** Distinct values for the open filter only — avoids rebuilding/sorting all columns each render. */
+  /**
+   * Distinct values for the open filter only — from rows matching search and every *other* column filter,
+   * so options stay in sync with what can still appear in the current result (faceted filtering).
+   */
   const openColumnDistinctValues = useMemo(() => {
     if (!openFilterColumn) return [] as string[]
     const col = columns.find((c) => c.key === openFilterColumn)
     if (!col) return []
+    const base =
+      disableSearchAndFilters
+        ? rows
+        : filterRowsBySearchAndColumnFilters(rows, columns, searchQuery, filterSets, openFilterColumn)
     const s = new Set<string>()
-    for (const r of rows) {
+    for (const r of base) {
       const v = col.getValue(r)
       if (v === '' || v == null) continue
       const t = String(v).trim()
@@ -249,7 +268,7 @@ export function SimpleDataTable<Row>({
     return Array.from(s).sort((a, b) =>
       a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
     )
-  }, [openFilterColumn, rows, columns])
+  }, [openFilterColumn, rows, columns, searchQuery, filterSets, disableSearchAndFilters])
 
   const toggleHidden = (key: string) => {
     goToFirstPage()

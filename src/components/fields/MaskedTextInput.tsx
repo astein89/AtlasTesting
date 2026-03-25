@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import type { FieldConfig } from '../../types'
+import { applyLocationPatternMask, countLocationPatternSlots } from '../../utils/locationPatternMask'
+import { applyTextPatternMask } from '../../utils/textPatternMask'
 
 const INVALID_CHAR_WARNING_MS = 2500
 
@@ -35,6 +37,8 @@ interface MaskedTextInputProps {
   disabled?: boolean
   placeholder?: string
   overrideValidation?: boolean
+  /** With a pattern: only @ and # are slots (location schema components). */
+  locationPatternSlots?: boolean
 }
 
 /**
@@ -51,6 +55,7 @@ export function MaskedTextInput({
   disabled,
   placeholder,
   overrideValidation = false,
+  locationPatternSlots = false,
 }: MaskedTextInputProps) {
   const pattern = config?.textPatternMask?.trim()
   const effectivePlaceholder = placeholder || pattern || undefined
@@ -71,44 +76,12 @@ export function MaskedTextInput({
       return
     }
 
-    // If we have a pattern, treat anything that is not a-z / A-Z / 0-9 as separators,
-    // and map only alphanumerics into the pattern slots (@, #, *) in order.
-    let nextValue = base
-    if (pattern) {
-      const maskChars = pattern.split('')
-      const slotsOnly = base.replace(/[^A-Za-z0-9]/g, '')
-      const out: string[] = []
-      let slotIndex = 0
-
-      const takeNextMatching = (predicate: (ch: string) => boolean): string | null => {
-        while (slotIndex < slotsOnly.length) {
-          const ch = slotsOnly[slotIndex++]
-          if (predicate(ch)) return ch
-        }
-        return null
-      }
-
-      for (const m of maskChars) {
-        if (m === '@' || m === 'a') {
-          const ch = takeNextMatching((c) => /[A-Za-z]/.test(c))
-          if (ch == null) break
-          out.push(ch)
-        } else if (m === '#' || m === '0') {
-          const ch = takeNextMatching((c) => /[0-9]/.test(c))
-          if (ch == null) break
-          out.push(ch)
-        } else if (m === '*') {
-          const ch = takeNextMatching((c) => /[A-Za-z0-9]/.test(c))
-          if (ch == null) break
-          out.push(ch)
-        } else {
-          // Literal from the pattern becomes part of the value.
-          out.push(m)
-        }
-      }
-
-      nextValue = out.join('')
-    }
+    // If we have a pattern, map alphanumerics into slots; location masks use only @ and #.
+    const nextValue = pattern
+      ? locationPatternSlots
+        ? applyLocationPatternMask(base, pattern)
+        : applyTextPatternMask(base, pattern)
+      : base
 
     const limited = maxLength ? nextValue.slice(0, maxLength) : nextValue
     // Only warn when we actually removed a character (not when we only changed case).
@@ -132,9 +105,10 @@ export function MaskedTextInput({
   let remaining: number | undefined
   if (typeof minLength === 'number' && minLength > 0) {
     if (pattern) {
-      const slotCount = pattern
-        .split('')
-        .filter((ch) => ch === '@' || ch === '#' || ch === '*' || ch === '0' || ch === 'a').length
+      const slotCount = locationPatternSlots
+        ? countLocationPatternSlots(pattern)
+        : pattern.split('').filter((ch) => ch === '@' || ch === '#' || ch === '*' || ch === '0' || ch === 'a')
+            .length
       const slotChars = value.replace(/[^A-Za-z0-9]/g, '')
       const filled = Math.min(slotChars.length, slotCount)
       remaining = Math.max(0, minLength - filled)

@@ -10,6 +10,11 @@ import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { formatSelectOptionLabel, selectOptionTitle, type LocationSchemaField } from '../types/locationSchemaFields'
 import { downloadCsvFromApi } from '../utils/downloadCsv'
 import { expandLocationGenerationRange, sanitizeGenerateRangeInput } from '../utils/expandLocationGenerationRange'
+import { MaskedTextInput } from '../components/fields/MaskedTextInput'
+import {
+  applyLocationPatternMask,
+  normalizeLocationMixedGeneratePartOrNull,
+} from '../utils/locationPatternMask'
 import { sanitizeFilenameSegment } from '../utils/safeFilename'
 
 /** Must match server generation caps in `server/routes/locations.ts`. */
@@ -25,7 +30,7 @@ interface Zone {
 
 interface LocationRow {
   id: string
-  code: string
+  location: string
   components: Record<string, string>
   fieldValues?: Record<string, unknown>
 }
@@ -41,13 +46,61 @@ interface SchemaComponent {
   schemaId: string
   key: string
   displayName: string
-  type: 'alpha' | 'numeric'
+  type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
   width: number
+  patternMask?: string | null
+  minValue?: string | null
+}
+
+function normalizeComponentRow(c: SchemaComponent): SchemaComponent {
+  const r = c as Record<string, unknown>
+  const typeRaw = r.type === 'mix' ? 'mixed' : r.type
+  const pm = r.patternMask ?? r.pattern_mask
+  const mv = r.minValue ?? r.min_value
+  const patternMask =
+    pm != null && String(pm).trim() !== '' ? String(pm).trim() : null
+  const minValue =
+    mv != null && String(mv).trim() !== '' ? String(mv).trim() : null
+  return {
+    ...c,
+    type: typeRaw as SchemaComponent['type'],
+    patternMask,
+    minValue,
+  }
+}
+
+function locationComponentHint(c: SchemaComponent): { widthLabel: string; charsetLabel: string } {
+  if (c.type === 'fixed') {
+    const lit = (c.minValue ?? '').trim()
+    return {
+      widthLabel: lit ? `${lit.length} char(s) fixed` : 'Fixed (not configured)',
+      charsetLabel: 'read-only',
+    }
+  }
+  if (c.type === 'numeric') {
+    return { widthLabel: `${c.width} digit(s) max`, charsetLabel: '0–9 only' }
+  }
+  if (c.type === 'mixed') {
+    const pm = c.patternMask?.trim()
+    if (pm) {
+      return {
+        widthLabel: `Pattern (${pm.length} chars)`,
+        charsetLabel: `@ letter · # digit · other chars fixed`,
+      }
+    }
+    return { widthLabel: `${c.width} character(s)`, charsetLabel: 'A–Z and 0–9' }
+  }
+  return { widthLabel: `${c.width} letter(s) max`, charsetLabel: 'A–Z only' }
 }
 
 /** Client-side validation aligned with server rules for location component values. */
 function validateLocationComponentValue(c: SchemaComponent, raw: string): string | null {
   const s = raw.trim()
+  if (c.type === 'fixed') {
+    const lit = (c.minValue ?? '').trim()
+    if (!lit) return 'Fixed value missing in schema.'
+    return s === lit ? null : 'This part is fixed and cannot be changed.'
+  }
   if (!s) return 'A value is required.'
   if (c.type === 'numeric') {
     if (!/^\d+$/.test(s)) return 'Use digits only (0–9).'
@@ -61,6 +114,18 @@ function validateLocationComponentValue(c: SchemaComponent, raw: string): string
     }
     return null
   }
+  if (c.type === 'mixed') {
+    const pm = c.patternMask?.trim()
+    if (pm) {
+      const n = normalizeLocationMixedGeneratePartOrNull(s, pm)
+      if (n == null) return `Value does not match pattern ${pm}`
+      return null
+    }
+    const t = s.replace(/[a-z]/g, (ch) => ch.toUpperCase())
+    if (!/^[A-Z0-9]+$/.test(t)) return 'Use only letters A–Z and digits 0–9.'
+    if (t.length !== c.width) return `Must be exactly ${c.width} character(s).`
+    return null
+  }
   if (!/^[A-Za-z]+$/.test(s)) return 'Use letters A–Z only (no numbers or spaces).'
   if (s.length > c.width) return `At most ${c.width} letter(s).`
   return null
@@ -68,9 +133,22 @@ function validateLocationComponentValue(c: SchemaComponent, raw: string): string
 
 /** Restrict typing to allowed characters and schema width (matches server normalization). */
 function sanitizeLocationComponentInput(c: SchemaComponent, value: string): string {
+  if (c.type === 'fixed') {
+    return (c.minValue ?? '').trim()
+  }
   if (value === '') return ''
   if (c.type === 'numeric') {
     return value.replace(/\D/g, '').slice(0, c.width)
+  }
+  if (c.type === 'mixed') {
+    const pm = c.patternMask?.trim()
+    if (pm) {
+      return applyLocationPatternMask(value, pm)
+    }
+    return value
+      .replace(/[^A-Za-z0-9]/g, '')
+      .slice(0, c.width)
+      .replace(/[a-z]/g, (ch) => ch.toUpperCase())
   }
   return value.replace(/[^A-Za-z]/g, '').slice(0, c.width).toUpperCase()
 }
@@ -115,12 +193,23 @@ async function postGenerateLocationsStream(
   })
 
   if (!res.ok) {
-    let message = `Request failed (${res.status})`
+    let message = `Request failed (HTTP ${res.status})`
     try {
       const text = await res.text()
-      const json = JSON.parse(text) as { error?: string }
-      if (json?.error) message = json.error
-      else if (text) message = text.slice(0, 300)
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text) as { error?: string; message?: string }
+      } catch {
+        parsed = null
+      }
+      const json = parsed && typeof parsed === 'object' ? (parsed as { error?: string; message?: string }) : null
+      if (typeof json?.error === 'string' && json.error.trim()) {
+        message = json.error.trim()
+      } else if (typeof json?.message === 'string' && json.message.trim()) {
+        message = json.message.trim()
+      } else if (text.trim()) {
+        message = text.trim().slice(0, 500)
+      }
     } catch {
       /* ignore */
     }
@@ -196,8 +285,21 @@ async function postGenerateLocationsStream(
     }
   }
 
-  if (!complete) throw new Error('Generate finished without a result')
+  if (!complete) {
+    throw new Error(
+      'The server closed the connection before sending a completion message. If progress was shown, the run may have been interrupted; try again or check server logs.'
+    )
+  }
   return complete
+}
+
+function formatGenerateFailureMessage(err: unknown): string {
+  if (err instanceof Error) {
+    const m = err.message.trim()
+    return m || 'Request failed with no message.'
+  }
+  if (typeof err === 'string' && err.trim()) return err.trim()
+  return 'An unexpected error occurred while generating locations.'
 }
 
 export function LocationZoneDetail() {
@@ -211,6 +313,7 @@ export function LocationZoneDetail() {
   const [generateFieldValues, setGenerateFieldValues] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [generateOpen, setGenerateOpen] = useState(false)
+  const [generateError, setGenerateError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [generateProgress, setGenerateProgress] = useState<{ processed: number; total: number } | null>(
     null
@@ -255,6 +358,18 @@ export function LocationZoneDetail() {
     void refreshLocations(zoneId)
   }, [zoneId])
 
+  /** Keep range inputs aligned when component keys change (e.g. schema refresh) without dropping typed values. */
+  useEffect(() => {
+    if (components.length === 0) return
+    setRanges((prev) => {
+      const next: Record<string, string> = {}
+      for (const c of components) {
+        next[c.key] = prev[c.key] ?? ''
+      }
+      return next
+    })
+  }, [components])
+
   async function loadZoneAndSchema(id: string) {
     const zonesResp = await api.get<Zone[]>('/locations/zones')
     const z = zonesResp.data.find((row) => row.id === id) || null
@@ -264,10 +379,11 @@ export function LocationZoneDetail() {
         api.get<SchemaComponent[]>(`/locations/schemas/${z.schemaId}/components`),
         api.get<LocationSchemaField[]>(`/locations/schemas/${z.schemaId}/fields`),
       ])
-      setComponents(comps.data)
+      const compsNorm = comps.data.map(normalizeComponentRow)
+      setComponents(compsNorm)
       setSchemaFields(fieldsResp.data)
       const initial: Record<string, string> = {}
-      for (const c of comps.data) initial[c.key] = ''
+      for (const c of compsNorm) initial[c.key] = ''
       setRanges(initial)
     } else {
       setSchemaFields([])
@@ -332,12 +448,12 @@ export function LocationZoneDetail() {
     const componentKeys = components.map((c) => c.key)
     const fieldKeys = schemaFields.map((f) => f.key)
     const lines: string[] = []
-    lines.push(['code', ...componentKeys, ...fieldKeys].join(','))
+    lines.push(['location', ...componentKeys, ...fieldKeys].join(','))
     for (const r of rows) {
       const comps = r.components || {}
       const fvs = r.fieldValues || {}
       const vals = [
-        r.code,
+        r.location,
         ...componentKeys.map((k) => String(comps[k] ?? '')),
         ...fieldKeys.map((k) => {
           const v = fvs[k]
@@ -368,7 +484,7 @@ export function LocationZoneDetail() {
     lines.push(headers.map(csvEscapeCell).join(','))
     for (const r of rows) {
       const line = [
-        r.code,
+        r.location,
         ...components.map((c) => String(r.components?.[c.key] ?? '')),
         ...schemaFields.map((f) => {
           const v = r.fieldValues?.[f.key]
@@ -397,7 +513,7 @@ export function LocationZoneDetail() {
       if (!zoneId) return
       const loc = locations.find((l) => l.id === locationId)
       const ok = await showConfirm(
-        `Delete location "${loc?.code ?? 'this location'}"? This cannot be undone.`,
+        `Delete location "${loc?.location ?? 'this location'}"? This cannot be undone.`,
         {
           title: 'Delete location',
           confirmLabel: 'Delete',
@@ -546,6 +662,7 @@ export function LocationZoneDetail() {
     const partial: Record<string, string> = {}
     const nextErrors: Record<string, string> = {}
     for (const c of components) {
+      if (c.type === 'fixed') continue
       const v = bulkLocationPatch[c.key]?.trim() ?? ''
       if (v === '') continue
       const err = validateLocationComponentValue(c, v)
@@ -599,7 +716,7 @@ export function LocationZoneDetail() {
       void refreshLocations(zoneId)
       if (failed > 0) {
         // eslint-disable-next-line no-alert
-        window.alert(`Updated ${ok} location(s). ${failed} failed (e.g. duplicate code).`)
+        window.alert(`Updated ${ok} location(s). ${failed} failed (e.g. duplicate location).`)
       }
     } finally {
       setSavingBulkLocations(false)
@@ -641,12 +758,28 @@ export function LocationZoneDetail() {
     const errors: string[] = []
 
     for (const c of order) {
+      if (c.type === 'fixed') {
+        const lit = (c.minValue ?? '').trim()
+        if (!lit) {
+          errors.push(`${c.displayName}: fixed value not configured in schema`)
+          byKey[c.key] = []
+        } else {
+          byKey[c.key] = [lit]
+        }
+        continue
+      }
       const raw = (ranges[c.key] ?? '').trim()
       if (!raw) {
         byKey[c.key] = []
         continue
       }
-      const { values, error } = expandLocationGenerationRange(raw, c.type, c.width)
+      const { values, error } = expandLocationGenerationRange(
+        raw,
+        c.type,
+        c.width,
+        c.patternMask,
+        null
+      )
       if (error) {
         errors.push(`${c.displayName}: ${error}`)
         byKey[c.key] = []
@@ -716,6 +849,7 @@ export function LocationZoneDetail() {
     if (preview.errors.length > 0 || preview.total === 0) return
     if (preview.total > MAX_GENERATE_LOCATIONS) return
     try {
+      setGenerateError(null)
       setGenerating(true)
       setGenerateProgress({ processed: 0, total: preview.total })
       const fv: Record<string, unknown> = {}
@@ -738,9 +872,10 @@ export function LocationZoneDetail() {
       for (const f of schemaFields) clearedFv[f.key] = ''
       setGenerateFieldValues(clearedFv)
       setGenerateOpen(false)
+      setGenerateError(null)
       void refreshLocations(zoneId)
-    } catch {
-      setError('Failed to generate locations')
+    } catch (err) {
+      setGenerateError(formatGenerateFailureMessage(err))
     } finally {
       setGenerating(false)
       setGenerateProgress(null)
@@ -749,7 +884,7 @@ export function LocationZoneDetail() {
 
   const locationColumns = useMemo(() => {
     const cols: Array<SimpleColumn<LocationRow>> = [
-      { key: 'code', label: 'Location', getValue: (l) => l.code, width: '14rem' },
+      { key: 'location', label: 'Location', getValue: (l) => l.location, width: '14rem' },
     ]
     for (const c of components) {
       cols.push({
@@ -853,6 +988,7 @@ export function LocationZoneDetail() {
                 const init: Record<string, string> = {}
                 for (const f of schemaFields) init[f.key] = ''
                 setGenerateFieldValues(init)
+                setGenerateError(null)
                 setGenerateOpen(true)
               }}
               disabled={components.length === 0}
@@ -920,16 +1056,7 @@ export function LocationZoneDetail() {
           />
       </div>
       {bulkLocationsOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => {
-            if (!savingBulkLocations) {
-              setBulkLocationsOpen(false)
-              setBulkLocationFieldErrors({})
-              setBulkSchemaFieldErrors({})
-            }
-          }}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -1003,46 +1130,76 @@ export function LocationZoneDetail() {
                     </div>
                   </div>
                 )}
-              {components.map((c) => (
+              {components.map((c) => {
+                const hint = locationComponentHint(c)
+                return (
                 <div key={c.id}>
                   <label className="block text-sm font-medium text-foreground">
                     {c.displayName} ({c.key})
                     <span className="ml-1 font-normal text-foreground/50">
-                      — {c.type === 'numeric' ? `${c.width} digit(s) max` : `${c.width} letter(s) max`},{' '}
-                      {c.type === 'numeric' ? '0–9 only' : 'A–Z only'}
+                      — {hint.widthLabel}, {hint.charsetLabel}
                     </span>
                   </label>
-                  <input
-                    type="text"
-                    inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
-                    autoComplete="off"
-                    maxLength={c.width}
-                    spellCheck={false}
-                    value={bulkLocationPatch[c.key] ?? ''}
-                    onChange={(e) => {
-                      const next = sanitizeLocationComponentInput(c, e.target.value)
-                      setBulkLocationPatch((prev) => ({
-                        ...prev,
-                        [c.key]: next,
-                      }))
-                      setBulkLocationFieldErrors((prev) => {
-                        const n = { ...prev }
-                        delete n[c.key]
-                        return n
-                      })
-                    }}
-                    className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-foreground ${
-                      bulkLocationFieldErrors[c.key]
-                        ? 'border-red-500 ring-1 ring-red-500/30'
-                        : 'border-border'
-                    }`}
-                    aria-invalid={bulkLocationFieldErrors[c.key] ? true : undefined}
-                  />
+                  {c.type === 'fixed' ? (
+                    <div className="mt-1 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2 font-mono text-sm text-foreground">
+                      {(c.minValue ?? '').trim() || '—'}
+                    </div>
+                  ) : c.type === 'mixed' && c.patternMask?.trim() ? (
+                    <MaskedTextInput
+                      value={bulkLocationPatch[c.key] ?? ''}
+                      onChange={(next) => {
+                        setBulkLocationPatch((prev) => ({
+                          ...prev,
+                          [c.key]: next,
+                        }))
+                        setBulkLocationFieldErrors((prev) => {
+                          const n = { ...prev }
+                          delete n[c.key]
+                          return n
+                        })
+                      }}
+                      config={{ textPatternMask: c.patternMask.trim() }}
+                      locationPatternSlots
+                      className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-foreground ${
+                        bulkLocationFieldErrors[c.key]
+                          ? 'border-red-500 ring-1 ring-red-500/30'
+                          : 'border-border'
+                      }`}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
+                      autoComplete="off"
+                      maxLength={c.width}
+                      spellCheck={false}
+                      value={bulkLocationPatch[c.key] ?? ''}
+                      onChange={(e) => {
+                        const next = sanitizeLocationComponentInput(c, e.target.value)
+                        setBulkLocationPatch((prev) => ({
+                          ...prev,
+                          [c.key]: next,
+                        }))
+                        setBulkLocationFieldErrors((prev) => {
+                          const n = { ...prev }
+                          delete n[c.key]
+                          return n
+                        })
+                      }}
+                      className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-foreground ${
+                        bulkLocationFieldErrors[c.key]
+                          ? 'border-red-500 ring-1 ring-red-500/30'
+                          : 'border-border'
+                      }`}
+                      aria-invalid={bulkLocationFieldErrors[c.key] ? true : undefined}
+                    />
+                  )}
                   {bulkLocationFieldErrors[c.key] && (
                     <p className="mt-1 text-xs text-red-600 dark:text-red-400">{bulkLocationFieldErrors[c.key]}</p>
                   )}
                 </div>
-              ))}
+                )
+              })}
               {schemaFields.length > 0 && (
                 <div className="border-t border-border pt-3 space-y-3">
                   <p className="text-xs font-medium text-foreground">Optional fields</p>
@@ -1160,10 +1317,7 @@ export function LocationZoneDetail() {
         </div>
       )}
       {exportChoiceOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setExportChoiceOpen(false)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -1209,10 +1363,7 @@ export function LocationZoneDetail() {
         </div>
       )}
       {editZoneOpen && zone && (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => setEditZoneOpen(false)}
-          >
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
               onClick={(e) => e.stopPropagation()}
@@ -1272,15 +1423,7 @@ export function LocationZoneDetail() {
           </div>
         )}
         {editingLocation && (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => {
-              if (savingLocation) return
-              setEditingLocation(null)
-              setEditLocationFieldErrors({})
-              setEditLocationSchemaFieldErrors({})
-            }}
-          >
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
               onClick={(e) => e.stopPropagation()}
@@ -1290,7 +1433,7 @@ export function LocationZoneDetail() {
                   <h2 className="text-base font-semibold text-foreground">Edit location</h2>
                   <p className="text-xs text-foreground/70">
                     Code updates from components:{' '}
-                    <span className="font-mono">{editingLocation.code}</span>
+                    <span className="font-mono">{editingLocation.location}</span>
                   </p>
                 </div>
                 <button
@@ -1317,46 +1460,76 @@ export function LocationZoneDetail() {
                     Fix invalid values below (code parts and optional fields).
                   </div>
                 )}
-                {components.map((c) => (
+                {components.map((c) => {
+                  const hint = locationComponentHint(c)
+                  return (
                   <div key={c.id}>
                     <label className="block text-sm font-medium text-foreground">
                       {c.displayName} ({c.key})
                       <span className="ml-1 font-normal text-foreground/50">
-                        — {c.type === 'numeric' ? `${c.width} digit(s) max` : `${c.width} letter(s) max`},{' '}
-                        {c.type === 'numeric' ? '0–9 only' : 'A–Z only'}
+                        — {hint.widthLabel}, {hint.charsetLabel}
                       </span>
                     </label>
-                    <input
-                      type="text"
-                      inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
-                      autoComplete="off"
-                      maxLength={c.width}
-                      spellCheck={false}
-                      value={editLocationComponents[c.key] ?? ''}
-                      onChange={(e) => {
-                        const next = sanitizeLocationComponentInput(c, e.target.value)
-                        setEditLocationComponents((prev) => ({
-                          ...prev,
-                          [c.key]: next,
-                        }))
-                        setEditLocationFieldErrors((prev) => {
-                          const next = { ...prev }
-                          delete next[c.key]
-                          return next
-                        })
-                      }}
-                      className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-foreground ${
-                        editLocationFieldErrors[c.key]
-                          ? 'border-red-500 ring-1 ring-red-500/30'
-                          : 'border-border'
-                      }`}
-                      aria-invalid={editLocationFieldErrors[c.key] ? true : undefined}
-                    />
+                    {c.type === 'fixed' ? (
+                      <div className="mt-1 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2 font-mono text-sm text-foreground">
+                        {(c.minValue ?? '').trim() || '—'}
+                      </div>
+                    ) : c.type === 'mixed' && c.patternMask?.trim() ? (
+                      <MaskedTextInput
+                        value={editLocationComponents[c.key] ?? ''}
+                        onChange={(next) => {
+                          setEditLocationComponents((prev) => ({
+                            ...prev,
+                            [c.key]: next,
+                          }))
+                          setEditLocationFieldErrors((prev) => {
+                            const n = { ...prev }
+                            delete n[c.key]
+                            return n
+                          })
+                        }}
+                        config={{ textPatternMask: c.patternMask.trim() }}
+                        locationPatternSlots
+                        className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-foreground ${
+                          editLocationFieldErrors[c.key]
+                            ? 'border-red-500 ring-1 ring-red-500/30'
+                            : 'border-border'
+                        }`}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
+                        autoComplete="off"
+                        maxLength={c.width}
+                        spellCheck={false}
+                        value={editLocationComponents[c.key] ?? ''}
+                        onChange={(e) => {
+                          const next = sanitizeLocationComponentInput(c, e.target.value)
+                          setEditLocationComponents((prev) => ({
+                            ...prev,
+                            [c.key]: next,
+                          }))
+                          setEditLocationFieldErrors((prev) => {
+                            const next = { ...prev }
+                            delete next[c.key]
+                            return next
+                          })
+                        }}
+                        className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-foreground ${
+                          editLocationFieldErrors[c.key]
+                            ? 'border-red-500 ring-1 ring-red-500/30'
+                            : 'border-border'
+                        }`}
+                        aria-invalid={editLocationFieldErrors[c.key] ? true : undefined}
+                      />
+                    )}
                     {editLocationFieldErrors[c.key] && (
                       <p className="mt-1 text-xs text-red-600 dark:text-red-400">{editLocationFieldErrors[c.key]}</p>
                     )}
                   </div>
-                ))}
+                  )
+                })}
                 {schemaFields.length > 0 && (
                   <div className="border-t border-border pt-3 space-y-3">
                     <p className="text-xs font-medium text-foreground">Fields</p>
@@ -1493,12 +1666,7 @@ export function LocationZoneDetail() {
           </div>
         )}
         {generateOpen && (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-            onClick={() => {
-              if (!generating) setGenerateOpen(false)
-            }}
-          >
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-4xl rounded-xl border border-border bg-card p-6 shadow-lg"
               onClick={(e) => e.stopPropagation()}
@@ -1507,14 +1675,18 @@ export function LocationZoneDetail() {
                 <div className="space-y-1">
                   <h2 className="text-lg font-semibold tracking-tight text-foreground">Generate locations</h2>
                   <p className="text-sm leading-relaxed text-foreground/70">
-                    Enter ranges like <span className="font-mono text-foreground/90">1-3,5</span> or{' '}
-                    <span className="font-mono text-foreground/90">A-C</span>.
+                    Enter ranges like <span className="font-mono text-foreground/90">1-3,5</span>,{' '}
+                    <span className="font-mono text-foreground/90">A-C</span>, or for mixed parts{' '}
+                    <span className="font-mono text-foreground/90">A1-C3</span> (letters and digits per position).
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    if (!generating) setGenerateOpen(false)
+                    if (!generating) {
+                      setGenerateError(null)
+                      setGenerateOpen(false)
+                    }
                   }}
                   disabled={generating}
                   className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm text-foreground/70 hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
@@ -1523,16 +1695,48 @@ export function LocationZoneDetail() {
                 </button>
               </div>
 
+              {generateError && (
+                <div
+                  className="mb-4 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+                  role="alert"
+                >
+                  <div className="font-semibold text-red-800 dark:text-red-200">Generation failed</div>
+                  <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">{generateError}</p>
+                  <p className="mt-3 text-xs text-red-600/90 dark:text-red-400/90">
+                    This message comes from the server when the request could not be completed. Adjust ranges or
+                    optional fields as indicated, then try again.
+                  </p>
+                </div>
+              )}
+
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]">
                 <form onSubmit={handleGenerate} className="flex min-h-0 flex-col gap-4 text-sm">
                   <div className="space-y-2.5">
                     {components.map((c) => {
                       const w = c.width
                       const charWord = w === 1 ? 'char' : 'chars'
+                      const pm = c.patternMask?.trim()
+                      const fixedLit = (c.minValue ?? '').trim()
                       const typeAndCount =
-                        c.type === 'alpha'
-                          ? `Letters (A–Z) · ${w} ${charWord}`
-                          : `Digits (0–9) · ${w} ${charWord}`
+                        c.type === 'fixed'
+                          ? `Fixed · ${fixedLit ? `"${fixedLit}"` : 'not configured'}`
+                          : c.type === 'alpha'
+                            ? `Letters (A–Z) · ${w} ${charWord}`
+                            : c.type === 'numeric'
+                              ? `Digits (0–9) · ${w} ${charWord}`
+                              : pm
+                                ? `Pattern mask · ${pm}`
+                                : `Mixed (A–Z & 0–9) · ${w} ${charWord}`
+                      const placeholder =
+                        c.type === 'fixed'
+                          ? ''
+                          : c.type === 'alpha'
+                            ? 'e.g. A-C'
+                            : c.type === 'numeric'
+                              ? 'e.g. 1-3,5'
+                              : pm
+                                ? 'comma-separated full codes, e.g. AA-01,AA-02'
+                                : 'e.g. A1-C3 or 1A,2A'
                       return (
                       <div key={c.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
                         <label className="shrink-0 text-sm font-medium text-foreground sm:w-44">
@@ -1541,22 +1745,28 @@ export function LocationZoneDetail() {
                             {typeAndCount}
                           </span>
                         </label>
-                        <input
-                          type="text"
-                          value={ranges[c.key] ?? ''}
-                          onChange={(e) => {
-                            const v = sanitizeGenerateRangeInput(e.target.value, c.type)
-                            setRanges((prev) => ({
-                              ...prev,
-                              [c.key]: v,
-                            }))
-                          }}
-                          inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
-                          autoCapitalize={c.type === 'alpha' ? 'characters' : 'off'}
-                          spellCheck={false}
-                          className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
-                          placeholder={c.type === 'alpha' ? 'e.g. A-C' : 'e.g. 1-3,5'}
-                        />
+                        {c.type === 'fixed' ? (
+                          <div className="min-w-0 flex-1 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2 font-mono text-sm text-foreground">
+                            {fixedLit || '—'}
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={ranges[c.key] ?? ''}
+                            onChange={(e) => {
+                              const v = sanitizeGenerateRangeInput(e.target.value, c.type, c.patternMask)
+                              setRanges((prev) => ({
+                                ...prev,
+                                [c.key]: v,
+                              }))
+                            }}
+                            inputMode={c.type === 'numeric' ? 'numeric' : 'text'}
+                            autoCapitalize={c.type === 'alpha' ? 'characters' : 'off'}
+                            spellCheck={false}
+                            className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            placeholder={placeholder}
+                          />
+                        )}
                       </div>
                       )
                     })}
@@ -1685,7 +1895,10 @@ export function LocationZoneDetail() {
                     <button
                       type="button"
                       className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
-                      onClick={() => setGenerateOpen(false)}
+                      onClick={() => {
+                        setGenerateError(null)
+                        setGenerateOpen(false)
+                      }}
                       disabled={generating}
                     >
                       Cancel

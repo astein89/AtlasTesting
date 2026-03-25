@@ -2,8 +2,33 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
 import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
+import {
+  normalizeLocationMixedGeneratePartOrNull,
+  validateLocationPatternMask,
+} from '../utils/locationPatternMask.js'
 
 const router = Router()
+
+const FIXED_COMPONENT_VALUE_MAX_LEN = 32
+
+/** Legacy API/clients may still send `mix`; DB stores `mixed` after migration. */
+function normalizeLocationComponentType(raw: unknown): 'alpha' | 'numeric' | 'mixed' | 'fixed' | null {
+  const t = typeof raw === 'string' ? raw : ''
+  if (t === 'mix') return 'mixed'
+  if (t === 'alpha' || t === 'numeric' || t === 'mixed' || t === 'fixed') return t
+  return null
+}
+
+/** DB / JSON may expose `pattern_mask`; expansion must see the mask for mixed+pattern components. */
+function getComponentPatternMask(comp: {
+  patternMask?: string | null
+  pattern_mask?: string | null
+}): string | null {
+  const raw = comp.patternMask ?? comp.pattern_mask
+  if (raw == null || raw === '') return null
+  const t = String(raw).trim()
+  return t === '' ? null : t
+}
 
 router.use(authMiddleware, requireAdmin)
 
@@ -273,7 +298,7 @@ router.get('/schemas/:schemaId/components', (req: AuthRequest, res) => {
   const components = db
     .prepare(
       `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              min_value as minValue, max_value as maxValue, order_index as orderIndex
+              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -292,14 +317,57 @@ router.post('/schemas/:schemaId/components', (req: AuthRequest, res) => {
   const body = req.body as {
     key?: string
     displayName?: string
-    type?: 'alpha' | 'numeric'
+    type?: 'alpha' | 'numeric' | 'mixed' | 'mix' | 'fixed'
     width?: number
+    patternMask?: string | null
     minValue?: string
     maxValue?: string
   }
-  if (!body.key || !body.displayName || !body.type || !body.width) {
-    return res.status(400).json({ error: 'key, displayName, type, and width are required' })
+  if (!body.key || !body.displayName || !body.type) {
+    return res.status(400).json({ error: 'key, displayName, and type are required' })
   }
+  const typeNorm = normalizeLocationComponentType(body.type)
+  if (!typeNorm) {
+    return res.status(400).json({ error: 'type must be alpha, numeric, mixed, or fixed' })
+  }
+
+  const patternRaw = body.patternMask != null ? String(body.patternMask).trim() : ''
+  let widthNum: number
+  let patternToStore: string | null = null
+  let minToStore: string | null = body.minValue ?? null
+  let maxToStore: string | null = body.maxValue ?? null
+
+  if (typeNorm === 'fixed') {
+    const lit = body.minValue != null ? String(body.minValue).trim() : ''
+    if (!lit) {
+      return res.status(400).json({ error: 'fixed type requires minValue (the literal text)' })
+    }
+    if (lit.length > FIXED_COMPONENT_VALUE_MAX_LEN) {
+      return res.status(400).json({
+        error: `Fixed value at most ${FIXED_COMPONENT_VALUE_MAX_LEN} characters`,
+      })
+    }
+    if (/[\r\n]/.test(lit)) {
+      return res.status(400).json({ error: 'Fixed value cannot contain line breaks' })
+    }
+    widthNum = lit.length
+    patternToStore = null
+    minToStore = lit
+    maxToStore = null
+  } else if (typeNorm === 'mixed' && patternRaw) {
+    const pmErr = validateLocationPatternMask(patternRaw)
+    if (pmErr) {
+      return res.status(400).json({ error: pmErr })
+    }
+    patternToStore = patternRaw
+    widthNum = patternRaw.length
+  } else {
+    if (body.width == null || !Number.isFinite(Number(body.width))) {
+      return res.status(400).json({ error: 'width is required (1–10) when no pattern mask is set' })
+    }
+    widthNum = Math.max(1, Math.min(10, Number(body.width)))
+  }
+
   const id = uuidv4()
   const maxOrder = db
     .prepare(
@@ -318,24 +386,25 @@ router.post('/schemas/:schemaId/components', (req: AuthRequest, res) => {
 
   db.prepare(
     `INSERT INTO location_schema_components
-       (id, schema_id, key, display_name, type, width, min_value, max_value, order_index)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, schema_id, key, display_name, type, width, pattern_mask, min_value, max_value, order_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     schemaId,
     keyStr,
     String(body.displayName),
-    String(body.type),
-    Number(body.width),
-    body.minValue ?? null,
-    body.maxValue ?? null,
+    typeNorm,
+    widthNum,
+    patternToStore,
+    minToStore,
+    maxToStore,
     orderIndex
   )
 
   const row = db
     .prepare(
       `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              min_value as minValue, max_value as maxValue, order_index as orderIndex
+              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
        FROM location_schema_components WHERE id = ?`
     )
     .get(id)
@@ -374,7 +443,7 @@ router.put('/schemas/:schemaId/components/reorder', (req: AuthRequest, res) => {
   const components = db
     .prepare(
       `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              min_value as minValue, max_value as maxValue, order_index as orderIndex
+              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -387,47 +456,118 @@ router.put('/schemas/:schemaId/components/:componentId', (req: AuthRequest, res)
   const { schemaId, componentId } = req.params
   const existing = db
     .prepare(
-      `SELECT id, schema_id as schemaId FROM location_schema_components WHERE id = ?`
+      `SELECT id, schema_id as schemaId, type, width, pattern_mask as patternMask, min_value as minValue, max_value as maxValue
+       FROM location_schema_components WHERE id = ?`
     )
-    .get(componentId) as { id: string; schemaId: string } | undefined
+    .get(componentId) as
+    | {
+        id: string
+        schemaId: string
+        type: string
+        width: number
+        patternMask: string | null
+        minValue: string | null
+        maxValue: string | null
+      }
+    | undefined
   if (!existing || existing.schemaId !== schemaId) {
     return res.status(404).json({ error: 'Schema item not found' })
   }
 
   const body = req.body as {
     displayName?: string
-    type?: 'alpha' | 'numeric'
+    type?: 'alpha' | 'numeric' | 'mixed' | 'mix' | 'fixed' | 'fixed'
     width?: number
+    patternMask?: string | null
     minValue?: string | null
     maxValue?: string | null
   }
 
-  const typeVal = body.type === 'alpha' || body.type === 'numeric' ? body.type : null
-  const widthVal =
-    body.width != null && Number.isFinite(Number(body.width)) ? Math.max(1, Math.min(10, Number(body.width))) : null
+  const typeVal = body.type != null ? normalizeLocationComponentType(body.type) : null
+  if (body.type != null && !typeVal) {
+    return res.status(400).json({ error: 'type must be alpha, numeric, mixed, or fixed' })
+  }
+  const mergedType = (typeVal ??
+    normalizeLocationComponentType(existing.type) ??
+    existing.type) as 'alpha' | 'numeric' | 'mixed' | 'fixed'
+
+  let nextPattern: string | null = existing.patternMask
+  let nextWidth = existing.width
+  let nextMin: string | null = null
+  let nextMax: string | null = null
+
+  if (mergedType === 'fixed') {
+    nextPattern = null
+    const lit =
+      body.minValue !== undefined
+        ? String(body.minValue ?? '').trim()
+        : String(existing.minValue ?? '').trim()
+    if (!lit) {
+      return res.status(400).json({ error: 'fixed type requires a non-empty fixed value (minValue)' })
+    }
+    if (lit.length > FIXED_COMPONENT_VALUE_MAX_LEN) {
+      return res.status(400).json({
+        error: `Fixed value at most ${FIXED_COMPONENT_VALUE_MAX_LEN} characters`,
+      })
+    }
+    if (/[\r\n]/.test(lit)) {
+      return res.status(400).json({ error: 'Fixed value cannot contain line breaks' })
+    }
+    nextWidth = lit.length
+    nextMin = lit
+    nextMax = null
+  } else if (mergedType === 'mixed') {
+    if (body.patternMask !== undefined) {
+      const raw = body.patternMask === null || body.patternMask === '' ? '' : String(body.patternMask).trim()
+      if (raw) {
+        const pmErr = validateLocationPatternMask(raw)
+        if (pmErr) {
+          return res.status(400).json({ error: pmErr })
+        }
+        nextPattern = raw
+        nextWidth = raw.length
+      } else {
+        nextPattern = null
+        if (body.width != null && Number.isFinite(Number(body.width))) {
+          nextWidth = Math.max(1, Math.min(10, Number(body.width)))
+        }
+      }
+    } else if (existing.patternMask?.trim()) {
+      nextWidth = existing.patternMask.trim().length
+    } else if (body.width != null && Number.isFinite(Number(body.width))) {
+      nextWidth = Math.max(1, Math.min(10, Number(body.width)))
+    }
+  } else {
+    nextPattern = null
+    if (body.width != null && Number.isFinite(Number(body.width))) {
+      nextWidth = Math.max(1, Math.min(10, Number(body.width)))
+    }
+  }
 
   db.prepare(
     `UPDATE location_schema_components
      SET display_name = COALESCE(?, display_name),
          type = COALESCE(?, type),
-         width = COALESCE(?, width),
-         min_value = COALESCE(?, min_value),
-         max_value = COALESCE(?, max_value),
+         width = ?,
+         pattern_mask = ?,
+         min_value = ?,
+         max_value = ?,
          updated_at = datetime('now')
      WHERE id = ?`
   ).run(
     body.displayName != null ? String(body.displayName) : null,
     typeVal,
-    widthVal,
-    body.minValue !== undefined ? body.minValue : null,
-    body.maxValue !== undefined ? body.maxValue : null,
+    nextWidth,
+    nextPattern,
+    nextMin,
+    nextMax,
     componentId
   )
 
   const row = db
     .prepare(
       `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              min_value as minValue, max_value as maxValue, order_index as orderIndex
+              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
        FROM location_schema_components WHERE id = ?`
     )
     .get(componentId)
@@ -768,10 +908,10 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
 
   const rows = db
     .prepare(
-      `SELECT id, schema_id as schemaId, zone_id as zoneId, code, components, field_values, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id as schemaId, zone_id as zoneId, location, components, field_values, created_at as createdAt, updated_at as updatedAt
        FROM locations
        WHERE zone_id = ?
-       ORDER BY code`
+       ORDER BY location`
     )
     .all(zoneId)
   const out = rows.map((r: any) => ({
@@ -789,7 +929,7 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
     const csvName = `${sanitizeFilenameSegment(zone.name)}-locations.csv`
     res.setHeader('Content-Disposition', `attachment; filename="${csvName}"`)
     const lines: string[] = []
-    // Header: code plus schema component keys in schema order, then custom field keys
+    // Header: location plus schema component keys in schema order, then custom field keys
     const schemaComponents = db
       .prepare(
         `SELECT key
@@ -805,7 +945,7 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
       )
       .all(zone.schemaId) as Array<{ key: string }>
     const fieldKeys = schemaFieldKeys.map((r) => r.key)
-    lines.push(['code', ...componentKeys, ...fieldKeys].join(','))
+    lines.push(['location', ...componentKeys, ...fieldKeys].join(','))
     for (const row of out as any[]) {
       const comps = (row.components || {}) as Record<string, unknown>
       const fvs = (row.fieldValues || {}) as Record<string, unknown>
@@ -815,7 +955,7 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
         if (v === null || v === undefined) return ''
         return String(v)
       })
-      lines.push([row.code, ...compVals, ...fieldVals].join(','))
+      lines.push([row.location, ...compVals, ...fieldVals].join(','))
     }
     res.send(lines.join('\n'))
     return
@@ -878,7 +1018,7 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
 
   const schemaComponents = db
     .prepare(
-      `SELECT key, display_name as displayName, type, width
+      `SELECT key, display_name as displayName, type, width, pattern_mask as patternMask, min_value as minValue
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -886,8 +1026,10 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
     .all(zone.schemaId) as Array<{
       key: string
       displayName: string
-      type: 'alpha' | 'numeric'
+      type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
       width: number
+      patternMask: string | null
+      minValue: string | null
     }>
 
   if (schemaComponents.length === 0) {
@@ -909,13 +1051,24 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
 
   const next: Record<string, string> = {}
   for (const comp of schemaComponents) {
+    const compType = normalizeLocationComponentType(comp.type) ?? comp.type
+    if (compType === 'fixed') {
+      const lit = String(comp.minValue ?? '').trim()
+      if (!lit) {
+        return res.status(400).json({
+          error: `Schema component ${comp.displayName} (${comp.key}) has no fixed value configured`,
+        })
+      }
+      next[comp.key] = lit
+      continue
+    }
     const raw =
       input[comp.key] !== undefined ? input[comp.key] : prevComps[comp.key]
     const s = raw != null ? String(raw).trim() : ''
     if (!s) {
       return res.status(400).json({ error: `Missing value for ${comp.displayName} (${comp.key})` })
     }
-    if (comp.type === 'numeric') {
+    if (compType === 'numeric') {
       if (!/^\d+$/.test(s)) {
         return res.status(400).json({ error: `${comp.displayName}: use digits only (0–9)` })
       }
@@ -930,6 +1083,30 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
         })
       }
       next[comp.key] = padded
+    } else if (compType === 'mixed') {
+      const pm = getComponentPatternMask(comp)
+      if (pm) {
+        const normalized = normalizeLocationMixedGeneratePartOrNull(s, pm)
+        if (normalized == null) {
+          return res.status(400).json({
+            error: `${comp.displayName}: value does not match pattern ${pm}`,
+          })
+        }
+        next[comp.key] = normalized
+      } else {
+        const t = s.replace(/[a-z]/g, (ch) => ch.toUpperCase())
+        if (!/^[A-Z0-9]+$/.test(t)) {
+          return res
+            .status(400)
+            .json({ error: `${comp.displayName}: use only letters A–Z and digits 0–9` })
+        }
+        if (t.length !== comp.width) {
+          return res.status(400).json({
+            error: `${comp.displayName} must be exactly ${comp.width} character(s)`,
+          })
+        }
+        next[comp.key] = t
+      }
     } else {
       if (!/^[A-Za-z]+$/.test(s)) {
         return res.status(400).json({ error: `${comp.displayName}: use letters A–Z only` })
@@ -943,13 +1120,13 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
     }
   }
 
-  const code = schemaComponents.map((c) => next[c.key]).join('')
+  const locationValue = schemaComponents.map((c) => next[c.key]).join('')
 
   const conflict = db
-    .prepare(`SELECT id FROM locations WHERE code = ? AND id != ?`)
-    .get(code, locationId) as { id: string } | undefined
+    .prepare(`SELECT id FROM locations WHERE location = ? AND id != ?`)
+    .get(locationValue, locationId) as { id: string } | undefined
   if (conflict) {
-    return res.status(409).json({ error: 'Another location already uses this code' })
+    return res.status(409).json({ error: 'Another location already uses this value' })
   }
 
   const fvJson =
@@ -957,13 +1134,13 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
 
   db.prepare(
     `UPDATE locations
-     SET code = ?, components = ?, field_values = ?, updated_at = datetime('now')
+     SET location = ?, components = ?, field_values = ?, updated_at = datetime('now')
      WHERE id = ? AND zone_id = ?`
-  ).run(code, JSON.stringify(next), fvJson, locationId, zoneId)
+  ).run(locationValue, JSON.stringify(next), fvJson, locationId, zoneId)
 
   const row = db
     .prepare(
-      `SELECT id, schema_id as schemaId, zone_id as zoneId, code, components, field_values, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id as schemaId, zone_id as zoneId, location, components, field_values, created_at as createdAt, updated_at as updatedAt
        FROM locations WHERE id = ?`
     )
     .get(locationId) as any
@@ -1001,19 +1178,123 @@ interface SchemaComponent {
   schemaId: string
   key: string
   displayName: string
-  type: 'alpha' | 'numeric'
+  type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
   width: number
+  patternMask: string | null
   minValue: string | null
   maxValue: string | null
   orderIndex: number
 }
 
+/** Per-position letter or digit ranges; cartesian product. Same rules as client expandLocationGenerationRange. */
+function mixedRangeCartesian(
+  startRaw: string,
+  endRaw: string,
+  width: number
+): { values: string[]; error?: string } {
+  const start = startRaw.toUpperCase()
+  const end = endRaw.toUpperCase()
+  if (start.length !== end.length || start.length !== width) {
+    return { values: [], error: `Mixed range ends must each be exactly ${width} character(s)` }
+  }
+  const cols: string[][] = []
+  for (let i = 0; i < width; i++) {
+    const a = start[i]!
+    const b = end[i]!
+    const da = /\d/.test(a)
+    const db = /\d/.test(b)
+    if (da !== db) {
+      return {
+        values: [],
+        error: `Position ${i + 1}: range ends must both be digits or both letters (got ${a} and ${b})`,
+      }
+    }
+    if (da) {
+      const na = parseInt(a, 10)
+      const nb = parseInt(b, 10)
+      if (Number.isNaN(na) || Number.isNaN(nb)) {
+        return { values: [], error: `Invalid digit at position ${i + 1}` }
+      }
+      const lo = Math.min(na, nb)
+      const hi = Math.max(na, nb)
+      const col: string[] = []
+      for (let n = lo; n <= hi; n++) {
+        if (n < 0 || n > 9) {
+          return { values: [], error: `Digit out of 0–9 at position ${i + 1}` }
+        }
+        col.push(String(n))
+      }
+      cols.push(col)
+    } else {
+      const ca = a.charCodeAt(0)
+      const cb = b.charCodeAt(0)
+      if (ca < 65 || ca > 90 || cb < 65 || cb > 90) {
+        return { values: [], error: `Use letters A–Z at position ${i + 1}` }
+      }
+      const lo = Math.min(ca, cb)
+      const hi = Math.max(ca, cb)
+      const col: string[] = []
+      for (let c = lo; c <= hi; c++) {
+        col.push(String.fromCharCode(c))
+      }
+      cols.push(col)
+    }
+  }
+  function cartesian(c: string[][]): string[] {
+    if (c.length === 0) return ['']
+    const [head, ...tail] = c
+    const rest = cartesian(tail)
+    const acc: string[] = []
+    for (const ch of head) {
+      for (const s of rest) {
+        acc.push(ch + s)
+      }
+    }
+    return acc
+  }
+  return { values: cartesian(cols) }
+}
+
+/** Comma/semicolon list of full codes, each must match the mask (no hyphen ranges). */
+function expandMixedPatternList(expr: string, pattern: string): { values: string[]; error?: string } {
+  const trimmed = expr.trim()
+  if (!trimmed) return { values: [] }
+  const parts = trimmed
+    .split(/[;,]+/g)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const out: string[] = []
+  for (const part of parts) {
+    const n = normalizeLocationMixedGeneratePartOrNull(part, pattern)
+    if (n == null) {
+      return {
+        values: [],
+        error: `Invalid value for pattern "${pattern}": ${part.trim() || part}`,
+      }
+    }
+    out.push(n)
+  }
+  return { values: Array.from(new Set(out)) }
+}
+
 // Expand range expressions like "1-3,5" or "A-C,Z" — must match src/utils/expandLocationGenerationRange.ts
 function expandRange(
   expr: string,
-  type: 'alpha' | 'numeric',
-  width: number
+  type: 'alpha' | 'numeric' | 'mixed' | 'fixed',
+  width: number,
+  patternMask?: string | null,
+  fixedLiteral?: string | null
 ): { values: string[]; error?: string } {
+  if (type === 'fixed') {
+    const lit = (fixedLiteral ?? '').trim()
+    if (!lit) return { values: [], error: 'Fixed value is empty' }
+    return { values: [lit] }
+  }
+  const pm = patternMask?.trim()
+  if (type === 'mixed' && pm) {
+    return expandMixedPatternList(expr, pm)
+  }
+
   const trimmed = expr.trim()
   if (!trimmed) return { values: [] }
 
@@ -1088,6 +1369,12 @@ function expandRange(
           }
           out.push(padded)
         }
+      } else if (type === 'mixed') {
+        const expanded = mixedRangeCartesian(start, end, width)
+        if (expanded.error) {
+          return { values: [], error: expanded.error }
+        }
+        out.push(...expanded.values)
       } else {
         if (width >= 2 && start.length === 1 && end.length === 1) {
           return {
@@ -1131,6 +1418,23 @@ function expandRange(
         return { values: [], error: `Value ${n} does not fit in ${width} digit(s)` }
       }
       out.push(padded)
+    } else if (type === 'mixed') {
+      const t = part
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+      if (!t) {
+        return { values: [], error: `Invalid mixed value: ${part}` }
+      }
+      if (t.length !== width) {
+        return {
+          values: [],
+          error: `Mixed value must be exactly ${width} character(s) (A–Z or 0–9): ${part}`,
+        }
+      }
+      if (!/^[A-Z0-9]+$/.test(t)) {
+        return { values: [], error: `Use only A–Z and 0–9: ${part}` }
+      }
+      out.push(t)
     } else {
       const letters = uppercaseAsciiLetters(part)
         .replace(/[^A-Za-z]/g, '')
@@ -1173,7 +1477,7 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
   const components = db
     .prepare(
       `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              min_value as minValue, max_value as maxValue, order_index as orderIndex
+              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -1197,11 +1501,22 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
 
   const expandedPerKey = new Map<string, string[]>()
   for (const comp of components) {
+    const compType = normalizeLocationComponentType(comp.type) ?? comp.type
+    if (compType === 'fixed') {
+      const lit = String(comp.minValue ?? '').trim()
+      if (!lit) {
+        return res.status(400).json({
+          error: `Fixed component ${comp.displayName} has no literal value configured`,
+        })
+      }
+      expandedPerKey.set(comp.key, [lit])
+      continue
+    }
     const raw = (rangesInput[comp.key] ?? '').trim()
     if (!raw) {
       return res.status(400).json({ error: `Missing range for component ${comp.displayName}` })
     }
-    const expanded = expandRange(raw, comp.type, comp.width)
+    const expanded = expandRange(raw, compType, comp.width, getComponentPatternMask(comp), null)
     if (expanded.error) {
       return res.status(400).json({ error: `${comp.displayName}: ${expanded.error}` })
     }
@@ -1253,7 +1568,7 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
   let skipped = 0
 
   const insertStmt = db.prepare(
-    `INSERT OR IGNORE INTO locations (id, schema_id, zone_id, code, components, field_values)
+    `INSERT OR IGNORE INTO locations (id, schema_id, zone_id, location, components, field_values)
      VALUES (?, ?, ?, ?, ?, ?)`
   )
 
@@ -1263,12 +1578,12 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!
     const id = uuidv4()
-    const code = components.map((c) => r[c.key]).join('')
+    const locationValue = components.map((c) => r[c.key]).join('')
     const result = insertStmt.run(
       id,
       zone.schemaId,
       zoneId,
-      code,
+      locationValue,
       JSON.stringify(r),
       optionalFieldValuesJson
     )
@@ -1303,7 +1618,11 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
   } catch (err) {
     console.error('[locations/generate]', err)
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to generate locations' })
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : 'Failed to generate locations (unexpected server error)'
+      res.status(500).json({ error: message })
     } else {
       try {
         res.end()
@@ -1334,17 +1653,17 @@ router.get('/export', (req: AuthRequest, res) => {
 
   const rows = db
     .prepare(
-      `SELECT l.code,
+      `SELECT l.location,
               l.components,
               z.name as zoneName,
               z.id as zoneId
        FROM locations l
        JOIN zones z ON z.id = l.zone_id
        WHERE l.zone_id IN (${placeholders})
-       ORDER BY z.name, l.code`
+       ORDER BY z.name, l.location`
     )
     .all(...zoneIds) as Array<{
-      code: string
+      location: string
       components: string | null
       zoneName: string
       zoneId: string
@@ -1354,7 +1673,7 @@ router.get('/export', (req: AuthRequest, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${exportFilename}"`)
 
   if (rows.length === 0) {
-    res.send('zoneName,zoneId,code\n')
+    res.send('zoneName,zoneId,location\n')
     return
   }
 
@@ -1391,12 +1710,12 @@ router.get('/export', (req: AuthRequest, res) => {
   }
   const extras = Array.from(discovered).filter((k) => !orderedKeys.includes(k)).sort()
   const componentKeys = [...orderedKeys, ...extras]
-  const header = ['zoneName', 'zoneId', 'code', ...componentKeys].join(',')
+  const header = ['zoneName', 'zoneId', 'location', ...componentKeys].join(',')
   const lines: string[] = [header]
   for (const r of rows) {
     const comps = (safeParseJson(r.components) || {}) as Record<string, unknown>
     const vals = componentKeys.map((k) => String(comps[k] ?? ''))
-    lines.push([r.zoneName, r.zoneId, r.code, ...vals].join(','))
+    lines.push([r.zoneName, r.zoneId, r.location, ...vals].join(','))
   }
   res.send(lines.join('\n'))
 })
