@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getContrastTextColor } from '../../utils/colorContrast'
 
@@ -94,15 +94,31 @@ export function SelectInput({
   optionColors,
 }: SelectInputProps) {
   const [open, setOpen] = useState(false)
+  const [highlightIndex, setHighlightIndex] = useState(0)
   const [portalPlacement, setPortalPlacement] = useState<PortalPlacement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const highlightIndexRef = useRef(0)
   const listDomId = useId()
+
+  highlightIndexRef.current = highlightIndex
+
+  /** Empty + options, same order as the dropdown list */
+  const allOptionValues = useMemo(() => ['', ...options], [options])
 
   const select = (opt: string) => {
     onChange(opt)
     setOpen(false)
+  }
+
+  const moveValueByArrow = (delta: number) => {
+    const len = allOptionValues.length
+    if (len === 0) return
+    const idx = allOptionValues.findIndex((v) => v === value)
+    const current = idx >= 0 ? idx : 0
+    const next = ((current + delta) % len + len) % len
+    onChange(allOptionValues[next])
   }
 
   const hasColor = value && valueColor
@@ -118,12 +134,52 @@ export function SelectInput({
 
   useEffect(() => {
     if (!open) return
+    const idx = allOptionValues.findIndex((v) => v === value)
+    setHighlightIndex(idx >= 0 ? idx : 0)
+  }, [open, allOptionValues, value])
+
+  useEffect(() => {
+    if (!open) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        return
+      }
+      const len = allOptionValues.length
+      if (len === 0) return
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setHighlightIndex((i) => (i + 1) % len)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setHighlightIndex((i) => (i - 1 + len) % len)
+        return
+      }
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        const chosen = allOptionValues[highlightIndexRef.current]
+        if (chosen !== undefined) {
+          onChange(chosen)
+          setOpen(false)
+        }
+        return
+      }
+      if (e.key === 'Home') {
+        e.preventDefault()
+        setHighlightIndex(0)
+        return
+      }
+      if (e.key === 'End') {
+        e.preventDefault()
+        setHighlightIndex(len - 1)
+        return
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open])
+  }, [open, allOptionValues, onChange])
 
   useEffect(() => {
     if (!open) return
@@ -168,13 +224,14 @@ export function SelectInput({
             onClick={() => select('')}
             className={`block w-full px-3 py-2 text-left text-sm text-foreground/70 hover:bg-background ${
               !value ? 'bg-primary/10 font-medium' : ''
-            }`}
+            } ${open && highlightIndex === 0 ? 'bg-primary/15 ring-1 ring-inset ring-primary/40' : ''}`}
             role="option"
             aria-selected={!value}
           >
             —
           </button>
-          {options.map((opt) => {
+          {options.map((opt, optIdx) => {
+            const flatIndex = optIdx + 1
             const optColor = optionColors?.[opt]
             return (
               <button
@@ -183,7 +240,7 @@ export function SelectInput({
                 onClick={() => select(opt)}
                 className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-background ${
                   value === opt ? 'bg-primary/10 font-medium' : ''
-                }`}
+                } ${open && highlightIndex === flatIndex ? 'bg-primary/15 ring-1 ring-inset ring-primary/40' : ''}`}
                 role="option"
                 aria-selected={value === opt}
               >
@@ -228,6 +285,13 @@ export function SelectInput({
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (open) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            moveValueByArrow(e.key === 'ArrowDown' ? 1 : -1)
+          }
+        }}
         className="min-h-[44px] w-full rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
         style={triggerStyle}
         aria-expanded={open}
