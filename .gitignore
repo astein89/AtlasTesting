@@ -1,5 +1,6 @@
 node_modules
 dist
+.vite
 # SQLite DBs (may contain credentials, test data, app state — do not commit)
 *.db*
 db_backup

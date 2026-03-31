@@ -15,6 +15,20 @@ router.get('/', (req: Request<Params>, res) => {
   if (!plan) return res.status(404).json({ error: 'Test plan not found' })
 
   const includeArchived = req.query.archived === 'true'
+  // Migration creates synthetic rows id = legacy-<planId> to attach pre–test_id records.
+  // Hide them in the UI once the plan has real tests; keep them visible if they are the only bucket.
+  const legacyListFilter = includeArchived
+    ? ''
+    : `AND (
+    t.id NOT LIKE 'legacy-%'
+    OR NOT EXISTS (
+      SELECT 1 FROM tests t2
+      WHERE t2.test_plan_id = t.test_plan_id
+      AND t2.archived = 0
+      AND t2.id NOT LIKE 'legacy-%'
+    )
+  )`
+
   const rows = db
     .prepare(
       `SELECT t.id, t.test_plan_id, t.name, t.start_date, t.end_date, t.archived, t.created_at, t.updated_at,
@@ -22,6 +36,7 @@ router.get('/', (req: Request<Params>, res) => {
        FROM tests t
        WHERE t.test_plan_id = ?
        ${includeArchived ? '' : 'AND t.archived = 0'}
+       ${legacyListFilter}
        ORDER BY t.created_at ASC`
     )
     .all(planId) as Array<{

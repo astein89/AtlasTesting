@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useSortableHeader } from '../hooks/useSortableHeader'
+import { useMatchMedia } from '../hooks/useMatchMedia'
 import { useUserPreference } from '../hooks/useUserPreference'
 import { formatDate, formatDateTime } from '../lib/dateTimeConfig'
 import { api } from '../api/client'
@@ -130,14 +131,7 @@ export function TestPlanDataView() {
   const setSearchQuery = persistTableFilters ? setPrefSearch : setLocalSearch
   type ViewMode = 'table' | 'card' | 'compact-card' | 'responsive'
   const [viewMode, setViewMode] = useUserPreference<ViewMode>('atlas-data-view-mode', 'responsive')
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)')
-    setIsMobile(mq.matches)
-    const handler = () => setIsMobile(mq.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
+  const isMobile = useMatchMedia('(max-width: 767px)')
   // On mobile, always show compact card view, regardless of the saved preference.
   const effectiveViewMode: 'table' | 'card' | 'compact-card' = isMobile
     ? 'compact-card'
@@ -232,7 +226,6 @@ export function TestPlanDataView() {
   )
   const visibleFields = useMemo(() => {
     const allTableFields = fields
-    // If admin configured defaultVisibleColumnIds and user has not customized columns
     const shouldApplyPlanDefault =
       plan?.defaultVisibleColumnIds &&
       plan.defaultVisibleColumnIds.length > 0 &&
@@ -246,13 +239,23 @@ export function TestPlanDataView() {
       const allKeys = allTableFields.map((f) => f.key)
       const newHiddenKeys = allKeys.filter((k) => !defaultVisibleKeys.has(k))
       if (newHiddenKeys.length > 0) {
-        setHiddenColumnKeys(newHiddenKeys)
         return allTableFields.filter((f) => !newHiddenKeys.includes(f.key))
       }
       return allTableFields
     }
     return allTableFields.filter((f) => !hiddenColumnKeys.includes(f.key))
-  }, [fields, hiddenColumnKeys, plan?.defaultVisibleColumnIds, setHiddenColumnKeys])
+  }, [fields, hiddenColumnKeys, plan?.defaultVisibleColumnIds])
+
+  useEffect(() => {
+    if (!plan?.defaultVisibleColumnIds?.length) return
+    if (hiddenColumnKeys.length > 0) return
+    if (fields.length === 0) return
+    const defaultVisibleKeys = new Set(
+      fields.filter((f) => plan.defaultVisibleColumnIds.includes(f.id)).map((f) => f.key)
+    )
+    const newHiddenKeys = fields.map((f) => f.key).filter((k) => !defaultVisibleKeys.has(k))
+    if (newHiddenKeys.length > 0) setHiddenColumnKeys(newHiddenKeys)
+  }, [plan, fields, hiddenColumnKeys.length, setHiddenColumnKeys])
 
   // Export uses a fixed column order: all data fields in their base table order,
   // regardless of which columns are currently hidden in the UI.

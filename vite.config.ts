@@ -1,12 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import os from 'os'
 
 const base = process.env.VITE_BASE_PATH ? `${process.env.VITE_BASE_PATH.replace(/\/$/, '')}/` : '/'
 
-// Cache outside project to avoid EBUSY when project is in Dropbox (Windows file locking)
-const cacheDir = path.join(os.tmpdir(), 'vite-automation-testing')
+// Project-local cache (gitignored). A temp-dir cache caused broken loads of optimized deps on
+// Windows (e.g. papaparse.js via @fs/C:/Users/.../AppData/Local/Temp/...).
+const cacheDir = path.resolve(__dirname, '.vite')
 
 export default defineConfig({
   appType: 'spa',
@@ -40,6 +40,9 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+  },
+  optimizeDeps: {
+    include: ['papaparse'],
   },
   server: {
     host: true,

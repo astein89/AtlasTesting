@@ -156,9 +156,30 @@ function App() {
           />
           <Route path="test-plans" element={<TestPlansList />} />
           <Route path="test-plans/new" element={<AdminGuard><ErrorBoundary fallbackTitle="Could not load plan editor" backTo="/test-plans" backLabel="Back to Test plans"><TestPlanEditor /></ErrorBoundary></AdminGuard>} />
-          <Route path="test-plans/:planId" element={<TestPlanOverview />} />
-          <Route path="test-plans/:planId/data" element={<TestPlanDataRedirect />} />
-          <Route path="test-plans/:planId/tests/:testId/data" element={<TestPlanDataRedirect />} />
+          <Route
+            path="test-plans/:planId"
+            element={
+              <ErrorBoundary fallbackTitle="Could not load test plan" backTo="/test-plans" backLabel="Back to Test plans">
+                <TestPlanOverview />
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="test-plans/:planId/data"
+            element={
+              <ErrorBoundary fallbackTitle="Could not load test plan data" backTo="/test-plans" backLabel="Back to Test plans">
+                <TestPlanDataRedirect />
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="test-plans/:planId/tests/:testId/data"
+            element={
+              <ErrorBoundary fallbackTitle="Could not load test plan data" backTo="/test-plans" backLabel="Back to Test plans">
+                <TestPlanDataRedirect />
+              </ErrorBoundary>
+            }
+          />
           <Route path="test-plans/:planId/edit" element={<AdminGuard><ErrorBoundary fallbackTitle="Could not load plan editor" backTo="/test-plans" backLabel="Back to Test plans"><TestPlanEditor /></ErrorBoundary></AdminGuard>} />
           <Route path="results" element={<ResultsList />} />
           <Route path="results/:id" element={<ResultDetail />} />
