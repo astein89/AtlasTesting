@@ -113,6 +113,12 @@ router.get('/', (_, res) => {
       defaultVisibleColumnIds: parseStringArray(
         (r as { default_visible_columns?: string | null }).default_visible_columns ?? null
       ),
+      conditionalStatusRules: parseConditionalStatusRules(
+        (r as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
+      ),
+      conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
+        (r as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
+      ),
       createdAt: r.created_at,
       updatedAt: (r as { updated_at?: string | null }).updated_at ?? null,
       recordCount: countByPlan.get(r.id) ?? 0,
@@ -183,6 +189,198 @@ function parseArchivedRuns(json: string | null): Array<{ startDate: string; endD
   }
 }
 
+const STANDARD_OPS = new Set([
+  'eq',
+  'neq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'between',
+  'contains',
+  'not_contains',
+  'begins_with',
+  'ends_with',
+  'blank',
+  'not_blank',
+])
+
+function parseConditionalStatusRules(
+  json: string | null | undefined
+): Record<string, Record<string, Record<string, unknown> | null>> {
+  try {
+    const parsed = json ? JSON.parse(json) : null
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, Record<string, Record<string, unknown> | null>> = {}
+    for (const [fieldId, inner] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof fieldId !== 'string' || !inner || typeof inner !== 'object' || Array.isArray(inner)) continue
+      const innerOut: Record<string, Record<string, unknown> | null> = {}
+      for (const [opt, cond] of Object.entries(inner as Record<string, unknown>)) {
+        if (typeof opt !== 'string') continue
+        if (cond == null) {
+          innerOut[opt] = null
+          continue
+        }
+        if (typeof cond !== 'object' || Array.isArray(cond)) continue
+        const c = cond as Record<string, unknown>
+        const mode = c.mode
+        if (mode !== 'formula' && mode !== 'standard') continue
+        const row: Record<string, unknown> = { mode }
+        if (typeof c.id === 'string' && c.id) row.id = c.id
+        if (mode === 'formula' && typeof c.formula === 'string') row.formula = c.formula
+        if (mode === 'standard') {
+          const parsedClauses: Record<string, unknown>[] = []
+          if (Array.isArray(c.standardClauses)) {
+            for (let i = 0; i < c.standardClauses.length; i++) {
+              const raw = c.standardClauses[i]
+              if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+              const o = raw as Record<string, unknown>
+              const fk = typeof o.fieldKey === 'string' ? o.fieldKey.trim() : ''
+              if (!fk) continue
+              if (typeof o.op !== 'string' || !STANDARD_OPS.has(o.op)) continue
+              const piece: Record<string, unknown> = { fieldKey: fk, op: o.op }
+              if (i > 0) {
+                piece.combine =
+                  typeof o.combine === 'string' && o.combine === 'or' ? 'or' : 'and'
+              }
+              if (typeof o.value === 'string') piece.value = o.value
+              if (typeof o.value2 === 'string') piece.value2 = o.value2
+              parsedClauses.push(piece)
+            }
+          }
+          if (parsedClauses.length > 0) {
+            row.standardClauses = parsedClauses
+          } else {
+            if (typeof c.standardFieldKey === 'string' && c.standardFieldKey.trim()) {
+              row.standardFieldKey = c.standardFieldKey.trim()
+            }
+            if (typeof c.standardOp === 'string' && STANDARD_OPS.has(c.standardOp)) {
+              row.standardOp = c.standardOp
+            }
+            if (typeof c.standardValue === 'string') row.standardValue = c.standardValue
+            if (typeof c.standardValue2 === 'string') row.standardValue2 = c.standardValue2
+            if (typeof c.standardLogicalOp === 'string' && (c.standardLogicalOp === 'and' || c.standardLogicalOp === 'or')) {
+              row.standardLogicalOp = c.standardLogicalOp
+            }
+            if (typeof c.standardFieldKey2 === 'string' && c.standardFieldKey2.trim()) {
+              row.standardFieldKey2 = c.standardFieldKey2.trim()
+            }
+            if (typeof c.standardOp2 === 'string' && STANDARD_OPS.has(c.standardOp2)) {
+              row.standardOp2 = c.standardOp2
+            }
+            if (typeof c.standardValueB === 'string') row.standardValueB = c.standardValueB
+            if (typeof c.standardValue2B === 'string') row.standardValue2B = c.standardValue2B
+          }
+        }
+        innerOut[opt] = row
+      }
+      if (Object.keys(innerOut).length > 0) out[fieldId] = innerOut
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** `undefined` = omit column update (PUT). `null` / empty = clear stored rules. */
+function conditionalStatusRulesToJson(
+  body: unknown
+): string | null | undefined {
+  if (body === undefined) return undefined
+  if (body === null) return null
+  if (typeof body !== 'object' || Array.isArray(body)) return null
+  const cleaned: Record<string, Record<string, Record<string, unknown> | null>> = {}
+  for (const [fieldId, inner] of Object.entries(body as Record<string, unknown>)) {
+    if (typeof fieldId !== 'string' || !inner || typeof inner !== 'object' || Array.isArray(inner)) continue
+    const innerOut: Record<string, Record<string, unknown> | null> = {}
+    for (const [opt, cond] of Object.entries(inner as Record<string, unknown>)) {
+      if (typeof opt !== 'string') continue
+      if (cond == null) {
+        innerOut[opt] = null
+        continue
+      }
+      if (typeof cond !== 'object' || Array.isArray(cond)) continue
+      const c = cond as Record<string, unknown>
+      const mode = c.mode
+      if (mode !== 'formula' && mode !== 'standard') continue
+      const row: Record<string, unknown> = { mode }
+      if (typeof c.id === 'string' && c.id) row.id = c.id
+      if (mode === 'formula' && typeof c.formula === 'string') row.formula = c.formula
+      if (mode === 'standard') {
+        const sc = c.standardClauses
+        if (Array.isArray(sc) && sc.length > 0) {
+          const arr: Record<string, unknown>[] = []
+          for (let i = 0; i < sc.length; i++) {
+            const it = sc[i] as Record<string, unknown>
+            if (!it || typeof it !== 'object') continue
+            const fk = typeof it.fieldKey === 'string' ? it.fieldKey.trim() : ''
+            if (!fk) continue
+            if (typeof it.op !== 'string' || !STANDARD_OPS.has(it.op)) continue
+            const piece: Record<string, unknown> = { fieldKey: fk, op: it.op }
+            if (i > 0) {
+              piece.combine =
+                typeof it.combine === 'string' && it.combine === 'or' ? 'or' : 'and'
+            }
+            if (typeof it.value === 'string') piece.value = it.value
+            if (typeof it.value2 === 'string') piece.value2 = it.value2
+            arr.push(piece)
+          }
+          if (arr.length > 0) row.standardClauses = arr
+        } else {
+          if (typeof c.standardFieldKey === 'string' && c.standardFieldKey.trim()) {
+            row.standardFieldKey = c.standardFieldKey.trim()
+          }
+          if (typeof c.standardOp === 'string' && STANDARD_OPS.has(c.standardOp)) row.standardOp = c.standardOp
+          if (typeof c.standardValue === 'string') row.standardValue = c.standardValue
+          if (typeof c.standardValue2 === 'string') row.standardValue2 = c.standardValue2
+          if (typeof c.standardLogicalOp === 'string' && (c.standardLogicalOp === 'and' || c.standardLogicalOp === 'or')) {
+            row.standardLogicalOp = c.standardLogicalOp
+          }
+          if (typeof c.standardFieldKey2 === 'string' && c.standardFieldKey2.trim()) {
+            row.standardFieldKey2 = c.standardFieldKey2.trim()
+          }
+          if (typeof c.standardOp2 === 'string' && STANDARD_OPS.has(c.standardOp2)) row.standardOp2 = c.standardOp2
+          if (typeof c.standardValueB === 'string') row.standardValueB = c.standardValueB
+          if (typeof c.standardValue2B === 'string') row.standardValue2B = c.standardValue2B
+        }
+      }
+      innerOut[opt] = row
+    }
+    if (Object.keys(innerOut).length > 0) cleaned[fieldId] = innerOut
+  }
+  return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null
+}
+
+function parseConditionalStatusRuleOrder(json: string | null | undefined): Record<string, string[]> {
+  try {
+    const parsed = json ? JSON.parse(json) : null
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, string[]> = {}
+    for (const [fieldId, arr] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof fieldId !== 'string' || !Array.isArray(arr)) continue
+      const labels = arr.filter((x): x is string => typeof x === 'string')
+      out[fieldId] = labels
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** `undefined` = omit column update (PUT). `null` / empty = clear stored order. */
+function conditionalStatusRuleOrderToJson(body: unknown): string | null | undefined {
+  if (body === undefined) return undefined
+  if (body === null) return null
+  if (typeof body !== 'object' || Array.isArray(body)) return null
+  const cleaned: Record<string, string[]> = {}
+  for (const [fieldId, arr] of Object.entries(body as Record<string, unknown>)) {
+    if (typeof fieldId !== 'string' || !Array.isArray(arr)) continue
+    const labels = arr.filter((x): x is string => typeof x === 'string')
+    cleaned[fieldId] = labels
+  }
+  return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null
+}
+
 router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(req.params.id) as {
     id: string
@@ -219,6 +417,12 @@ router.get('/:id', (req, res) => {
     requiredFieldIds: parseStringArray((row as { required_field_ids?: string | null }).required_field_ids ?? null),
     defaultVisibleColumnIds: parseStringArray(
       (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
+    ),
+    conditionalStatusRules: parseConditionalStatusRules(
+      (row as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
+    ),
+    conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
+      (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
     ),
     createdAt: row.created_at,
   })
@@ -259,8 +463,14 @@ router.post('/', requireAdmin, (req, res) => {
     (req.body as { defaultVisibleColumnIds?: string[] }).defaultVisibleColumnIds!.length > 0
       ? JSON.stringify((req.body as { defaultVisibleColumnIds?: string[] }).defaultVisibleColumnIds)
       : null
+  const conditionalStatusJson =
+    conditionalStatusRulesToJson((req.body as { conditionalStatusRules?: unknown }).conditionalStatusRules) ?? null
+  const conditionalStatusRuleOrderJson =
+    conditionalStatusRuleOrderToJson(
+      (req.body as { conditionalStatusRuleOrder?: unknown }).conditionalStatusRuleOrder
+    ) ?? null
   db.prepare(
-    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids, default_visible_columns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids, default_visible_columns, conditional_status_rules, conditional_status_rule_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     name,
@@ -278,7 +488,9 @@ router.post('/', requireAdmin, (req, res) => {
     null,
     hiddenFieldIdsJson,
     requiredFieldIdsJson,
-    defaultVisibleColumnsJson
+    defaultVisibleColumnsJson,
+    conditionalStatusJson,
+    conditionalStatusRuleOrderJson
   )
 
   const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
@@ -315,6 +527,12 @@ router.post('/', requireAdmin, (req, res) => {
     defaultVisibleColumnIds: parseStringArray(
       (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
     ),
+    conditionalStatusRules: parseConditionalStatusRules(
+      (row as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
+    ),
+    conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
+      (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
+    ),
     createdAt: row.created_at,
   })
 })
@@ -337,6 +555,8 @@ router.put('/:id', requireAdmin, (req, res) => {
     hiddenFieldIds,
     requiredFieldIds,
     defaultVisibleColumnIds,
+    conditionalStatusRules,
+    conditionalStatusRuleOrder,
   } = req.body
   const { id } = req.params
 
@@ -446,6 +666,20 @@ router.put('/:id', requireAdmin, (req, res) => {
         : null
     )
   }
+  if (conditionalStatusRules !== undefined) {
+    const ser = conditionalStatusRulesToJson(conditionalStatusRules)
+    if (ser !== undefined) {
+      updates.push('conditional_status_rules = ?')
+      values.push(ser)
+    }
+  }
+  if (conditionalStatusRuleOrder !== undefined) {
+    const ser = conditionalStatusRuleOrderToJson(conditionalStatusRuleOrder)
+    if (ser !== undefined) {
+      updates.push('conditional_status_rule_order = ?')
+      values.push(ser)
+    }
+  }
   if (archivedRuns !== undefined && Array.isArray(archivedRuns)) {
     const planRow = db.prepare('SELECT archived_runs FROM test_plans WHERE id = ?').get(id) as { archived_runs: string | null } | undefined
     const oldRuns = parseArchivedRuns(planRow?.archived_runs ?? null)
@@ -533,6 +767,12 @@ router.put('/:id', requireAdmin, (req, res) => {
       defaultVisibleColumnIds: parseStringArray(
         (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
       ),
+      conditionalStatusRules: parseConditionalStatusRules(
+        (row as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
+      ),
+      conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
+        (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
+      ),
       createdAt: row.created_at,
       updatedAt: (row as { updated_at?: string | null }).updated_at ?? null,
     })
@@ -575,6 +815,12 @@ router.put('/:id', requireAdmin, (req, res) => {
     requiredFieldIds: parseStringArray((row as { required_field_ids?: string | null }).required_field_ids ?? null),
     defaultVisibleColumnIds: parseStringArray(
       (row as { default_visible_columns?: string | null }).default_visible_columns ?? null
+    ),
+    conditionalStatusRules: parseConditionalStatusRules(
+      (row as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
+    ),
+    conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
+      (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
     ),
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,

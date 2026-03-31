@@ -15,6 +15,7 @@ import { STATUS_OPTIONS } from '../types'
 import { formatDateTime, DATE_TIME_DISPLAY_OPTIONS, getExampleForDateTimeDisplay, type DateTimeDisplayKind } from '../lib/dateTimeConfig'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPresetsContext'
+import { anyPlanConditionalStatusRulesTouchField } from '../utils/planConditionalStatus'
 
 const schema = z.object({
   key: z.string().min(1),
@@ -1403,7 +1404,7 @@ export function FieldEditor() {
                                       <li><code className="rounded bg-muted px-1 font-mono text-xs">SUM(a, b, …)</code><br /><span className="text-foreground/70">Sum of all arguments (numbers). Example: <code className="rounded bg-muted px-0.5 font-mono">SUM([Q1], [Q2], [Q3])</code></span></li>
                                       <li><code className="rounded bg-muted px-1 font-mono text-xs">CONCAT(a, b, …)</code><br /><span className="text-foreground/70">Concatenate all arguments as text (no separator). Use &amp; for custom separators.</span></li>
                                       <li><code className="rounded bg-muted px-1 font-mono text-xs">LEN(text)</code><br /><span className="text-foreground/70">Number of characters in text.</span></li>
-                                      <li><code className="rounded bg-muted px-1 font-mono text-xs">BLANK()</code><br /><span className="text-foreground/70">Return an empty/blank value.</span></li>
+                                      <li><code className="rounded bg-muted px-1 font-mono text-xs">BLANK()</code> / <code className="rounded bg-muted px-1 font-mono text-xs">NULL()</code><br /><span className="text-foreground/70">Return an empty/blank value. <code className="rounded bg-muted px-0.5 font-mono text-[11px]">NULL()</code> is an alias for <code className="rounded bg-muted px-0.5 font-mono text-[11px]">BLANK()</code>. Use the function form — there is no bare <code className="font-mono text-[11px]">null</code> keyword.</span></li>
                                     </ul>
                                   </section>
                                   <section>
@@ -2315,7 +2316,9 @@ export function FieldEditor() {
             <button
               type="button"
               onClick={async () => {
+                if (!id) return
                 const key = getValues('key')
+                if (!key?.trim()) return
                 const [allFieldsRes, plansRes] = await Promise.all([
                   api.get<DataField[]>('/fields').then((r) => r.data),
                   api.get<TestPlan[]>('/test-plans').catch(() => ({ data: [] as TestPlan[] })),
@@ -2334,6 +2337,12 @@ export function FieldEditor() {
                 if (plansUsingField.length > 0) {
                   const names = plansUsingField.map((p) => p.name).join(', ')
                   showAlert(`Cannot delete this field. It is used in the test plan(s): ${names}. Remove it from the plan(s) first.`)
+                  return
+                }
+                if (anyPlanConditionalStatusRulesTouchField(plansRes.data ?? [], id, key)) {
+                  showAlert(
+                    'Cannot delete this field. It is used in test plan Status Conditionals (as the status field or in a rule formula). Remove those rules or take the field out of the plan first.'
+                  )
                   return
                 }
                 const ok = await showConfirm('Delete this field?', { title: 'Delete field' })

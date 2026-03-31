@@ -1,10 +1,21 @@
-import React, { createContext, useCallback, useContext, useState } from 'react'
+import React, { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
 import { AlertModal } from '../components/ui/AlertModal'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 
 interface AlertConfirmContextValue {
   showAlert: (message: string, title?: string) => void
-  showConfirm: (message: string, options?: { title?: string; confirmLabel?: string; cancelLabel?: string; variant?: 'danger' | 'default' }) => Promise<boolean>
+  showConfirm: (
+    message: string | ReactNode,
+    options?: {
+      title?: string
+      confirmLabel?: string
+      cancelLabel?: string
+      variant?: 'danger' | 'default'
+      closeOnBackdropClick?: boolean
+      closeOnEscape?: boolean
+      showHeaderClose?: boolean
+    }
+  ) => Promise<boolean>
 }
 
 const AlertConfirmContext = createContext<AlertConfirmContextValue | null>(null)
@@ -12,11 +23,14 @@ const AlertConfirmContext = createContext<AlertConfirmContextValue | null>(null)
 export function AlertConfirmProvider({ children }: { children: React.ReactNode }) {
   const [alert, setAlert] = useState<{ message: string; title?: string } | null>(null)
   const [confirmState, setConfirmState] = useState<{
-    message: string
+    message: string | ReactNode
     title?: string
     confirmLabel?: string
     cancelLabel?: string
     variant?: 'danger' | 'default'
+    closeOnBackdropClick?: boolean
+    closeOnEscape?: boolean
+    showHeaderClose?: boolean
     resolve: (value: boolean) => void
   } | null>(null)
 
@@ -26,8 +40,16 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
 
   const showConfirm = useCallback(
     (
-      message: string,
-      options?: { title?: string; confirmLabel?: string; cancelLabel?: string; variant?: 'danger' | 'default' }
+      message: string | ReactNode,
+      options?: {
+        title?: string
+        confirmLabel?: string
+        cancelLabel?: string
+        variant?: 'danger' | 'default'
+        closeOnBackdropClick?: boolean
+        closeOnEscape?: boolean
+        showHeaderClose?: boolean
+      }
     ): Promise<boolean> => {
       return new Promise((resolve) => {
         setConfirmState({
@@ -36,6 +58,9 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
           confirmLabel: options?.confirmLabel,
           cancelLabel: options?.cancelLabel,
           variant: options?.variant,
+          closeOnBackdropClick: options?.closeOnBackdropClick,
+          closeOnEscape: options?.closeOnEscape,
+          showHeaderClose: options?.showHeaderClose,
           resolve,
         })
       })
@@ -69,6 +94,9 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
         confirmLabel={confirmState?.confirmLabel}
         cancelLabel={confirmState?.cancelLabel}
         variant={confirmState?.variant}
+        closeOnBackdropClick={confirmState?.closeOnBackdropClick ?? true}
+        closeOnEscape={confirmState?.closeOnEscape ?? true}
+        showHeaderClose={confirmState?.showHeaderClose ?? true}
         onConfirm={handleConfirmOk}
         onCancel={handleConfirmCancel}
       />

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import { getFieldsReferencingKey } from '../utils/formulaEvaluator'
+import { anyPlanConditionalStatusRulesTouchField } from '../utils/planConditionalStatus'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import type { DataField, TestPlan } from '../types'
 
@@ -134,6 +135,12 @@ export function FieldsList() {
     if (plansUsingField.length > 0) {
       const names = plansUsingField.map((p) => p.name).join(', ')
       showAlert(`Cannot delete this field. It is used in the test plan(s): ${names}. Remove it from the plan(s) first.`)
+      return
+    }
+    if (anyPlanConditionalStatusRulesTouchField(testPlans, id, key)) {
+      showAlert(
+        'Cannot delete this field. It is used in test plan Status Conditionals (as the status field or in a rule formula). Remove those rules or take the field out of the plan first.'
+      )
       return
     }
     const ok = await showConfirm(`Delete field "${key}"?`, { title: 'Delete field' })

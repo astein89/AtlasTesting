@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PopupSelect } from '../ui/PopupSelect'
 import { renderFormField } from '../fields/FormFieldRenderer'
 import type { DataField, TimerValue, TestPlan } from '../../types'
-import { getStatusOptions } from '../../types'
 import { api } from '../../api/client'
-import { computeFormulaValues } from '../../utils/formulaEvaluator'
+import { finalizeRecordDataAfterImportOrBulk } from '../../utils/planConditionalStatus'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { getFieldValidationErrors } from '../../utils/fieldValidation'
 import { useAuthStore } from '../../store/authStore'
@@ -207,7 +206,7 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
         return {
           testPlanId: plan.id,
           testId,
-          data: computeFormulaValues(fields, row),
+          data: finalizeRecordDataAfterImportOrBulk(fields, plan, row),
           status: 'partial',
         }
       })

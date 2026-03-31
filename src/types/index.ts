@@ -142,6 +142,38 @@ export interface ConditionalFormatRule {
   appliesToOthers?: boolean
 }
 
+/** One cell comparison in a Status Conditional “Cell value” rule (after formulas run). */
+export interface ConditionalStatusStandardClause {
+  /** How this clause combines with the result of all previous clauses (omit on the first clause). */
+  combine?: 'and' | 'or'
+  fieldKey: string
+  op: ConditionalFormatRule['standardOp']
+  value?: string
+  value2?: string
+}
+
+/**
+ * Per status option on a test plan: when this condition matches (same modes as conditional formatting,
+ * minus fallback), plan automation may set that option on a row (unless user-locked).
+ */
+export interface ConditionalStatusOptionCondition {
+  id?: string
+  mode: 'formula' | 'standard'
+  formula?: string
+  /** Preferred: ordered cell clauses; each line after the first has `combine` with the running result. */
+  standardClauses?: ConditionalStatusStandardClause[]
+  /** @deprecated Legacy single / two-clause shape; use `standardClauses` when saving from the editor. */
+  standardFieldKey?: string
+  standardOp?: ConditionalFormatRule['standardOp']
+  standardValue?: string
+  standardValue2?: string
+  standardLogicalOp?: 'and' | 'or'
+  standardFieldKey2?: string
+  standardOp2?: ConditionalFormatRule['standardOp']
+  standardValueB?: string
+  standardValue2B?: string
+}
+
 /** Options for a status field: custom config.options or default STATUS_OPTIONS. Blank options are preserved. */
 export function getStatusOptions(field: { config?: FieldConfig } | null | undefined): string[] {
   const opts = field?.config?.options
@@ -196,6 +228,14 @@ export interface TestPlan {
   requiredFieldIds?: string[]
   /** Field ids that should be visible by default in the data table (non-hidden fields). */
   defaultVisibleColumnIds?: string[]
+  /**
+   * Plan-only Status Conditionals: field id → status option label → condition.
+   * If `conditionalStatusRuleOrder` has an entry for a field id, that array defines evaluation
+   * order (first matching configured row wins). Otherwise option order on the field is used (legacy).
+   */
+  conditionalStatusRules?: Record<string, Record<string, ConditionalStatusOptionCondition | null | undefined>>
+  /** Per status field id: ordered list of status labels in the Status Conditionals table (subset of field options). */
+  conditionalStatusRuleOrder?: Record<string, string[]>
   createdAt?: string
   updatedAt?: string | null
   /** Number of records in this plan (from list endpoint) */

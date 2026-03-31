@@ -2,6 +2,7 @@ import { formatDateTime } from '../lib/dateTimeConfig'
 import { getBasePath } from '../lib/basePath'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from './timer'
 import type { TimerValue } from '../types'
+import { stripStatusAutomationMetaFromData } from './planConditionalStatus'
 
 interface Record {
   id: string
@@ -39,7 +40,11 @@ export function recordsToCsv(
       ? fieldOrder
       : (() => {
           const dataKeys = new Set<string>()
-          records.forEach((r) => Object.keys(r.data).forEach((k) => dataKeys.add(k)))
+          records.forEach((r) =>
+            Object.keys(r.data).forEach((k) => {
+              if (!k.startsWith('__')) dataKeys.add(k)
+            })
+          )
           return Array.from(dataKeys).sort((a, b) => a.localeCompare(b))
         })()
 
@@ -49,6 +54,10 @@ export function recordsToCsv(
   const rows = records.map((r) => {
     const row: string[] = []
     const rowTestName = singleTestName || r.testName || ''
+    const dataForExport = stripStatusAutomationMetaFromData(r.data as Record<string, unknown>) as Record<
+      string,
+      string | number | boolean | string[] | TimerValue
+    >
     headers.forEach((h) => {
       if (h === 'recordId') row.push(r.id)
       else if (h === 'planName') row.push(escapeCsv(r.planName))
@@ -56,7 +65,7 @@ export function recordsToCsv(
       else if (h === 'recordedAt') row.push(escapeCsv(formatDateTime(r.recordedAt)))
       else if (h === 'User') row.push(escapeCsv(r.enteredByName ?? r.enteredBy ?? ''))
       else {
-        const val = r.data[h]
+        const val = dataForExport[h]
         if (isBlank(val)) {
           row.push('')
           return

@@ -29,7 +29,14 @@ import type { DataField, Test, TestPlan, TimerValue } from '../types'
 import { getStatusOptions } from '../types'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from '../utils/timer'
 import { getDefaultValueForField } from '../utils/fieldDefaults'
-import { computeFormulaValues } from '../utils/formulaEvaluator'
+import {
+  computeRecordDataWithPlanAutomation,
+  getPendingConditionalStatusUpdates,
+  planHasStatusAutomationForFieldId,
+  recomputeRowDataAfterFieldEdit,
+  setUserStatusLockForField,
+  USER_STATUS_AUTOMATION_LOCK_KEY,
+} from '../utils/planConditionalStatus'
 import { getConditionalFormatStyle } from '../utils/conditionalFormat'
 import { formatFieldValue } from '../utils/formatFieldValue'
 import type { FormulaData } from '../utils/formulaEvaluator'
@@ -51,7 +58,7 @@ interface Record {
 
 function getDefaultData(
   fields: DataField[],
-  plan?: { fieldDefaults?: Record<string, string | number | boolean | string[] | TimerValue> } | null
+  plan?: TestPlan | null
 ): Record<string, string | number | boolean | string[] | TimerValue> {
   const defaults = plan?.fieldDefaults
   const out: Record<string, string | number | boolean | string[] | TimerValue> = {}
@@ -95,8 +102,12 @@ function getDefaultData(
       else if (f.type === 'radio_select') out[f.key] = ''
       else if (f.type === 'checkbox_select') out[f.key] = []
       else if (f.type === 'status') {
-        const opts = getStatusOptions(f)
-        out[f.key] = opts[0] ?? 'In Progress'
+        if (planHasStatusAutomationForFieldId(plan, f.id) && !f.config?.formula) {
+          out[f.key] = ''
+        } else {
+          const opts = getStatusOptions(f)
+          out[f.key] = opts[0] ?? 'In Progress'
+        }
       }
       else if (f.type === 'atlas_location') out[f.key] = ''
       else if (f.type === 'image') out[f.key] = f.config?.imageMultiple ? [] : ''
@@ -105,7 +116,76 @@ function getDefaultData(
       else out[f.key] = ''
     }
   }
-  return computeFormulaValues(fields, out)
+  return computeRecordDataWithPlanAutomation(fields, plan ?? null, out)
+}
+
+type PendingStatusConditionalItem = {
+  fieldKey: string
+  fieldLabel: string
+  currentValue: string
+  suggestedValue: string
+}
+
+const STATUS_CONDITIONAL_INTRO =
+  'A Status Conditional is met and is different from your selection. Choose which to use.'
+
+/** null = user closed the dialog without choosing (abort save, keep editor open). */
+type StatusConditionalChoiceResult = 'selection' | 'conditional' | null
+
+/** Matches `SelectInput` trigger styling used for status on Add row / Edit row modals. */
+function StatusValueLikeSelectTrigger({ field, value }: { field: DataField; value: string }) {
+  const valueColor = field.config?.statusColors?.[value]
+  const hasColor = Boolean(value && valueColor)
+  const triggerStyle =
+    hasColor && valueColor
+      ? { backgroundColor: valueColor, color: getContrastTextColor(valueColor), borderColor: valueColor }
+      : undefined
+  return (
+    <span
+      className="flex min-h-[44px] w-full min-w-[140px] items-center rounded border border-border bg-background px-3 py-2 text-left text-foreground"
+      style={triggerStyle}
+    >
+      <span className={!value ? (hasColor ? '' : 'text-foreground/60') : ''}>{value || '—'}</span>
+    </span>
+  )
+}
+
+function StatusValueLikeSelectTriggerPlain({ value }: { value: string }) {
+  return (
+    <span className="flex min-h-[44px] w-full min-w-[140px] items-center rounded border border-border bg-background px-3 py-2 text-left text-foreground">
+      <span className={value ? '' : 'text-foreground/60'}>{value || '—'}</span>
+    </span>
+  )
+}
+
+function recordFormDataChanged(
+  original: Record<string, string | number | boolean | string[] | TimerValue>,
+  current: Record<string, string | number | boolean | string[] | TimerValue>
+): boolean {
+  const keys = new Set([...Object.keys(original), ...Object.keys(current)])
+  keys.delete(USER_STATUS_AUTOMATION_LOCK_KEY)
+  for (const k of keys) {
+    const a = original[k]
+    const b = current[k]
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return true
+      if (a.some((v, i) => v !== b[i])) return true
+    } else if (
+      typeof a === 'object' &&
+      a !== null &&
+      'totalElapsedMs' in a &&
+      typeof b === 'object' &&
+      b !== null &&
+      'totalElapsedMs' in b
+    ) {
+      const ta = a as TimerValue
+      const tb = b as TimerValue
+      if (ta.totalElapsedMs !== tb.totalElapsedMs || ta.startedAt !== tb.startedAt) return true
+    } else if (a !== b) {
+      return true
+    }
+  }
+  return false
 }
 
 export function TestPlanDataView() {
@@ -119,7 +199,15 @@ export function TestPlanDataView() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isAdding, setIsAdding] = useState(false)
   const [editData, setEditData] = useState<Record<string, string | number | boolean | string[] | TimerValue>>({})
+  const [editSessionBaseline, setEditSessionBaseline] = useState<Record<
+    string,
+    string | number | boolean | string[] | TimerValue
+  > | null>(null)
   const [addData, setAddData] = useState<Record<string, string | number | boolean | string[] | TimerValue>>({})
+  const [addSessionBaseline, setAddSessionBaseline] = useState<Record<
+    string,
+    string | number | boolean | string[] | TimerValue
+  > | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [deleteRecordPending, setDeleteRecordPending] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
@@ -198,6 +286,74 @@ export function TestPlanDataView() {
   const editingAllowed = canEditData && (!testId || (currentTest != null && !currentTest.archived))
   const { showAlert, showConfirm } = useAlertConfirm()
   const navigate = useNavigate()
+
+  const [statusConditionalChoice, setStatusConditionalChoice] = useState<{
+    pending: PendingStatusConditionalItem[]
+    resolve: (choice: StatusConditionalChoiceResult) => void
+  } | null>(null)
+
+  const resolveStatusConditionalChoice = useCallback((choice: StatusConditionalChoiceResult) => {
+    setStatusConditionalChoice((s) => {
+      s?.resolve(choice)
+      return null
+    })
+  }, [])
+
+  const requestStatusConditionalChoice = useCallback(
+    (pending: PendingStatusConditionalItem[]) =>
+      new Promise<StatusConditionalChoiceResult>((resolve) => {
+        setStatusConditionalChoice({ pending, resolve })
+      }),
+    []
+  )
+
+  useEffect(() => {
+    if (!statusConditionalChoice) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') resolveStatusConditionalChoice(null)
+    }
+    window.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [statusConditionalChoice, resolveStatusConditionalChoice])
+
+  const finalizeDataForSaveWithStatusPrompt = useCallback(
+    async (
+      baseline: Record<string, string | number | boolean | string[] | TimerValue> | null,
+      draft: Record<string, string | number | boolean | string[] | TimerValue>
+    ): Promise<Record<string, string | number | boolean | string[] | TimerValue> | null> => {
+      const draftFd = draft as FormulaData
+      const computed = computeRecordDataWithPlanAutomation(fields, plan, draftFd) as Record<
+        string,
+        string | number | boolean | string[] | TimerValue
+      >
+      if (!baseline || !recordFormDataChanged(baseline, draft)) {
+        return computed
+      }
+      const pending = getPendingConditionalStatusUpdates(fields, plan, draftFd)
+      if (pending.length === 0) return computed
+      const choice = await requestStatusConditionalChoice(pending)
+      if (choice === null) return null
+      let out = computed as FormulaData
+      if (choice === 'conditional') {
+        for (const p of pending) {
+          out = { ...out, [p.fieldKey]: p.suggestedValue }
+          out = setUserStatusLockForField(out, p.fieldKey, false)
+        }
+      } else {
+        for (const p of pending) {
+          out = { ...out, [p.fieldKey]: p.currentValue }
+          out = setUserStatusLockForField(out, p.fieldKey, true)
+        }
+      }
+      return out as Record<string, string | number | boolean | string[] | TimerValue>
+    },
+    [fields, plan, requestStatusConditionalChoice]
+  )
 
   const columnsPrefKey = planId ? `atlas-data-hidden-columns-${planId}` : 'atlas-data-hidden-columns-default'
   const [hiddenColumnKeys, setHiddenColumnKeys] = useUserPreference<string[]>(columnsPrefKey, [])
@@ -456,12 +612,14 @@ export function TestPlanDataView() {
 
   const editingIdFromUrl = searchParams.get('editing')
   useEffect(() => {
-    if (!editingIdFromUrl || records.length === 0) return
+    if (!editingIdFromUrl || records.length === 0 || fields.length === 0) return
     if (editingId != null) return // already editing (e.g. opened from UI), don't overwrite
     const record = records.find((r) => r.id === editingIdFromUrl)
     if (record) {
       setEditingId(record.id)
-      setEditData(computeFormulaValues(fields, record.data))
+      const init = computeRecordDataWithPlanAutomation(fields, plan, record.data as FormulaData)
+      setEditData(init)
+      setEditSessionBaseline({ ...init })
     } else {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev)
@@ -470,33 +628,45 @@ export function TestPlanDataView() {
         return s ? next : new URLSearchParams()
       })
     }
-  }, [editingIdFromUrl, records])
+  }, [editingIdFromUrl, records, fields, plan])
 
   const startAdd = () => {
     setIsAdding(true)
-    if (fields.length > 0 && plan) setAddData(getDefaultData(fields, plan))
+    if (fields.length > 0 && plan) {
+      const base = getDefaultData(fields, plan)
+      setAddData(base)
+      setAddSessionBaseline({ ...base })
+    }
   }
 
   useEffect(() => {
     if (isAdding && fields.length > 0) {
-      setAddData(getDefaultData(fields, plan))
+      const base = getDefaultData(fields, plan)
+      setAddData(base)
+      setAddSessionBaseline({ ...base })
     }
   }, [isAdding, plan, fields])
 
-  const cancelAdd = () => setIsAdding(false)
+  const cancelAdd = () => {
+    setIsAdding(false)
+    setAddSessionBaseline(null)
+  }
 
   const saveAdd = async () => {
     if (!planId || !testId) return
     setSubmitting(true)
     try {
+      const dataToSave = await finalizeDataForSaveWithStatusPrompt(addSessionBaseline, addData)
+      if (dataToSave === null) return
       await api.post('/records', {
         testPlanId: planId,
         testId,
-        data: computeFormulaValues(fields, addData),
+        data: dataToSave,
         status: 'partial',
       })
       loadRecords()
       setIsAdding(false)
+      setAddSessionBaseline(null)
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
       showAlert(err || 'Failed to add data')
@@ -507,7 +677,9 @@ export function TestPlanDataView() {
 
   const startEdit = (record: Record) => {
     setEditingId(record.id)
-    setEditData(computeFormulaValues(fields, record.data))
+    const init = computeRecordDataWithPlanAutomation(fields, plan, record.data as FormulaData)
+    setEditData(init)
+    setEditSessionBaseline({ ...init })
     setRecordModalViewOnly(openRecordsViewOnly)
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
@@ -527,6 +699,7 @@ export function TestPlanDataView() {
 
   const cancelEdit = () => {
     setEditingId(null)
+    setEditSessionBaseline(null)
     setRecordModalViewOnly(false)
     clearEditingParam()
   }
@@ -552,6 +725,7 @@ export function TestPlanDataView() {
     setSubmitting(true)
     if (editingId === recordId) {
       setEditingId(null)
+      setEditSessionBaseline(null)
       clearEditingParam()
     }
     setSelectedIds((prev) => {
@@ -608,7 +782,7 @@ export function TestPlanDataView() {
       await Promise.all(
         toUpdate.map((rec) =>
           api.put(`/records/${rec.id}`, {
-            data: computeFormulaValues(fields, { ...rec.data, [fieldKey]: value }),
+            data: recomputeRowDataAfterFieldEdit(fields, plan, rec.data as FormulaData, fieldKey, value),
             status: rec.status,
           })
         )
@@ -689,9 +863,15 @@ export function TestPlanDataView() {
     if (!rec) return
     setSubmitting(true)
     try {
-      await api.put(`/records/${editingId}`, { data: computeFormulaValues(fields, editData), status: rec.status })
+      const dataToSave = await finalizeDataForSaveWithStatusPrompt(editSessionBaseline, editData)
+      if (dataToSave === null) return
+      await api.put(`/records/${editingId}`, {
+        data: dataToSave,
+        status: rec.status,
+      })
       loadRecords()
       setEditingId(null)
+      setEditSessionBaseline(null)
       clearEditingParam()
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -702,19 +882,32 @@ export function TestPlanDataView() {
   }
 
   const updateAddField = (key: string, value: string | number | boolean | string[] | TimerValue) => {
-    setAddData((d) => computeFormulaValues(fields, { ...d, [key]: value }))
+    setAddData((d: Record<string, string | number | boolean | string[] | TimerValue>) =>
+      recomputeRowDataAfterFieldEdit(fields, plan, d as FormulaData, key, value)
+    )
   }
 
   const updateEditField = (key: string, value: string | number | boolean | string[] | TimerValue) => {
-    setEditData((d) => computeFormulaValues(fields, { ...d, [key]: value }))
+    setEditData((d: Record<string, string | number | boolean | string[] | TimerValue>) =>
+      recomputeRowDataAfterFieldEdit(fields, plan, d as FormulaData, key, value)
+    )
   }
 
   const updateRecordField = async (record: Record, key: string, value: string | number | boolean | string[] | TimerValue) => {
-    const newData = computeFormulaValues(fields, { ...record.data, [key]: value })
+    const baseline = computeRecordDataWithPlanAutomation(fields, plan, record.data as FormulaData) as Record<
+      string,
+      string | number | boolean | string[] | TimerValue
+    >
+    const newData = recomputeRowDataAfterFieldEdit(fields, plan, record.data as FormulaData, key, value)
+    const dataToSave = await finalizeDataForSaveWithStatusPrompt(baseline, newData as Record<
+      string,
+      string | number | boolean | string[] | TimerValue
+    >)
+    if (dataToSave === null) return
     try {
-      await api.put(`/records/${record.id}`, { data: newData, status: record.status })
+      await api.put(`/records/${record.id}`, { data: dataToSave, status: record.status })
       setRecords((prev) =>
-        prev.map((r) => (r.id === record.id ? { ...r, data: newData } : r))
+        prev.map((r) => (r.id === record.id ? { ...r, data: dataToSave } : r))
       )
     } catch (e: unknown) {
       const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -725,8 +918,15 @@ export function TestPlanDataView() {
   const fieldLayout = plan?.fieldLayout ?? {}
   const hasFieldLayout = Object.keys(fieldLayout).length > 0
   const recordsWithComputed = useMemo(
-    () => records.map((r) => ({ ...r, data: computeFormulaValues(fields, r.data) })),
-    [records, fields]
+    () =>
+      records.map((r) => ({
+        ...r,
+        data: computeRecordDataWithPlanAutomation(fields, plan, r.data as FormulaData) as Record<
+          string,
+          string | number | boolean | string[] | TimerValue
+        >,
+      })),
+    [records, fields, plan]
   )
   const editingRecord = recordsWithComputed.find((r) => r.id === editingId)
 
@@ -2250,6 +2450,81 @@ export function TestPlanDataView() {
           </div>
           </>
           )}
+        </div>
+      )}
+      {statusConditionalChoice && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="status-conditional-title"
+          aria-describedby="status-conditional-desc"
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border border-border bg-card shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center gap-2 border-b border-border pl-4 pr-1">
+              <h2
+                id="status-conditional-title"
+                className="min-w-0 flex-1 py-3 pr-2 text-lg font-semibold leading-tight text-foreground"
+              >
+                Suggested status
+              </h2>
+              <button
+                type="button"
+                onClick={() => resolveStatusConditionalChoice(null)}
+                className="flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-lg text-foreground/70 hover:bg-background hover:text-foreground"
+                aria-label="Close without saving"
+              >
+                <span className="text-2xl leading-none" aria-hidden>
+                  ×
+                </span>
+              </button>
+            </div>
+            <div
+              id="status-conditional-desc"
+              className="min-h-[44px] flex-1 overflow-y-auto px-4 py-4 text-sm leading-relaxed text-foreground"
+            >
+              <p className="text-foreground/90">{STATUS_CONDITIONAL_INTRO}</p>
+              <div className="mt-4 flex flex-col gap-3">
+                <button
+                  type="button"
+                  onClick={() => resolveStatusConditionalChoice('selection')}
+                  className="w-full rounded border border-border bg-background p-2 text-left transition-colors hover:border-primary hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={`Selection — ${statusConditionalChoice.pending.map((p) => `${p.fieldLabel}: ${p.currentValue}`).join('; ')}`}
+                >
+                  <div className="flex w-full flex-col gap-2">
+                    {statusConditionalChoice.pending.map((p) => {
+                      const f = fields.find((x) => x.key === p.fieldKey)
+                      return f ? (
+                        <StatusValueLikeSelectTrigger key={p.fieldKey} field={f} value={p.currentValue} />
+                      ) : (
+                        <StatusValueLikeSelectTriggerPlain key={p.fieldKey} value={p.currentValue} />
+                      )
+                    })}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveStatusConditionalChoice('conditional')}
+                  className="w-full rounded border border-border bg-background p-2 text-left transition-colors hover:border-primary hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={`Conditional — ${statusConditionalChoice.pending.map((p) => `${p.fieldLabel}: ${p.suggestedValue}`).join('; ')}`}
+                >
+                  <div className="flex w-full flex-col gap-2">
+                    {statusConditionalChoice.pending.map((p) => {
+                      const f = fields.find((x) => x.key === p.fieldKey)
+                      return f ? (
+                        <StatusValueLikeSelectTrigger key={p.fieldKey} field={f} value={p.suggestedValue} />
+                      ) : (
+                        <StatusValueLikeSelectTriggerPlain key={p.fieldKey} value={p.suggestedValue} />
+                      )
+                    })}
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

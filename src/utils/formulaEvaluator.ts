@@ -323,6 +323,7 @@ function evaluateNode(
     const evArgs = args.map((a) => ev(a))
     switch (fn) {
       case 'BLANK':
+      case 'NULL':
         return null
       case 'TEXT':
         return toStr(evArgs[0] ?? null)

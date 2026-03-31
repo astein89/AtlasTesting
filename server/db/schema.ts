@@ -178,6 +178,8 @@ export function initSchema(db: DbWrapper) {
   migratePlanDefaultVisibleColumns(db)
   migratePlanStartEndDate(db)
   migratePlanArchivedRuns(db)
+  migratePlanConditionalStatusRules(db)
+  migratePlanConditionalStatusRuleOrder(db)
   migrateTestRunsRunId(db)
   migrateTestsTableAndBackfill(db)
   migratePlanConstraints(db)
@@ -526,6 +528,34 @@ function migratePlanArchivedRuns(db: DbWrapper) {
     const cols = rows.map((r) => r[1] as string)
     if (!cols.includes('archived_runs')) {
       db.run('ALTER TABLE test_plans ADD COLUMN archived_runs TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanConditionalStatusRules(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const cols = rows.map((r) => r[1] as string)
+    if (!cols.includes('conditional_status_rules')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN conditional_status_rules TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migratePlanConditionalStatusRuleOrder(db: DbWrapper) {
+  try {
+    const info = db.execQuery('PRAGMA table_info(test_plans)')
+    if (!info.length || !info[0].values) return
+    const rows = info[0].values as unknown[][]
+    const cols = rows.map((r) => r[1] as string)
+    if (!cols.includes('conditional_status_rule_order')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN conditional_status_rule_order TEXT')
     }
   } catch {
     // Ignore

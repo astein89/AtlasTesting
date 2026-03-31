@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { PopupSelect } from '../ui/PopupSelect'
 import type { DataField, TestPlan } from '../../types'
 import { api } from '../../api/client'
-import { computeFormulaValues } from '../../utils/formulaEvaluator'
+import { finalizeRecordDataAfterImportOrBulk } from '../../utils/planConditionalStatus'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { getDefaultValueForField } from '../../utils/fieldDefaults'
 import { parseImportFile, type ParsedImportFile } from '../../utils/parseImportFile'
@@ -129,12 +129,12 @@ export function ImportDataModal({
             }
           }
         }
-        const withFormulas = computeFormulaValues(fields, data)
+        const finalized = finalizeRecordDataAfterImportOrBulk(fields, plan, data)
         const recordedAt = recordedAtColumn ? coerceRecordedAt(row[recordedAtColumn] ?? '') : undefined
         await api.post('/records', {
           testPlanId: planId,
           testId,
-          data: withFormulas,
+          data: finalized,
           status: 'partial',
           ...(recordedAt && { recordedAt }),
         })

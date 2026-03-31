@@ -4,8 +4,10 @@ import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { PlanFieldsEditor } from '../components/fields/PlanFieldsEditor'
 import { CreateFieldForm } from '../components/fields/CreateFieldForm'
+import { DraggableOptionList } from '../components/ui/DraggableOptionList'
 import { PopupSelect } from '../components/ui/PopupSelect'
 import { SelectInput } from '../components/fields/SelectInput'
+import { FormulaEditorModal } from '../components/fields/FormulaEditorModal'
 import {
   formatFieldEntry,
   getFieldIdsFromOrder,
@@ -15,8 +17,60 @@ import {
 } from '../utils/formLayout'
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
-import type { DataField, TestPlan, TimerValue } from '../types'
+import type {
+  ConditionalFormatRule,
+  ConditionalStatusOptionCondition,
+  ConditionalStatusStandardClause,
+  DataField,
+  TestPlan,
+  TimerValue,
+} from '../types'
 import { getStatusOptions } from '../types'
+import {
+  isPendingStatusConditionalRow,
+  makePendingStatusConditionalRowId,
+  normalizeStatusStandardClauses,
+  planConditionalRulesReferenceFieldKey,
+} from '../utils/planConditionalStatus'
+
+const CELL_STANDARD_OP_OPTIONS: Array<{
+  value: NonNullable<ConditionalFormatRule['standardOp']>
+  label: string
+}> = [
+  { value: 'eq', label: 'equals' },
+  { value: 'neq', label: 'not equal' },
+  { value: 'gt', label: 'greater than' },
+  { value: 'gte', label: 'greater or equal' },
+  { value: 'lt', label: 'less than' },
+  { value: 'lte', label: 'less or equal' },
+  { value: 'between', label: 'between (numbers)' },
+  { value: 'contains', label: 'contains text' },
+  { value: 'not_contains', label: 'does not contain' },
+  { value: 'begins_with', label: 'begins with' },
+  { value: 'ends_with', label: 'ends with' },
+  { value: 'blank', label: 'is blank' },
+  { value: 'not_blank', label: 'is not blank' },
+]
+
+function sortStatusLabelsByFieldOrder(labels: string[], pool: string[]): string[] {
+  const rank = new Map(pool.map((l, i) => [l, i]))
+  return [...labels].sort((a, b) => (rank.get(a) ?? 1e9) - (rank.get(b) ?? 1e9))
+}
+
+/** Row labels for the Status Conditionals table: explicit plan order, or legacy keys from rules only. */
+function statusConditionalRowItems(
+  field: DataField,
+  rules: TestPlan['conditionalStatusRules'] | undefined,
+  orderByField: Record<string, string[]>
+): string[] {
+  const pool = getStatusOptions(field)
+  const pinned = orderByField[field.id]
+  const map = rules?.[field.id]
+  if (pinned !== undefined) {
+    return pinned.filter((l) => pool.includes(l) || isPendingStatusConditionalRow(l))
+  }
+  return sortStatusLabelsByFieldOrder(Object.keys(map ?? {}), pool)
+}
 
 export function TestPlanEditor() {
   const { planId } = useParams<{ planId: string }>()
@@ -45,6 +99,13 @@ export function TestPlanEditor() {
   const [hiddenFieldIds, setHiddenFieldIds] = useState<string[]>([])
   const [defaultVisibleColumnIds, setDefaultVisibleColumnIds] = useState<string[]>([])
   const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
+  const [conditionalStatusRules, setConditionalStatusRules] = useState<TestPlan['conditionalStatusRules']>({})
+  const [conditionalStatusRuleOrder, setConditionalStatusRuleOrder] = useState<Record<string, string[]>>({})
+  const [statusAutomationHelpOpen, setStatusAutomationHelpOpen] = useState(false)
+  const [statusConditionalFormulaModal, setStatusConditionalFormulaModal] = useState<{
+    fieldId: string
+    optionLabel: string
+  } | null>(null)
   const [planFields, setPlanFields] = useState<DataField[]>([])
   const [loading, setLoading] = useState(!isNew)
   const [submitting, setSubmitting] = useState(false)
@@ -101,6 +162,8 @@ export function TestPlanEditor() {
         setHiddenFieldIds(hiddenIds)
         setRequiredFieldIds(r.data.requiredFieldIds ?? [])
         setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
+        setConditionalStatusRules(r.data.conditionalStatusRules ?? {})
+        setConditionalStatusRuleOrder(r.data.conditionalStatusRuleOrder ?? {})
         if (!r.data.name) {
           // New/unnamed plan: focus name field
           setTimeout(() => {
@@ -185,6 +248,12 @@ export function TestPlanEditor() {
         const removedField = planFields.find((f) => f.id === removedId)
         const removedKey = removedField?.key
         if (!removedKey) continue
+        if (planConditionalRulesReferenceFieldKey(conditionalStatusRules, removedKey)) {
+          showAlert(
+            `Cannot remove field "${removedField?.label ?? removedKey}": it is referenced in Status Conditionals rule formulas. Remove or edit those rules first.`
+          )
+          return
+        }
         const formulaFieldsUsing = planFields.filter(
           (f) =>
             (f.type === 'formula' || (f.type === 'status' && f.config?.formula)) &&
@@ -196,6 +265,16 @@ export function TestPlanEditor() {
           return
         }
       }
+      setConditionalStatusRules((prev) => {
+        const next = { ...(prev ?? {}) }
+        for (const rid of removedIds) delete next[rid]
+        return next
+      })
+      setConditionalStatusRuleOrder((prev) => {
+        const next = { ...prev }
+        for (const rid of removedIds) delete next[rid]
+        return next
+      })
     }
     setFormLayoutOrder(order)
     setFieldIds(newIds)
@@ -246,6 +325,12 @@ export function TestPlanEditor() {
           requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
           defaultVisibleColumnIds:
             defaultVisibleColumnIds.length > 0 ? defaultVisibleColumnIds : undefined,
+          conditionalStatusRules:
+            conditionalStatusRules && Object.keys(conditionalStatusRules).length > 0
+              ? conditionalStatusRules
+              : undefined,
+          conditionalStatusRuleOrder:
+            Object.keys(conditionalStatusRuleOrder).length > 0 ? conditionalStatusRuleOrder : undefined,
         })
         navigate(returnTo ?? `/test-plans/${data.id}/edit`, { replace: true })
       } else {
@@ -262,6 +347,8 @@ export function TestPlanEditor() {
           hiddenFieldIds,
           requiredFieldIds,
           defaultVisibleColumnIds,
+          conditionalStatusRules,
+          conditionalStatusRuleOrder,
         })
         navigate(returnTo ?? '/test-plans', { replace: true })
       }
@@ -507,6 +594,461 @@ export function TestPlanEditor() {
             })}
           </div>
         </div>
+        {planFields.some((f) => f.type === 'status' && !f.config?.formula) && (
+          <div>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-foreground">Status Conditionals</h3>
+              <button
+                type="button"
+                onClick={() => setStatusAutomationHelpOpen(true)}
+                className="rounded-full border border-border bg-background px-2.5 py-0.5 text-xs font-medium text-foreground hover:bg-card"
+                title="How Status Conditionals work"
+              >
+                How it works
+              </button>
+            </div>
+            {statusAutomationHelpOpen && (
+              <div
+                className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+                onClick={() => setStatusAutomationHelpOpen(false)}
+              >
+                <div
+                  className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-lg"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-4 flex items-start justify-between gap-2">
+                    <h4 className="text-base font-semibold text-foreground">Status Conditionals</h4>
+                    <button
+                      type="button"
+                      onClick={() => setStatusAutomationHelpOpen(false)}
+                      className="shrink-0 rounded-lg px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="space-y-3 text-sm text-foreground/80">
+                    <p>
+                      Use <strong>+ Add status</strong> to add a row, then choose the status and set a condition. The{' '}
+                      <strong>first</strong> row in the table whose condition matches wins; lower rows are ignored for that
+                      record.
+                    </p>
+                    <p>
+                      <strong>Cell value</strong> rules compare column(s) on the same record. Use <strong>+ Add condition line</strong>{' '}
+                      (on the right of the first line) for more checks. Each extra line starts with <strong>And</strong> or{' '}
+                      <strong>Or</strong> to say how it combines with the lines above (left-to-right).
+                    </p>
+                    <p>
+                      Use the <strong>⋮⋮</strong> handle to drag rows—top = highest priority. Row order is stored on this test
+                      plan only (it does not change option order in Field Editor).
+                    </p>
+                    <p>
+                      Define status <strong>labels</strong> in <strong>Field Editor</strong>. This table only picks which of
+                      those values participate in Status Conditionals and in what order.
+                    </p>
+                    <p>
+                      Options with <strong>no condition</strong> here are never set by Status Conditionals.
+                    </p>
+                    <p>
+                      If the user sets a status that <strong>disagrees</strong> with Status Conditionals, it stays until they
+                      clear it or choose a value that matches the current rules; clearing status removes the lock so Status
+                      Conditionals can run again. Matching Status Conditionals (including re-saving the same value) keeps the row
+                      unlocked so a higher-priority option can take over when its condition becomes true.
+                    </p>
+                    <p>
+                      Status fields with a <strong>computed formula</strong> on the field do not use Status Conditionals here.
+                      When <strong>no rule matches</strong>, the stored status is left unchanged.
+                    </p>
+                  </div>
+                  <div className="mt-5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setStatusAutomationHelpOpen(false)}
+                      className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
+                    >
+                      Got it
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="space-y-6">
+              {planFields
+                .filter((f) => f.type === 'status' && !f.config?.formula)
+                .map((sf) => {
+                  const rowItems = statusConditionalRowItems(sf, conditionalStatusRules, conditionalStatusRuleOrder)
+                  const pool = getStatusOptions(sf)
+                  return (
+                  <div key={sf.id} className="rounded-lg border border-border bg-card p-3">
+                    <div className="mb-2 text-sm font-medium text-foreground">{sf.label}</div>
+                    <DraggableOptionList
+                      items={rowItems}
+                      onReorder={(items) =>
+                        setConditionalStatusRuleOrder((prev) => ({ ...prev, [sf.id]: items }))
+                      }
+                      onAdd={() => {
+                        const assigned = new Set(
+                          rowItems.filter((l) => !isPendingStatusConditionalRow(l))
+                        )
+                        if (assigned.size >= pool.length) {
+                          showAlert('Every status for this field is already in the list.')
+                          return
+                        }
+                        setConditionalStatusRuleOrder((prev) => ({
+                          ...prev,
+                          [sf.id]: [...rowItems, makePendingStatusConditionalRowId()],
+                        }))
+                      }}
+                      addLabel="+ Add status"
+                      listClassName="border-border/80 bg-background/30"
+                      renderRow={(opt, i) => {
+                        const cond = conditionalStatusRules?.[sf.id]?.[opt] as
+                          | ConditionalStatusOptionCondition
+                          | null
+                          | undefined
+                        const uiMode: 'none' | 'formula' | 'standard' = (() => {
+                          if (!cond) return 'none'
+                          if (cond.mode === 'formula') return 'formula'
+                          if (
+                            cond.mode === 'standard' &&
+                            (cond.standardClauses?.length || cond.standardOp)
+                          ) {
+                            return 'standard'
+                          }
+                          return 'none'
+                        })()
+
+                        const setRule = (next: ConditionalStatusOptionCondition | null) => {
+                          setConditionalStatusRules((prev) => {
+                            const p = { ...(prev ?? {}) }
+                            const inner = { ...(p[sf.id] ?? {}) }
+                            if (next == null) delete inner[opt]
+                            else inner[opt] = next
+                            if (Object.keys(inner).length === 0) delete p[sf.id]
+                            else p[sf.id] = inner
+                            return p
+                          })
+                        }
+
+                        const clauses = normalizeStatusStandardClauses(cond, sf.key)
+                        const commitStandard = (next: ConditionalStatusStandardClause[]) =>
+                          setRule({ mode: 'standard', standardClauses: next })
+
+                        const pendingRow = isPendingStatusConditionalRow(opt)
+                        const usedElsewhere = new Set<string>()
+                        rowItems.forEach((s, idx) => {
+                          if (idx !== i && s && !isPendingStatusConditionalRow(s)) usedElsewhere.add(s)
+                        })
+                        const statusChoices = pool.filter((s) => s === opt || !usedElsewhere.has(s))
+
+                        return (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <select
+                                value={pendingRow ? '' : opt}
+                                onChange={(e) => {
+                                  const newLabel = e.target.value
+                                  if (pendingRow) {
+                                    if (!newLabel) return
+                                    if (rowItems.some((l, j) => l === newLabel && j !== i)) {
+                                      showAlert('That status is already in the list.')
+                                      return
+                                    }
+                                    setConditionalStatusRuleOrder((prev) => ({
+                                      ...prev,
+                                      [sf.id]: rowItems.map((l, j) => (j === i ? newLabel : l)),
+                                    }))
+                                    return
+                                  }
+                                  if (newLabel === opt) return
+                                  if (rowItems.some((l, j) => l === newLabel && j !== i)) {
+                                    showAlert('That status is already in the list.')
+                                    return
+                                  }
+                                  setConditionalStatusRuleOrder((prev) => ({
+                                    ...prev,
+                                    [sf.id]: rowItems.map((l, j) => (j === i ? newLabel : l)),
+                                  }))
+                                  setConditionalStatusRules((prev) => {
+                                    const p = { ...(prev ?? {}) }
+                                    const inner = { ...(p[sf.id] ?? {}) }
+                                    const c = inner[opt]
+                                    delete inner[opt]
+                                    if (c != null) inner[newLabel] = c
+                                    if (Object.keys(inner).length === 0) delete p[sf.id]
+                                    else p[sf.id] = inner
+                                    return p
+                                  })
+                                }}
+                                className="min-w-0 flex-1 basis-[10rem] rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                aria-label="Status"
+                              >
+                                {pendingRow && (
+                                  <option value="">
+                                    Select status…
+                                  </option>
+                                )}
+                                {statusChoices.map((s) => (
+                                  <option key={s} value={s}>
+                                    {s}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={uiMode}
+                                disabled={pendingRow}
+                                title={pendingRow ? 'Choose a status first' : undefined}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  if (v === 'none') setRule(null)
+                                  else if (v === 'formula') setRule({ mode: 'formula', formula: cond?.formula ?? '' })
+                                  else
+                                    setRule({
+                                      mode: 'standard',
+                                      standardClauses: [
+                                        { fieldKey: sf.key, op: 'eq', value: '' },
+                                      ],
+                                    })
+                                }}
+                                className="min-w-0 flex-1 basis-[12rem] rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                aria-label="Conditional type"
+                              >
+                                <option value="none">No conditional</option>
+                                <option value="formula">Formula (row)</option>
+                                <option value="standard">Cell value</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConditionalStatusRuleOrder((prev) => ({
+                                    ...prev,
+                                    [sf.id]: rowItems.filter((_, j) => j !== i),
+                                  }))
+                                  setConditionalStatusRules((prev) => {
+                                    const p = { ...(prev ?? {}) }
+                                    const inner = { ...(p[sf.id] ?? {}) }
+                                    delete inner[opt]
+                                    if (Object.keys(inner).length === 0) delete p[sf.id]
+                                    else p[sf.id] = inner
+                                    return p
+                                  })
+                                }}
+                                className="shrink-0 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                            {(uiMode === 'formula' || uiMode === 'standard') && (
+                            <div className="min-w-0 space-y-2">
+                              {uiMode === 'formula' && (
+                                <div className="min-w-0 space-y-2">
+                                  <p className="text-xs text-foreground/60">
+                                    Row matches when this formula evaluates to true. Use [fieldKey] to reference plan fields.
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <pre className="min-h-9 flex-1 overflow-auto rounded-lg border border-border bg-muted/30 px-3 py-2 font-mono text-sm text-foreground whitespace-pre-wrap break-all">
+                                      {(cond?.formula ?? '').trim() || '(no formula)'}
+                                    </pre>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setStatusConditionalFormulaModal({
+                                          fieldId: sf.id,
+                                          optionLabel: opt,
+                                        })
+                                      }
+                                      className="shrink-0 rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+                                    >
+                                      Edit formula
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              {uiMode === 'standard' && (
+                                <div className="min-w-0 space-y-2">
+                                  {clauses.map((clause, ci) => (
+                                    <div
+                                      key={ci}
+                                      className="flex flex-wrap items-center gap-2 border-border/50 border-b border-dashed pb-2 last:mb-0 last:border-0 last:pb-0"
+                                    >
+                                      {ci > 0 && (
+                                        <select
+                                          value={clause.combine === 'or' ? 'or' : 'and'}
+                                          onChange={(e) => {
+                                            const next = clauses.map((c, j) =>
+                                              j === ci
+                                                ? {
+                                                    ...c,
+                                                    combine: e.target.value === 'or' ? 'or' : 'and',
+                                                  }
+                                                : c
+                                            )
+                                            commitStandard(next)
+                                          }}
+                                          className="shrink-0 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-foreground"
+                                          aria-label={`Combine with previous (line ${ci + 1})`}
+                                        >
+                                          <option value="and">And</option>
+                                          <option value="or">Or</option>
+                                        </select>
+                                      )}
+                                      <span className="w-5 shrink-0 text-xs text-foreground/60">
+                                        {ci === 0 ? 'If' : ''}
+                                      </span>
+                                      <select
+                                        value={clause.fieldKey}
+                                        onChange={(e) => {
+                                          const next = clauses.map((c, j) =>
+                                            j === ci ? { ...c, fieldKey: e.target.value } : c
+                                          )
+                                          commitStandard(next)
+                                        }}
+                                        className="max-w-[13rem] min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                        aria-label={`Plan field (line ${ci + 1})`}
+                                      >
+                                        {clause.fieldKey &&
+                                          !planFields.some((f) => f.key === clause.fieldKey) && (
+                                            <option value={clause.fieldKey}>
+                                              (not in plan) {clause.fieldKey}
+                                            </option>
+                                          )}
+                                        {planFields.map((f) => (
+                                          <option key={f.id} value={f.key}>
+                                            {f.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <select
+                                        value={clause.op ?? 'eq'}
+                                        onChange={(e) => {
+                                          const next = clauses.map((c, j) =>
+                                            j === ci
+                                              ? {
+                                                  ...c,
+                                                  op: e.target.value as ConditionalFormatRule['standardOp'],
+                                                }
+                                              : c
+                                          )
+                                          commitStandard(next)
+                                        }}
+                                        className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                        aria-label={`Operator (line ${ci + 1})`}
+                                      >
+                                        {CELL_STANDARD_OP_OPTIONS.map(({ value, label }) => (
+                                          <option key={value} value={value}>
+                                            {label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {clause.op !== 'blank' &&
+                                        clause.op !== 'not_blank' &&
+                                        clause.op !== 'between' && (
+                                          <input
+                                            type="text"
+                                            value={clause.value ?? ''}
+                                            onChange={(e) => {
+                                              const next = clauses.map((c, j) =>
+                                                j === ci ? { ...c, value: e.target.value } : c
+                                              )
+                                              commitStandard(next)
+                                            }}
+                                            className="min-w-[8rem] flex-1 rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                            placeholder="Value"
+                                          />
+                                        )}
+                                      {clause.op === 'between' && (
+                                        <>
+                                          <input
+                                            type="text"
+                                            value={clause.value ?? ''}
+                                            onChange={(e) => {
+                                              const next = clauses.map((c, j) =>
+                                                j === ci
+                                                  ? { ...c, op: 'between', value: e.target.value }
+                                                  : c
+                                              )
+                                              commitStandard(next)
+                                            }}
+                                            className="w-20 rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                            placeholder="Min"
+                                          />
+                                          <span>–</span>
+                                          <input
+                                            type="text"
+                                            value={clause.value2 ?? ''}
+                                            onChange={(e) => {
+                                              const next = clauses.map((c, j) =>
+                                                j === ci
+                                                  ? {
+                                                      ...c,
+                                                      op: 'between',
+                                                      value: clause.value ?? '',
+                                                      value2: e.target.value,
+                                                    }
+                                                  : c
+                                              )
+                                              commitStandard(next)
+                                            }}
+                                            className="w-20 rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                                            placeholder="Max"
+                                          />
+                                        </>
+                                      )}
+                                      {clauses.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const filt = clauses.filter((_, j) => j !== ci)
+                                            const next = filt.map((c, j) => ({
+                                              ...c,
+                                              combine:
+                                                j === 0
+                                                  ? undefined
+                                                  : c.combine === 'or'
+                                                    ? 'or'
+                                                    : 'and',
+                                            }))
+                                            commitStandard(next)
+                                          }}
+                                          className="shrink-0 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
+                                        >
+                                          Remove line
+                                        </button>
+                                      )}
+                                      {ci === 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            commitStandard([
+                                              ...clauses,
+                                              {
+                                                combine: 'and',
+                                                fieldKey: planFields[0]?.key ?? sf.key,
+                                                op: 'eq',
+                                                value: '',
+                                              },
+                                            ])
+                                          }
+                                          className="ml-auto shrink-0 rounded border border-border border-dashed bg-background/50 px-2 py-1 text-xs font-medium text-foreground hover:bg-background"
+                                        >
+                                          + Add condition line
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            )}
+                          </div>
+                        )
+                      }}
+                    />
+                  </div>
+                  )
+                })}
+            </div>
+          </div>
+        )}
         <div>
           <label className="block text-sm font-medium text-foreground">
             Data collection fields
@@ -546,6 +1088,14 @@ export function TestPlanEditor() {
                       requiredFieldIds: requiredFieldIds.length > 0 ? requiredFieldIds : undefined,
                       defaultVisibleColumnIds:
                         defaultVisibleColumnIds.length > 0 ? defaultVisibleColumnIds : undefined,
+                      conditionalStatusRules:
+                        conditionalStatusRules && Object.keys(conditionalStatusRules).length > 0
+                          ? conditionalStatusRules
+                          : undefined,
+                      conditionalStatusRuleOrder:
+                        Object.keys(conditionalStatusRuleOrder).length > 0
+                          ? conditionalStatusRuleOrder
+                          : undefined,
                     })
                     navigate('/fields/new', {
                       replace: true,
@@ -572,7 +1122,9 @@ export function TestPlanEditor() {
                   },
                 })
               }}
-              fieldDefaults={fieldDefaults}
+              fieldDefaults={
+                fieldDefaults as Record<string, string | number | boolean | string[]>
+              }
               renderAbovePreview={
                 planFields.length > 0 ? (
                   <div>
@@ -750,6 +1302,35 @@ export function TestPlanEditor() {
         </div>
         </form>
       </div>
+      <FormulaEditorModal
+        open={!!statusConditionalFormulaModal}
+        initialValue={
+          statusConditionalFormulaModal
+            ? String(
+                (
+                  conditionalStatusRules?.[statusConditionalFormulaModal.fieldId]?.[
+                    statusConditionalFormulaModal.optionLabel
+                  ] as ConditionalStatusOptionCondition | null | undefined
+                )?.formula ?? ''
+              )
+            : ''
+        }
+        availableFields={planFields}
+        onClose={() => setStatusConditionalFormulaModal(null)}
+        onSave={(formula) => {
+          if (!statusConditionalFormulaModal) return
+          const { fieldId, optionLabel } = statusConditionalFormulaModal
+          setConditionalStatusRules((prev) => {
+            const p = { ...(prev ?? {}) }
+            const inner = { ...(p[fieldId] ?? {}) }
+            inner[optionLabel] = { mode: 'formula', formula }
+            p[fieldId] = inner
+            return p
+          })
+          setStatusConditionalFormulaModal(null)
+        }}
+        overlayClassName="z-[80]"
+      />
     </div>
   )
 }
