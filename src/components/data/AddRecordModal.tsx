@@ -4,6 +4,7 @@ import { SelectInput } from '../fields/SelectInput'
 import { buildFormRowsFromOrder, isSeparatorId, isSeparatorLineId, normalizeFormLayoutOrder, parseFieldEntry, SPAN_TO_COLS } from '../../utils/formLayout'
 import { getFieldValidationErrors } from '../../utils/fieldValidation'
 import { useAuthStore } from '../../store/authStore'
+import { formatDateTime } from '../../lib/dateTimeConfig'
 import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
 
@@ -42,6 +43,8 @@ export function AddRecordModal({
   formLayoutOrder = [],
   plan,
 }: AddRecordModalProps) {
+  /** Stable “record” time for header (matches Edit row — … layout). */
+  const [headerRecordedAt] = useState(() => new Date().toISOString())
   const [showDiscardPrompt, setShowDiscardPrompt] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Array<{ fieldKey: string; message: string }>>([])
   const [overrideValidation, setOverrideValidation] = useState(false)
@@ -123,9 +126,11 @@ export function AddRecordModal({
           className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:border sm:min-w-0"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4 sm:p-6">
-            <div className="mb-4 flex min-w-0 items-center justify-between gap-4">
-              <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">Add row</h2>
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
+            <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+              <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
+                Add row — {formatDateTime(headerRecordedAt)}
+              </h2>
               {isAdmin && (
                 <label className="flex items-center gap-2 text-xs text-foreground/60">
                   <input
@@ -137,6 +142,21 @@ export function AddRecordModal({
                 </label>
               )}
             </div>
+            {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
+                <SelectInput
+                  value={String(data[statusField.key] ?? '')}
+                  onChange={(v) => onDataChange(statusField.key, v)}
+                  options={getStatusOptions(statusField)}
+                  className="min-w-[140px]"
+                  valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
+                  optionColors={statusField.config?.statusColors}
+                />
+              </div>
+            ) : null}
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4 sm:p-6">
             <div className="w-full min-w-0 space-y-4">
               {buildFormRowsFromOrder(fields, formOrderWithoutStatus).map((row, ri) =>
                 Array.isArray(row) ? (
@@ -188,36 +208,24 @@ export function AddRecordModal({
               )}
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
-            {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
-                <SelectInput
-                  value={String(data[statusField.key] ?? '')}
-                  onChange={(v) => onDataChange(statusField.key, v)}
-                  options={getStatusOptions(statusField)}
-                  className="min-w-[140px] shrink-0"
-                  valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
-                  optionColors={statusField.config?.statusColors}
-                />
-              </div>
-            ) : null}
-            <div className="flex w-full shrink-0 justify-end gap-2 sm:ml-auto sm:w-auto">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={submitting || !hasData(data)}
-              className="min-h-[44px] min-w-[44px] rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
-            >
-              {submitting ? 'Saving...' : 'Save'}
-            </button>
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 overflow-x-hidden border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+            <div className="flex shrink-0 gap-2" />
+            <div className="flex shrink-0 justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleClose}
+                className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={submitting || !hasData(data)}
+                className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+              >
+                {submitting ? 'Saving...' : 'Save'}
+              </button>
             </div>
           </div>
         </div>

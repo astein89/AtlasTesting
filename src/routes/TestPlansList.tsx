@@ -29,8 +29,8 @@ export function TestPlansList() {
         aVal = a.description ?? ''
         bVal = b.description ?? ''
       } else if (sortKey === 'lastEdited') {
-        aVal = a.updatedAt ?? a.createdAt ?? ''
-        bVal = b.updatedAt ?? b.createdAt ?? ''
+        aVal = a.lastEditedAt ?? a.updatedAt ?? a.createdAt ?? ''
+        bVal = b.lastEditedAt ?? b.updatedAt ?? b.createdAt ?? ''
       } else {
         aVal = a.recordCount ?? 0
         bVal = b.recordCount ?? 0
@@ -109,8 +109,8 @@ export function TestPlansList() {
                     {plan.description?.trim() || '—'}
                   </p>
                   <p className="mt-0.5 text-sm text-foreground/60">
-                    {(plan.updatedAt ?? plan.createdAt)
-                      ? formatDateTime((plan.updatedAt ?? plan.createdAt)!)
+                    {(plan.lastEditedAt ?? plan.updatedAt ?? plan.createdAt)
+                      ? formatDateTime((plan.lastEditedAt ?? plan.updatedAt ?? plan.createdAt)!)
                       : '—'}
                   </p>
                   <p className="mt-0.5 text-sm text-foreground/60">
@@ -212,8 +212,8 @@ export function TestPlansList() {
                         {plan.description?.trim() || '—'}
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-foreground/70">
-                        {(plan.updatedAt ?? plan.createdAt)
-                          ? formatDateTime(plan.updatedAt ?? plan.createdAt!)
+                        {(plan.lastEditedAt ?? plan.updatedAt ?? plan.createdAt)
+                          ? formatDateTime(plan.lastEditedAt ?? plan.updatedAt ?? plan.createdAt!)
                           : '—'}
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-foreground/70">

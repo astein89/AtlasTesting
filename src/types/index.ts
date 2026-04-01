@@ -238,6 +238,11 @@ export interface TestPlan {
   conditionalStatusRuleOrder?: Record<string, string[]>
   createdAt?: string
   updatedAt?: string | null
+  /**
+   * Latest activity in the plan (plan save, tests, records, history), from list endpoint.
+   * ISO-8601 UTC; prefer over updatedAt for “last edited” display/sort.
+   */
+  lastEditedAt?: string | null
   /** Number of records in this plan (from list endpoint) */
   recordCount?: number
 }
@@ -252,6 +257,8 @@ export interface Test {
   archived?: boolean
   createdAt?: string
   updatedAt?: string
+  /** Latest activity (test row, records, history); from API list/detail. ISO UTC. */
+  lastEditedAt?: string | null
   recordCount?: number
 }
 

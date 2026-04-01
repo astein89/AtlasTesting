@@ -208,11 +208,19 @@ export function renderFormField(
   f: DataField,
   value: string | number | boolean | string[] | TimerValue,
   onChange: (key: string, val: string | number | boolean | string[] | TimerValue) => void,
-  options?: { disabled?: boolean; uploadNamePrefix?: string; compact?: boolean; overrideValidation?: boolean }
+  options?: {
+    disabled?: boolean
+    uploadNamePrefix?: string
+    compact?: boolean
+    overrideValidation?: boolean
+    /** Atlas Location: inline Clear beside control (Edit record modal only; not inside picker). */
+    showAtlasLocationClear?: boolean
+  }
 ) {
   const disabled = options?.disabled ?? false
   const compact = options?.compact ?? false
   const overrideValidation = options?.overrideValidation ?? false
+  const showAtlasLocationClear = options?.showAtlasLocationClear ?? false
   const inputClass = compact
     ? `w-full min-w-0 rounded border border-border bg-background px-2 py-1 text-sm text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
     : `w-full rounded border border-border bg-background px-3 py-2 text-foreground ${disabled ? 'cursor-not-allowed opacity-70' : ''}`
@@ -279,6 +287,7 @@ export function renderFormField(
           value={String(value ?? '')}
           onChange={(v) => onChange(f.key, v)}
           className="w-full"
+          showClear={showAtlasLocationClear}
         />
       </div>
     )

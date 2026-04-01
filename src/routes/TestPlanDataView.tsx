@@ -42,6 +42,7 @@ import { formatFieldValue } from '../utils/formatFieldValue'
 import type { FormulaData } from '../utils/formulaEvaluator'
 import { getContrastTextColor } from '../utils/colorContrast'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { ModalNestedHistoryContext } from '../contexts/ModalNestedHistoryContext'
 
 interface Record {
   id: string
@@ -579,6 +580,27 @@ export function TestPlanDataView() {
 
   // Browser back button closes the topmost modal: push a distinct URL (#modal) when a modal opens so back pops it
   const modalHistoryPushedRef = useRef(false)
+  /** Nested overlays (Atlas location picker) push another entry; Back must dismiss them before the parent modal. */
+  const atlasPickerCloseRef = useRef<(() => void) | null>(null)
+  const atlasClosedByBrowserBackRef = useRef(false)
+  const ignoreAtlasHistoryPopRef = useRef(false)
+
+  const registerAtlasPickerHistory = useCallback((onClose: () => void) => {
+    const url = window.location.pathname + window.location.search + window.location.hash
+    window.history.pushState({ atlasLocationPicker: true }, '', url)
+    atlasPickerCloseRef.current = onClose
+    return () => {
+      if (atlasClosedByBrowserBackRef.current) {
+        atlasClosedByBrowserBackRef.current = false
+        atlasPickerCloseRef.current = null
+        return
+      }
+      atlasPickerCloseRef.current = null
+      ignoreAtlasHistoryPopRef.current = true
+      window.history.back()
+    }
+  }, [])
+
   useEffect(() => {
     if (hasModalOpen && !modalHistoryPushedRef.current) {
       modalHistoryPushedRef.current = true
@@ -601,6 +623,17 @@ export function TestPlanDataView() {
   closeTopmostModalRef.current = closeTopmostModal
   useEffect(() => {
     const handler = () => {
+      if (ignoreAtlasHistoryPopRef.current) {
+        ignoreAtlasHistoryPopRef.current = false
+        return
+      }
+      if (atlasPickerCloseRef.current) {
+        atlasClosedByBrowserBackRef.current = true
+        const fn = atlasPickerCloseRef.current
+        atlasPickerCloseRef.current = null
+        fn()
+        return
+      }
       if (modalHistoryPushedRef.current) {
         modalHistoryPushedRef.current = false
         closeTopmostModalRef.current()
@@ -1194,6 +1227,7 @@ export function TestPlanDataView() {
   const hasFields = fields.length > 0
 
   return (
+    <ModalNestedHistoryContext.Provider value={registerAtlasPickerHistory}>
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/70">
         <div className="flex flex-wrap items-center gap-2">
@@ -2528,5 +2562,6 @@ export function TestPlanDataView() {
         </div>
       )}
     </div>
+    </ModalNestedHistoryContext.Provider>
   )
 }

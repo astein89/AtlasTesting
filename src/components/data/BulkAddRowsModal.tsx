@@ -7,6 +7,7 @@ import { finalizeRecordDataAfterImportOrBulk } from '../../utils/planConditional
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { getFieldValidationErrors } from '../../utils/fieldValidation'
 import { useAuthStore } from '../../store/authStore'
+import { formatDateTime } from '../../lib/dateTimeConfig'
 
 type FieldValue = string | number | boolean | string[] | TimerValue
 
@@ -19,6 +20,7 @@ interface BulkAddRowsModalProps {
 }
 
 export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: BulkAddRowsModalProps) {
+  const [headerRecordedAt] = useState(() => new Date().toISOString())
   const { showAlert } = useAlertConfirm()
   const [targetFieldKey, setTargetFieldKey] = useState<string>(() => plan.keyField || fields[0]?.key || '')
   const [entryValue, setEntryValue] = useState<FieldValue | ''>('')
@@ -232,9 +234,11 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
         className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:rounded-lg sm:border sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
-          <div className="mb-4 flex items-center justify-between gap-4 border-b border-border pb-4">
-            <h2 className="text-lg font-semibold text-foreground">Bulk add rows</h2>
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+            <h2 className="min-w-0 truncate text-lg font-semibold text-foreground">
+              Bulk add rows — {formatDateTime(headerRecordedAt)}
+            </h2>
             {isAdmin && (
               <label className="flex items-center gap-2 text-xs text-foreground/60">
                 <input
@@ -246,7 +250,8 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
               </label>
             )}
           </div>
-
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4 sm:p-6">
           <div className="mb-4 space-y-3">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto]">
               <PopupSelect
@@ -417,22 +422,25 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
-          <button
-            type="button"
-            onClick={handleCloseRequest}
-            className="min-h-[44px] min-w-[44px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting || entries.length === 0 || !targetField}
-            className="min-h-[44px] min-w-[44px] rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
-          >
-            {submitting ? 'Saving…' : 'Create rows'}
-          </button>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 overflow-x-hidden border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
+          <div className="flex shrink-0 gap-2" />
+          <div className="flex shrink-0 justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleCloseRequest}
+              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background sm:min-h-0 sm:min-w-0"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || entries.length === 0 || !targetField}
+              className="min-h-[44px] min-w-[44px] shrink-0 rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:min-h-0 sm:min-w-0"
+            >
+              {submitting ? 'Saving…' : 'Create rows'}
+            </button>
+          </div>
         </div>
       </div>
 

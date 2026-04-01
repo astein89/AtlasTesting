@@ -53,8 +53,8 @@ export function TestPlanOverview() {
         aVal = a.endDate ?? ''
         bVal = b.endDate ?? ''
       } else if (testsSortKey === 'lastEdited') {
-        aVal = a.updatedAt ?? a.createdAt ?? ''
-        bVal = b.updatedAt ?? b.createdAt ?? ''
+        aVal = a.lastEditedAt ?? a.updatedAt ?? a.createdAt ?? ''
+        bVal = b.lastEditedAt ?? b.updatedAt ?? b.createdAt ?? ''
       } else {
         aVal = a.recordCount ?? 0
         bVal = b.recordCount ?? 0
@@ -263,7 +263,9 @@ export function TestPlanOverview() {
                   : '—'}
               </p>
               <p className="mt-0.5 text-sm text-foreground/60">
-                {(t.updatedAt ?? t.createdAt) ? formatDateTime(t.updatedAt ?? t.createdAt!) : '—'}
+                {(t.lastEditedAt ?? t.updatedAt ?? t.createdAt)
+                  ? formatDateTime((t.lastEditedAt ?? t.updatedAt ?? t.createdAt)!)
+                  : '—'}
               </p>
               <p className="mt-0.5 text-sm text-foreground/60">
                 {t.recordCount ?? 0}
@@ -395,8 +397,8 @@ export function TestPlanOverview() {
                     {t.endDate ? formatDate(t.endDate + 'T00:00:00') : '—'}
                   </td>
                   <td className="px-4 py-3 text-right text-sm text-foreground/70">
-                    {(t.updatedAt ?? t.createdAt)
-                      ? formatDateTime(t.updatedAt ?? t.createdAt!)
+                    {(t.lastEditedAt ?? t.updatedAt ?? t.createdAt)
+                      ? formatDateTime((t.lastEditedAt ?? t.updatedAt ?? t.createdAt)!)
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-right text-sm text-foreground/70">

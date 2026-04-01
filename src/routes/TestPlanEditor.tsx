@@ -7,6 +7,7 @@ import { CreateFieldForm } from '../components/fields/CreateFieldForm'
 import { DraggableOptionList } from '../components/ui/DraggableOptionList'
 import { PopupSelect } from '../components/ui/PopupSelect'
 import { SelectInput } from '../components/fields/SelectInput'
+import { AtlasLocationInput } from '../components/fields/AtlasLocationInput'
 import { FormulaEditorModal } from '../components/fields/FormulaEditorModal'
 import {
   formatFieldEntry,
@@ -1240,7 +1241,15 @@ export function TestPlanEditor() {
                                   className="w-full"
                                 />
                               )}
-                              {!['number', 'text', 'longtext', 'boolean', 'select', 'radio_select', 'checkbox_select', 'status'].includes(f.type) && (
+                              {f.type === 'atlas_location' && (
+                                <AtlasLocationInput
+                                  value={val === undefined ? '' : String(val)}
+                                  onChange={(v) => setVal(v)}
+                                  showClear
+                                  className="w-full"
+                                />
+                              )}
+                              {!['number', 'text', 'longtext', 'boolean', 'select', 'radio_select', 'checkbox_select', 'status', 'atlas_location'].includes(f.type) && (
                                 <input
                                   type="text"
                                   value={val === undefined ? '' : String(val)}

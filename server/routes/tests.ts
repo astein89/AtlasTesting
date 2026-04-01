@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
+import { toIsoUtcString } from '../lib/timestamps.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 
 const router = Router({ mergeParams: true })
@@ -8,6 +9,32 @@ const router = Router({ mergeParams: true })
 router.use(authMiddleware)
 
 type Params = { planId: string; testId?: string }
+
+/** Latest activity for a test: metadata, record creates, and record_history edits. */
+function getLastEditedAtIsoForTest(testId: string, fallbackCreatedAt: string): string {
+  const act = db
+    .prepare(
+      `SELECT MAX(CAST(strftime('%s', x.ts) AS INTEGER)) AS max_epoch
+       FROM (
+         SELECT t.updated_at AS ts FROM tests t WHERE t.id = ? AND t.updated_at IS NOT NULL
+         UNION ALL
+         SELECT t.created_at FROM tests t WHERE t.id = ?
+         UNION ALL
+         SELECT tr.run_at FROM test_runs tr WHERE tr.test_id = ?
+         UNION ALL
+         SELECT rh.changed_at FROM record_history rh
+         INNER JOIN test_runs tr ON tr.id = rh.record_id
+         WHERE tr.test_id = ?
+       ) x
+       WHERE x.ts IS NOT NULL AND length(trim(x.ts)) > 0`
+    )
+    .get(testId, testId, testId, testId) as { max_epoch: number | string | null } | undefined
+  if (act?.max_epoch != null) {
+    const n = typeof act.max_epoch === 'string' ? parseInt(act.max_epoch, 10) : act.max_epoch
+    if (Number.isFinite(n)) return new Date(n * 1000).toISOString()
+  }
+  return toIsoUtcString(fallbackCreatedAt) ?? fallbackCreatedAt
+}
 
 router.get('/', (req: Request<Params>, res) => {
   const planId = req.params.planId
@@ -51,18 +78,57 @@ router.get('/', (req: Request<Params>, res) => {
     record_count: number
   }>
 
+  const activityRows = db
+    .prepare(
+      `SELECT x.test_id AS test_id, MAX(CAST(strftime('%s', x.ts) AS INTEGER)) AS max_epoch
+       FROM (
+         SELECT t.id AS test_id, t.updated_at AS ts
+         FROM tests t
+         WHERE t.test_plan_id = ? AND t.updated_at IS NOT NULL
+         UNION ALL
+         SELECT t.id, t.created_at FROM tests t WHERE t.test_plan_id = ?
+         UNION ALL
+         SELECT tr.test_id, tr.run_at FROM test_runs tr
+         WHERE tr.test_plan_id = ? AND tr.test_id IS NOT NULL
+         UNION ALL
+         SELECT tr.test_id, rh.changed_at
+         FROM record_history rh
+         INNER JOIN test_runs tr ON tr.id = rh.record_id
+         WHERE tr.test_plan_id = ?
+       ) x
+       WHERE x.test_id IS NOT NULL AND x.ts IS NOT NULL AND length(trim(x.ts)) > 0
+       GROUP BY x.test_id`
+    )
+    .all(planId, planId, planId, planId) as Array<{ test_id: string; max_epoch: number | string | null }>
+  const lastEpochByTest = new Map<string, number>()
+  for (const a of activityRows) {
+    if (a.max_epoch == null) continue
+    const n = typeof a.max_epoch === 'string' ? parseInt(a.max_epoch, 10) : a.max_epoch
+    if (Number.isFinite(n)) lastEpochByTest.set(a.test_id, n)
+  }
+
   res.json(
-    rows.map((r) => ({
-      id: r.id,
-      testPlanId: r.test_plan_id,
-      name: r.name,
-      startDate: r.start_date ?? undefined,
-      endDate: r.end_date ?? undefined,
-      archived: Boolean(r.archived),
-      createdAt: r.created_at,
-      updatedAt: r.updated_at ?? undefined,
-      recordCount: r.record_count,
-    }))
+    rows.map((r) => {
+      const epoch = lastEpochByTest.get(r.id)
+      const lastEditedAt =
+        epoch != null && Number.isFinite(epoch)
+          ? new Date(epoch * 1000).toISOString()
+          : toIsoUtcString(r.created_at) ?? r.created_at
+      const createdAtNorm = toIsoUtcString(r.created_at) ?? r.created_at
+      const updatedAtNorm = toIsoUtcString(r.updated_at)
+      return {
+        id: r.id,
+        testPlanId: r.test_plan_id,
+        name: r.name,
+        startDate: r.start_date ?? undefined,
+        endDate: r.end_date ?? undefined,
+        archived: Boolean(r.archived),
+        createdAt: createdAtNorm,
+        updatedAt: updatedAtNorm ?? undefined,
+        lastEditedAt,
+        recordCount: r.record_count,
+      }
+    })
   )
 })
 
@@ -91,6 +157,7 @@ router.post('/', (req: Request<Params>, res) => {
     archived: number
     created_at: string
   }
+  const createdNorm = toIsoUtcString(row.created_at) ?? row.created_at
   res.status(201).json({
     id: row.id,
     testPlanId: row.test_plan_id,
@@ -98,7 +165,8 @@ router.post('/', (req: Request<Params>, res) => {
     startDate: row.start_date ?? undefined,
     endDate: row.end_date ?? undefined,
     archived: false,
-    createdAt: row.created_at,
+    createdAt: createdNorm,
+    lastEditedAt: getLastEditedAtIsoForTest(row.id, row.created_at),
     recordCount: 0,
   })
 })
@@ -127,6 +195,7 @@ router.get('/:testId', (req: Request<Params>, res) => {
     record_count: number
   } | undefined
   if (!row) return res.status(404).json({ error: 'Test not found' })
+
   res.json({
     id: row.id,
     testPlanId: row.test_plan_id,
@@ -134,8 +203,9 @@ router.get('/:testId', (req: Request<Params>, res) => {
     startDate: row.start_date ?? undefined,
     endDate: row.end_date ?? undefined,
     archived: Boolean(row.archived),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at ?? undefined,
+    createdAt: toIsoUtcString(row.created_at) ?? row.created_at,
+    updatedAt: toIsoUtcString(row.updated_at) ?? undefined,
+    lastEditedAt: getLastEditedAtIsoForTest(row.id, row.created_at),
     recordCount: row.record_count ?? 0,
   })
 })
@@ -143,6 +213,9 @@ router.get('/:testId', (req: Request<Params>, res) => {
 router.put('/:testId', requireAdmin, (req: Request<Params>, res) => {
   const planId = req.params.planId
   const testId = req.params.testId
+  if (typeof testId !== 'string' || !testId.trim()) {
+    return res.status(400).json({ error: 'Test id required' })
+  }
   const { name, startDate, endDate, archived } = req.body
 
   const test = db.prepare('SELECT * FROM tests WHERE id = ? AND test_plan_id = ?').get(testId, planId) as {
@@ -183,8 +256,9 @@ router.put('/:testId', requireAdmin, (req: Request<Params>, res) => {
       startDate: test.start_date ?? undefined,
       endDate: test.end_date ?? undefined,
       archived: Boolean(test.archived),
-      createdAt: testRow.created_at,
-      updatedAt: testRow.updated_at ?? undefined,
+      createdAt: toIsoUtcString(test.created_at) ?? test.created_at,
+      updatedAt: toIsoUtcString(testRow.updated_at ?? null) ?? undefined,
+      lastEditedAt: getLastEditedAtIsoForTest(testId, test.created_at),
       recordCount: count?.c ?? 0,
     })
   }
@@ -210,8 +284,9 @@ router.put('/:testId', requireAdmin, (req: Request<Params>, res) => {
     startDate: row.start_date ?? undefined,
     endDate: row.end_date ?? undefined,
     archived: Boolean(row.archived),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at ?? undefined,
+    createdAt: toIsoUtcString(row.created_at) ?? row.created_at,
+    updatedAt: toIsoUtcString(row.updated_at) ?? undefined,
+    lastEditedAt: getLastEditedAtIsoForTest(row.id, row.created_at),
     recordCount: count?.c ?? 0,
   })
 })

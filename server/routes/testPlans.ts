@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
+import { toIsoUtcString } from '../lib/timestamps.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import { testsRouter } from './tests.js'
 
@@ -94,35 +95,75 @@ router.get('/', (_, res) => {
     .all() as Array<{ test_plan_id: string; cnt: number }>
   const countByPlan = new Map(counts.map((c) => [c.test_plan_id, c.cnt]))
 
+  const activityRows = db
+    .prepare(
+      `SELECT x.plan_id AS plan_id, MAX(CAST(strftime('%s', x.ts) AS INTEGER)) AS max_epoch
+       FROM (
+         SELECT tr.test_plan_id AS plan_id, rh.changed_at AS ts
+         FROM record_history rh
+         INNER JOIN test_runs tr ON tr.id = rh.record_id
+         UNION ALL
+         SELECT tr.test_plan_id, tr.run_at FROM test_runs tr
+         UNION ALL
+         SELECT t.test_plan_id, t.updated_at FROM tests t WHERE t.updated_at IS NOT NULL
+         UNION ALL
+         SELECT t.test_plan_id, t.created_at FROM tests t
+         UNION ALL
+         SELECT id AS plan_id, updated_at AS ts FROM test_plans WHERE updated_at IS NOT NULL
+         UNION ALL
+         SELECT id, created_at FROM test_plans
+       ) x
+       WHERE x.ts IS NOT NULL AND length(trim(x.ts)) > 0
+       GROUP BY x.plan_id`
+    )
+    .all() as Array<{ plan_id: string; max_epoch: number | string | null }>
+  const lastEpochByPlan = new Map<string, number>()
+  for (const a of activityRows) {
+    if (a.max_epoch == null) continue
+    const n = typeof a.max_epoch === 'string' ? parseInt(a.max_epoch, 10) : a.max_epoch
+    if (Number.isFinite(n)) lastEpochByPlan.set(a.plan_id, n)
+  }
+
   res.json(
-    rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: (r as { short_description?: string | null }).short_description ?? null,
-      testPlan: r.description,
-      constraints: (r as { constraints?: string | null }).constraints ?? null,
-      fieldIds: r.field_ids ? JSON.parse(r.field_ids) : [],
-      fieldLayout: r.field_layout ? JSON.parse(r.field_layout) : {},
-      formLayoutOrder: parseFormLayoutOrder(r.form_layout),
-      keyField: (r as { key_field?: string | null }).key_field ?? undefined,
-      startDate: (r as { start_date?: string | null }).start_date ?? undefined,
-      endDate: (r as { end_date?: string | null }).end_date ?? undefined,
-      archivedRuns: parseArchivedRuns((r as { archived_runs?: string | null }).archived_runs ?? null),
-      hiddenFieldIds: parseStringArray((r as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
-      requiredFieldIds: parseStringArray((r as { required_field_ids?: string | null }).required_field_ids ?? null),
-      defaultVisibleColumnIds: parseStringArray(
-        (r as { default_visible_columns?: string | null }).default_visible_columns ?? null
-      ),
-      conditionalStatusRules: parseConditionalStatusRules(
-        (r as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
-      ),
-      conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
-        (r as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
-      ),
-      createdAt: r.created_at,
-      updatedAt: (r as { updated_at?: string | null }).updated_at ?? null,
-      recordCount: countByPlan.get(r.id) ?? 0,
-    }))
+    rows.map((r) => {
+      const epoch = lastEpochByPlan.get(r.id)
+      const lastEditedAt =
+        epoch != null && Number.isFinite(epoch)
+          ? new Date(epoch * 1000).toISOString()
+          : toIsoUtcString(r.created_at) ?? r.created_at
+      const createdAtNorm = toIsoUtcString(r.created_at) ?? r.created_at
+      const updatedAtNorm = toIsoUtcString((r as { updated_at?: string | null }).updated_at)
+
+      return {
+        id: r.id,
+        name: r.name,
+        description: (r as { short_description?: string | null }).short_description ?? null,
+        testPlan: r.description,
+        constraints: (r as { constraints?: string | null }).constraints ?? null,
+        fieldIds: r.field_ids ? JSON.parse(r.field_ids) : [],
+        fieldLayout: r.field_layout ? JSON.parse(r.field_layout) : {},
+        formLayoutOrder: parseFormLayoutOrder(r.form_layout),
+        keyField: (r as { key_field?: string | null }).key_field ?? undefined,
+        startDate: (r as { start_date?: string | null }).start_date ?? undefined,
+        endDate: (r as { end_date?: string | null }).end_date ?? undefined,
+        archivedRuns: parseArchivedRuns((r as { archived_runs?: string | null }).archived_runs ?? null),
+        hiddenFieldIds: parseStringArray((r as { hidden_field_ids?: string | null }).hidden_field_ids ?? null),
+        requiredFieldIds: parseStringArray((r as { required_field_ids?: string | null }).required_field_ids ?? null),
+        defaultVisibleColumnIds: parseStringArray(
+          (r as { default_visible_columns?: string | null }).default_visible_columns ?? null
+        ),
+        conditionalStatusRules: parseConditionalStatusRules(
+          (r as { conditional_status_rules?: string | null }).conditional_status_rules ?? null
+        ),
+        conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
+          (r as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
+        ),
+        createdAt: createdAtNorm,
+        updatedAt: updatedAtNorm,
+        lastEditedAt,
+        recordCount: countByPlan.get(r.id) ?? 0,
+      }
+    })
   )
 })
 
