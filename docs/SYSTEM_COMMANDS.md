@@ -70,7 +70,7 @@ The script changes into the repo directory before running PM2 or the update scri
 - **PM2** — Install with `npm install -g pm2`. Used for start, stop, status, restart.
 - **Update command** — Requires git, npm, and the project’s [scripts/pi-update.sh](../scripts/pi-update.sh). The app is expected to be managed by PM2 (see [Raspberry Pi Setup](RASPBERRY_PI_SETUP.md) and [Upgrade Instructions](UPGRADE.md)).
 
-If you serve the app behind a reverse proxy at a path (e.g. http://\<pi-ip\>/dc-automation), set `BASE_PATH` and `VITE_BASE_PATH` as described in [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md).
+The default install serves at **http://\<pi-ip\>/** (Caddy 2 or nginx on port 80 → Node). If you use a **subpath** (e.g. http://\<pi-ip\>/dc-automation), set `BASE_PATH` and `VITE_BASE_PATH` as in [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md).
 
 ## See also
 

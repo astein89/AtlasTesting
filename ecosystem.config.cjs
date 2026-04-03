@@ -1,5 +1,5 @@
-// For path-based deployment (e.g. behind reverse proxy at /dc-automation), set BASE_PATH
-// and build the client with VITE_BASE_PATH. See docs/RASPBERRY_PI_SETUP.md.
+// Default: app at site root (http://<host>/) — leave BASE_PATH unset. For subpath deployment
+// (e.g. /dc-automation), set BASE_PATH and build with VITE_BASE_PATH. See docs/RASPBERRY_PI_SETUP.md.
 module.exports = {
   apps: [
     {

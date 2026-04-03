@@ -67,7 +67,9 @@ The app now uses a **module hub** at `/` and nests workflows:
 
 ## 4. Reverse proxy / base path examples
 
-Documentation and scripts now use **`/dc-automation`** as the example path (instead of `/automation-testing`). If you deploy under a path:
+The [Raspberry Pi setup](RASPBERRY_PI_SETUP.md) guide now assumes the app is served at **http://\<host\>/** (site root). Subpath examples (e.g. **`/dc-automation`**) are optional for multiple apps or legacy URLs.
+
+Documentation still uses **`/dc-automation`** as the **subpath** example (instead of `/automation-testing`). If you deploy under a path:
 
 - Build with e.g. `VITE_BASE_PATH=/dc-automation npm run build`
 - Set `BASE_PATH=/dc-automation` in PM2 when the Node app sees the full path (see [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md))
@@ -99,4 +101,4 @@ Dropbox/rclone backup paths in examples may show `Backups/dc-automation/sqlite`;
 
 ## 7. Port 80
 
-Serving on port 80 is still an **operations** concern: reverse proxy to the app port (recommended) or run Node with `PORT=80` and appropriate permissions. See [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md).
+Typical setup: **Caddy 2** (or nginx) on port **80** proxies to Node on **3000**, so users open **http://\<pi-ip\>/**. Alternatively run Node with `PORT=80` and appropriate permissions. See [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md).

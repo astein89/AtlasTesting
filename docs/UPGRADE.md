@@ -9,7 +9,7 @@ Use this guide to upgrade an existing DC Automation installation to a newer vers
 ## Before You Start
 
 - **Back up the database** — Your data is in **`dc_automation.db`** (or **`atlas.db`** if you have not migrated yet). Copy it before upgrading.
-- **Note your setup** — Port, PM2 config (`dc-automation`), base path (BASE_PATH / VITE_BASE_PATH) and whether you use a reverse proxy, and any custom changes.
+- **Note your setup** — Public URL (e.g. **http://\<pi-ip\>/** at root, or a subpath), PM2 config (`dc-automation`), `BASE_PATH` / `VITE_BASE_PATH` if not using the default root build, reverse proxy, and any custom changes.
 
 ---
 
@@ -71,7 +71,7 @@ npm install --omit=dev
 npm run build
 ```
 
-If you use a base path (e.g. http://\<pi-ip\>/dc-automation behind a reverse proxy), build with the same value: `VITE_BASE_PATH=/dc-automation npm run build` (or set `VITE_BASE_PATH` in a `.env` file and source it before building).
+For **http://\<pi-ip\>/** (site root), `npm run build` is enough. If you use a **subpath** (e.g. http://\<pi-ip\>/dc-automation), build with the same value as before: `VITE_BASE_PATH=/dc-automation npm run build` (or set `VITE_BASE_PATH` in a `.env` file and source it before building).
 
 Skip this step if you copied a pre-built `dist` folder.
 
@@ -90,7 +90,7 @@ pm2 status
 pm2 logs dc-automation
 ```
 
-Open the app in a browser at its URL (http://\<pi-ip\>:3000 or http://\<pi-ip\>/dc-automation if using a reverse proxy) and confirm **Home**, **Testing**, and **Locations** load.
+Open the app at its URL (**http://\<pi-ip\>/** with nginx on port 80, or http://\<pi-ip\>:3000 direct, or your subpath if applicable) and confirm **Home**, **Testing**, and **Locations** load.
 
 ---
 
@@ -103,7 +103,7 @@ cd ~/dc-automation
 ./scripts/ctl.sh update
 ```
 
-When using a base path, ensure `VITE_BASE_PATH` is set when building (e.g. in a `.env` file in the project root; the update script sources it before building). See [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md) for the full base-path and reverse-proxy setup.
+For a **subpath** deployment, ensure `VITE_BASE_PATH` is set when building (e.g. in a `.env` file; the update script sources it before building). Default **root** builds use plain `npm run build`. See [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md).
 
 Or the same steps manually:
 

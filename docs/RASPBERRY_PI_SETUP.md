@@ -4,6 +4,8 @@ This guide walks you through installing and running **DC Automation** on a Raspb
 
 After login, open **Home** (`/`) to choose **Testing** or **Locations**; the API stays at `/api`.
 
+**Production URL:** This guide assumes you want the app at **http://\<raspberry-pi-ip\>/** (site root on port 80). The Node process listens on **port 3000**; **Caddy 2** on port 80 reverse-proxies to it (nginx is optional). For a subpath (e.g. `/dc-automation`) or multiple apps on one Pi, see [Optional: path-based URL or multiple apps](#optional-path-based-url-or-multiple-apps).
+
 **Already installed?** See **[Upgrade Instructions](UPGRADE.md)** to update to a newer version.
 
 ## Prerequisites
@@ -81,7 +83,13 @@ Or use SCP, USB drive, or another transfer method.
 
 ## Step 5: Install Dependencies & Build
 
-If you will serve the app at a path (e.g. under a reverse proxy at `/dc-automation`), set the base path when building: `VITE_BASE_PATH=/dc-automation npm run build` (see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below).
+**Site root (`http://\<pi-ip\>/`):** use the default build (no base path):
+
+```bash
+npm run build
+```
+
+**Subpath only** (e.g. `http://\<pi-ip\>/dc-automation`): set the client base when building, e.g. `VITE_BASE_PATH=/dc-automation npm run build`, and see [Optional: path-based URL or multiple apps](#optional-path-based-url-or-multiple-apps).
 
 ### Option A: Build on the Pi
 
@@ -93,8 +101,6 @@ npm install
 npm run build
 ```
 
-For path-based deployment (e.g. at `/dc-automation`), run: `VITE_BASE_PATH=/dc-automation npm run build` instead.
-
 ### Option B: Build on Your Dev Machine, Copy to Pi (recommended for low-memory Pi)
 
 On your development machine:
@@ -103,8 +109,6 @@ On your development machine:
 npm install
 npm run build
 ```
-
-For path-based deployment, run: `VITE_BASE_PATH=/dc-automation npm run build` instead.
 
 Then copy the project to the Pi (including the `dist` folder). On the Pi:
 
@@ -138,7 +142,7 @@ PM2 keeps the app running, restarts it on crash, and can start it on boot.
 
 ## Step 8: Start the Application
 
-When using a base path (e.g. behind a reverse proxy at `/dc-automation`), set `BASE_PATH` in `ecosystem.config.cjs` in the `env` section, e.g. `BASE_PATH: '/dc-automation'`. See [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
+For **http://\<pi-ip\>/** (root), leave **`BASE_PATH` unset** (commented out) in `ecosystem.config.cjs` — only set `BASE_PATH` when the Node app must see a subpath; see the optional section below.
 
 ```bash
 cd ~/dc-automation
@@ -172,38 +176,153 @@ The app will now start automatically after a reboot.
 
 ## Step 10: Access the App
 
-- **Default:** http://\<raspberry-pi-ip\>:3000
 - **Default login:** `admin` / `admin`
+- **Direct to Node (testing):** http://\<raspberry-pi-ip\>:3000
+- **Production (recommended):** http://\<raspberry-pi-ip\>/ — put **Caddy 2** (or nginx) on port 80 and proxy to Node on 3000; see [Serve at http://\<pi-ip\>/ on port 80](#serve-at-httppi-ip-on-port-80-recommended) below.
 
-**Port 80 with multiple apps:** To serve on port 80 at a path (e.g. http://\<pi-ip\>/dc-automation) alongside other apps, see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
-
-**Change the port** (optional): Edit `ecosystem.config.cjs` and set `PORT` in the `env` section (e.g. 80, 8080). For multiple apps on port 80, use the reverse proxy approach instead.
+**Change the app port** (optional): Edit `ecosystem.config.cjs` and set `PORT` in the `env` section (e.g. `8080`). For port **80** without a proxy, see [Optional: run directly on port 80](#optional-run-directly-on-port-80-single-app-only).
 
 ---
 
-## Serving on port 80 with a reverse proxy (multiple apps)
+## Serve at http://\<pi-ip\>/ on port 80 (recommended)
 
-To access the app at **http://\<pi-ip\>/dc-automation** (port 80, no `:3000`) and host other apps the same way, use a reverse proxy on port 80.
+Use **Caddy 2** (or nginx) on port 80 to forward all paths to the Node app on **127.0.0.1:3000**. The app is built **without** `VITE_BASE_PATH`; do **not** set `BASE_PATH` in PM2.
 
-### Recommended: nginx strips the path (no BASE_PATH)
-
-The app runs at the **root** (no `BASE_PATH`). Nginx rewrites `/dc-automation/...` to `/...` before proxying, so the Node app receives `/`, `/assets/...`, `/api/...` and serves them normally.
-
-**1. Build with base path** (so the client requests `/dc-automation/...` in the browser):
+**1. Build** (default — site root):
 
 ```bash
-VITE_BASE_PATH=/dc-automation npm run build
+npm run build
 ```
 
-**2. Do not set BASE_PATH** in `ecosystem.config.cjs`. Leave only `NODE_ENV` and `PORT` in the `env` section (comment out or remove `BASE_PATH`).
+**2. PM2** is already running the app on port 3000 (`ecosystem.config.cjs`).
 
-**3. Configure nginx** to strip `/dc-automation` and proxy:
+**3. Install Caddy 2**
+
+On Raspberry Pi OS / Debian, use the [official Caddy package](https://caddyserver.com/docs/install#debian-ubuntu-raspbian) (recommended — current **Caddy 2**):
+
+```bash
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update
+sudo apt install caddy
+```
+
+Confirm the binary is v2: `caddy version`.
+
+If port 80 is already used (e.g. by nginx), stop the other service before continuing: `sudo systemctl disable --now nginx` (only if you are switching to Caddy).
+
+**4. Configure the Caddyfile**
+
+Edit **`/etc/caddy/Caddyfile`**. For access **only by IP** over HTTP (no TLS), use the **`http://`** scheme so Caddy does **not** try to obtain certificates for a bare IP:
+
+```caddyfile
+http://:80 {
+	reverse_proxy 127.0.0.1:3000
+}
+```
+
+Tabs or spaces are fine. This listens on **:80** on all interfaces and proxies `/`, `/assets/…`, `/api/…`, etc. to Node.
+
+**Later, with a real DNS name:** you can replace the first line with your hostname (e.g. `automation.example.com {`) and let Caddy obtain HTTPS automatically; keep `reverse_proxy` as above. See [Automatic HTTPS](https://caddyserver.com/docs/automatic-https) in the Caddy docs.
+
+Validate and apply:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+# or: sudo systemctl restart caddy
+```
+
+Check status: `sudo systemctl status caddy` — it should be **active (running)**.
+
+**5. Firewall:** allow HTTP if you use `ufw`:
+
+```bash
+sudo ufw allow 80
+```
+
+**Access:** **http://\<raspberry-pi-ip\>/**
+
+### Alternative: nginx
+
+If you prefer nginx instead of Caddy, install it and use a minimal server block:
 
 ```bash
 sudo apt install nginx
 ```
 
-Edit `/etc/nginx/sites-available/default` (or your site config). Use a **rewrite** so the backend sees paths at root:
+`/etc/nginx/sites-available/default` (or your vhost):
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+Then: `sudo nginx -t && sudo systemctl reload nginx`.
+
+---
+
+## Optional: path-based URL or multiple apps
+
+Use this when the app must live under a **subpath** (e.g. **http://\<pi-ip\>/dc-automation**) or you run **several apps** on one Pi.
+
+### Caddy 2: strip path (recommended for Caddy users)
+
+[`handle_path`](https://caddyserver.com/docs/caddyfile/directives/handle_path) strips the prefix before proxying so Node still sees `/`, `/assets/…`, `/api/…`.
+
+**1. Build with base path:**
+
+```bash
+VITE_BASE_PATH=/dc-automation npm run build
+```
+
+**2. Do not set `BASE_PATH`** in `ecosystem.config.cjs` (leave it commented).
+
+**3. Caddyfile** (HTTP only by IP — same idea as [site root](#serve-at-httppi-ip-on-port-80-recommended)):
+
+```caddyfile
+http://:80 {
+	redir /dc-automation /dc-automation/
+	handle_path /dc-automation/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
+```
+
+Then:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+**Access:** http://\<pi-ip\>/dc-automation/
+
+**Add more apps:** Add another `handle_path /other-app/* { reverse_proxy 127.0.0.1:PORT }` block (or a different `handle` + `reverse_proxy` on another port).
+
+### nginx: strip path (same behaviour)
+
+**1–2.** Same build and PM2 as above.
+
+**3. Configure nginx** with rewrites so the backend sees root paths:
+
+```bash
+sudo apt install nginx
+```
 
 ```nginx
 location /dc-automation/ {
@@ -226,15 +345,23 @@ location = /dc-automation {
 }
 ```
 
-Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`.
-
-**Access:** http://\<pi-ip\>/dc-automation — the app and assets load correctly because nginx sends `/`, `/assets/...`, `/api/...` to Node.
-
-**Add more apps:** Add similar `location` blocks for other paths (e.g. `/other-app/`) with rewrite and their own backend port.
+`sudo nginx -t && sudo systemctl reload nginx`
 
 ### Alternative: proxy without rewrite (Node uses BASE_PATH)
 
-If you prefer the Node app to handle the full path, set `BASE_PATH: '/dc-automation'` in `ecosystem.config.cjs` and use a simple proxy (no rewrite). This can be fragile depending on how the request path is seen by Node; the nginx-rewrite approach above is more reliable.
+Set `BASE_PATH: '/dc-automation'` in `ecosystem.config.cjs` and proxy the prefix without stripping. This can be fragile; **strip-path** (Caddy `handle_path` or nginx rewrite) is usually easier.
+
+**Caddy 2** (example — tune matchers if your app expects every request under `/dc-automation`):
+
+```caddyfile
+http://:80 {
+	handle /dc-automation* {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
+```
+
+**nginx:**
 
 ```nginx
 location /dc-automation {
@@ -247,67 +374,28 @@ location /dc-automation {
 }
 ```
 
-### Caddy (with path strip)
+### Landing page at / with app under a subpath
 
-With Caddy you can strip the path before proxying so the app sees root paths. Example (strip prefix and proxy):
+If **http://\<pi-ip\>/** must show a static landing page and DC Automation stays under **/dc-automation/**:
 
-```
-handle_path /dc-automation/* {
-    reverse_proxy 127.0.0.1:3000
+**Caddy 2** — copy **`landing/`** to e.g. `/var/www/landing` (so `/var/www/landing/index.html` exists). Example:
+
+```caddyfile
+http://:80 {
+	redir /dc-automation /dc-automation/
+	handle_path /dc-automation/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle {
+		root * /var/www/landing
+		file_server
+	}
 }
 ```
 
-Reload Caddy. Use the same build and no `BASE_PATH` as in the nginx section. Access at http://\<pi-ip\>/dc-automation.
+`handle_path` runs first for the app; the final `handle` serves the landing files at `/`. Validate/reload Caddy. Edit `landing/index.html` to link to `/dc-automation/`.
 
-### Landing page at root (links to all apps)
-
-The repo includes a simple landing page at **`landing/index.html`** that you can serve at **http://\<pi-ip\>/** with links to DC Automation and other apps.
-
-**1. Copy the landing folder to the Pi** (e.g. next to your app or under `/var/www`):
-
-```bash
-# On the Pi, create a directory and copy the landing page
-mkdir -p /var/www/landing
-# Copy landing/index.html from the project into /var/www/landing/
-```
-
-Or from your dev machine: `scp -r landing pi@<pi-ip>:/var/www/landing`
-
-**2. Configure nginx** so the default server root serves the landing page, and keep your app under `/dc-automation/`:
-
-```nginx
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-
-    root /var/www/landing;
-    index index.html;
-
-    # Landing page at /
-    location = / {
-        try_files /index.html =404;
-    }
-
-    # Redirect /at to /dc-automation/
-    location = /at { return 301 /dc-automation/; }
-    location = /at/ { return 301 /dc-automation/; }
-
-    # DC Automation app
-    location /dc-automation/ {
-        rewrite ^/dc-automation/?(.*)$ /$1 break;
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Add more location blocks for other apps...
-}
-```
-
-Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`. Then **http://\<pi-ip\>/** shows the landing page with links; edit `landing/index.html` to add or change app links.
+**nginx** — use `root` / `try_files` for `/` and the same `location /dc-automation/` rewrite + `proxy_pass` pattern as in the nginx strip-path section above.
 
 ---
 
@@ -345,11 +433,12 @@ cp ~/dc-automation/dc_automation.db ~/dc-automation/dc_automation.db.backup
 - [ ] Node.js 18+ installed
 - [ ] Project copied to Pi
 - [ ] `npm install` run (full install if building on Pi)
-- [ ] `npm run build` completed (use `VITE_BASE_PATH=/dc-automation npm run build` if using reverse proxy at a path)
+- [ ] `npm run build` completed (default for **http://\<pi-ip\>/**; use `VITE_BASE_PATH=...` only if deploying under a subpath)
 - [ ] PM2 installed globally
-- [ ] `pm2 start ecosystem.config.cjs` run (set `BASE_PATH` in ecosystem if using reverse proxy)
+- [ ] `pm2 start ecosystem.config.cjs` run (`BASE_PATH` only if needed — see [optional path section](#optional-path-based-url-or-multiple-apps))
+- [ ] **Caddy 2** (or nginx) on port 80 proxying to Node :3000 for production URL **http://\<pi-ip\>/**
 - [ ] `pm2 startup` and `pm2 save` executed
-- [ ] App accessible at http://\<pi-ip\>:3000 (or http://\<pi-ip\>/dc-automation if using reverse proxy)
+- [ ] App accessible at **http://\<pi-ip\>/** (or http://\<pi-ip\>:3000 if testing without a proxy)
 
 ---
 
@@ -369,7 +458,9 @@ sudo lsof -i :3000
 # Kill the process or change PORT in ecosystem.config.cjs
 ```
 
-When using a reverse proxy, the app still listens on port 3000; the proxy listens on 80.
+When using Caddy or nginx, the app still listens on port 3000; the proxy listens on 80.
+
+**Port 80 busy:** Only one service can bind to port 80. If Caddy fails to start, check `sudo journalctl -u caddy -e` and whether nginx (or another web server) is already using 80 — e.g. `sudo systemctl disable --now nginx` if you switched to Caddy.
 
 ### Out of memory
 
@@ -408,7 +499,7 @@ The app listens on `0.0.0.0` by default (all network interfaces). If you changed
 hostname -I
 ```
 
-Use that IP from another device: `http://192.168.1.xxx:3000` (or `http://192.168.1.xxx/dc-automation` if using a reverse proxy).
+Use that IP from another device: **http://192.168.1.xxx/** if Caddy (or nginx) proxies port 80 to Node, or `http://192.168.1.xxx:3000` for direct access.
 
 **4. Same network**
 
@@ -435,7 +526,7 @@ sudo ufw disable
 
 ## Optional: Run directly on port 80 (single app only)
 
-To run the app on port 80 without a reverse proxy (one app per Pi):
+To bind Node to port **80** without Caddy/nginx (one app per Pi; serves at **http://\<pi-ip\>/**):
 
 ```bash
 sudo setcap 'cap_net_bind_service=+ep' $(which node)
@@ -447,4 +538,4 @@ Then set `PORT: 80` in `ecosystem.config.cjs` and restart:
 pm2 restart dc-automation
 ```
 
-For **multiple apps** on port 80 (e.g. http://\<pi-ip\>/dc-automation and http://\<pi-ip\>/other-app), use the [reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) approach instead.
+For **multiple apps** on port 80, use a [reverse proxy](#serve-at-httppi-ip-on-port-80-recommended) with separate backends instead.
