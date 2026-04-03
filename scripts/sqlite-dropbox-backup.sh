@@ -33,7 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${RCLONE_REMOTE:?Set RCLONE_REMOTE (e.g. dropbox:Backups/atlas) in backup.conf}"
 
 # --- defaults (override in backup.conf) ---
-BACKUP_BASENAME="${BACKUP_BASENAME:-atlas.db}"
+BACKUP_BASENAME="${BACKUP_BASENAME:-dc_automation.db}"
 KEEP_LAST="${KEEP_LAST:-24}"
 MAX_AGE_DAYS="${MAX_AGE_DAYS:-0}"
 LOG_FILE="${LOG_FILE:-$STAGING_ROOT/logs/backup.log}"

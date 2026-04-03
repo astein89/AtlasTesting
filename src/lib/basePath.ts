@@ -1,5 +1,5 @@
 /**
- * Base path when the app is served under a path (e.g. /automation-testing).
+ * Base path when the app is served under a path (e.g. /dc-automation).
  * Set at build time via VITE_BASE_PATH (no trailing slash).
  * Empty string when served at root.
  */

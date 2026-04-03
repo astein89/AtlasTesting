@@ -5,7 +5,7 @@ import { initSchema, type DbWrapper } from './schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const levelsUp = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
-const dbPath = process.env.DB_PATH || path.join(__dirname, ...Array(levelsUp).fill('..'), 'atlas.db')
+const dbPath = process.env.DB_PATH || path.join(__dirname, ...Array(levelsUp).fill('..'), 'dc_automation.db')
 
 function createDbWrapper(sqlite: Database.Database): DbWrapper {
   return {
@@ -40,7 +40,7 @@ function createDbWrapper(sqlite: Database.Database): DbWrapper {
 
 const resolvedDb = path.resolve(dbPath)
 // eslint-disable-next-line no-console
-console.log(`[db] atlas.db path: ${resolvedDb}`)
+console.log(`[db] dc_automation.db path: ${resolvedDb}`)
 
 let sqlite: Database.Database
 try {
@@ -64,6 +64,7 @@ See README.md (Tech Stack / troubleshooting).
 }
 sqlite.pragma('journal_mode = WAL')
 sqlite.pragma('synchronous = NORMAL')
+sqlite.pragma('foreign_keys = ON')
 
 const dbWrapper = createDbWrapper(sqlite)
 initSchema(dbWrapper)

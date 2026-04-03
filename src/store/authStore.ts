@@ -1,6 +1,32 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { clearPreferencesCache } from '../lib/preferencesCache'
+import { normalizePermissionArray, roleHasPermission } from '../lib/permissionsCatalog'
+
+interface User {
+  id: string
+  username: string
+  name?: string
+  role: string
+  roles?: string[]
+  /** Effective permission keys from the server (JWT /me). */
+  permissions?: string[]
+}
+
+/** When persisted user has no permissions yet (pre-refresh), match server defaults. */
+function legacyPermissionsForRole(role: string | undefined): string[] {
+  if (role === 'admin') return ['*']
+  if (role === 'viewer') return ['module.home', 'module.testing']
+  return ['module.home', 'module.testing', 'testing.data.write']
+}
+
+function effectivePermissions(user: User | null | undefined): string[] {
+  if (!user) return []
+  if (Array.isArray(user.permissions) && user.permissions.length > 0) {
+    return normalizePermissionArray(user.permissions)
+  }
+  return legacyPermissionsForRole(user.roles?.[0] ?? user.role)
+}
 
 const AUTH_STORAGE_KEY = 'atlas-auth'
 const AUTH_REMEMBER_FLAG_KEY = 'atlas-auth-remember'
@@ -54,26 +80,26 @@ const authStorageBackend = {
   },
 }
 
-interface User {
-  id: string
-  username: string
-  name?: string
-  role: 'admin' | 'user' | 'viewer'
-}
-
 interface AuthState {
   user: User | null
   accessToken: string | null
   refreshToken: string | null
   rememberMe: boolean
   initializing: boolean
+  /** If `rememberMe` is omitted, the previous value is kept (e.g. after refresh — do not drop “remember me”). */
   setAuth: (user: User, accessToken: string, refreshToken: string, rememberMe?: boolean) => void
   setAccessToken: (token: string) => void
   setInitializing: (v: boolean) => void
   logout: () => void
+  /** True if the user has the permission key (or wildcard `*`). */
+  hasPermission: (key: string) => boolean
   isAdmin: () => boolean
-  /** False for viewer; true for admin and user (can add/edit/delete data). */
+  /** Testing module: records & uploads (replaces legacy `data.write`). */
   canEditData: () => boolean
+  /** Locations: zones and location rows (not schema definitions). */
+  canEditLocationsData: () => boolean
+  /** Locations: schemas, components, and schema field definitions. */
+  canEditLocationSchemas: () => boolean
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -84,19 +110,29 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       rememberMe: false,
       initializing: true,
-      setAuth: (user, accessToken, refreshToken, rememberMe = false) =>
-        set({ user, accessToken, refreshToken, rememberMe, initializing: false }),
+      setAuth: (user, accessToken, refreshToken, rememberMe) =>
+        set({
+          user,
+          accessToken,
+          refreshToken,
+          rememberMe: rememberMe !== undefined ? rememberMe : get().rememberMe,
+          initializing: false,
+        }),
       setAccessToken: (accessToken) => set({ accessToken }),
       setInitializing: (initializing) => set({ initializing }),
       logout: () => {
         clearPreferencesCache()
         set({ user: null, accessToken: null, refreshToken: null })
       },
-      isAdmin: () => get().user?.role === 'admin',
-      canEditData: () => {
-        const role = get().user?.role
-        return role === 'admin' || role === 'user'
+      hasPermission: (key: string) => {
+        return roleHasPermission(effectivePermissions(get().user), key)
       },
+      isAdmin: () => roleHasPermission(effectivePermissions(get().user), '*'),
+      canEditData: () => roleHasPermission(effectivePermissions(get().user), 'testing.data.write'),
+      canEditLocationsData: () =>
+        roleHasPermission(effectivePermissions(get().user), 'locations.data.write'),
+      canEditLocationSchemas: () =>
+        roleHasPermission(effectivePermissions(get().user), 'locations.schemas.manage'),
     }),
     {
       name: AUTH_STORAGE_KEY,

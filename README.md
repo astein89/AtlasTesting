@@ -1,6 +1,6 @@
-# Automation Testing
+# DC Automation
 
-Web app for test automation. Define tests with flexible data fields, collect data manually (mobile-friendly), export to CSV, and manage users with admin capabilities.
+Web app for test automation. After sign-in, the **home** page links into **Testing** (test plans, results, fields, admin) and **Locations**. Define tests with flexible data fields, collect data manually (mobile-friendly), export to CSV, and manage users with admin capabilities.
 
 ## Quick Start
 
@@ -25,7 +25,7 @@ npm run dev
 
 See **[Raspberry Pi Install & Setup Guide](docs/RASPBERRY_PI_SETUP.md)** for detailed instructions.
 
-**Upgrading?** See **[Upgrade Instructions](docs/UPGRADE.md)**.
+**Upgrading?** See **[Upgrade Instructions](docs/UPGRADE.md)** and **[Migrating to DC Automation](docs/MIGRATION_DC_AUTOMATION.md)** (breaking changes: URLs, DB filename, PM2 name).
 
 **SQLite backups to Dropbox (cron, rclone)?** See **[Backup setup guide](docs/BACKUP_SETUP.md)**.
 
@@ -37,7 +37,7 @@ Quick steps:
 4. `pm2 start ecosystem.config.cjs`
 5. `pm2 startup` + `pm2 save`
 
-To serve on port 80 at a path (e.g. http://\<pi-ip\>/automation-testing) alongside other apps, set `VITE_BASE_PATH` when building and `BASE_PATH` in PM2, then configure a reverse proxy (nginx or Caddy). See the [Raspberry Pi Setup Guide](docs/RASPBERRY_PI_SETUP.md).
+**URLs:** Testing screens live under `/testing/...`, Locations under `/locations/...`, home at `/`. To serve on **port 80** at a path (e.g. http://\<pi-ip\>/dc-automation) alongside other apps, set `VITE_BASE_PATH` when building and `BASE_PATH` in PM2 if required, then configure a **reverse proxy** (nginx or Caddy). See the [Raspberry Pi Setup Guide](docs/RASPBERRY_PI_SETUP.md).
 
 ## Tech Stack
 
@@ -57,4 +57,4 @@ Avoid `npm install --ignore-scripts` for normal dev; it skips the native build.
 
 ### Troubleshooting: Vite `EBUSY` / `resource busy` (repo in Dropbox)
 
-Dropbox can lock folders under `.vite` while syncing. Exclude `.vite` from sync, move the repo outside Dropbox, or pause syncing while running `npm run dev`.
+Dropbox can lock folders while Vite renames its dependency cache. The dev server stores that cache under your user profile (e.g. `%LOCALAPPDATA%\\dc-automation-vite-cache` on Windows), not inside the repo, to avoid this. If you still see `EBUSY`, exclude the repo’s `.vite` from sync (leftover from older setups), pause Dropbox while running `npm run dev`, or move the repo outside Dropbox.

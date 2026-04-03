@@ -2,11 +2,12 @@ import { Router, type Request } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
 import { toIsoUtcString } from '../lib/timestamps.js'
-import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import { authMiddleware, requirePermission } from '../middleware/auth.js'
 
 const router = Router({ mergeParams: true })
 
 router.use(authMiddleware)
+router.use(requirePermission('module.testing'))
 
 type Params = { planId: string; testId?: string }
 
@@ -210,7 +211,7 @@ router.get('/:testId', (req: Request<Params>, res) => {
   })
 })
 
-router.put('/:testId', requireAdmin, (req: Request<Params>, res) => {
+router.put('/:testId', requirePermission('testing.tests.manage'), (req: Request<Params>, res) => {
   const planId = req.params.planId
   const testId = req.params.testId
   if (typeof testId !== 'string' || !testId.trim()) {
@@ -291,7 +292,7 @@ router.put('/:testId', requireAdmin, (req: Request<Params>, res) => {
   })
 })
 
-router.delete('/:testId', requireAdmin, (req: Request<Params>, res) => {
+router.delete('/:testId', requirePermission('testing.tests.manage'), (req: Request<Params>, res) => {
   const planId = req.params.planId
   const testId = req.params.testId
   const test = db.prepare('SELECT id FROM tests WHERE id = ? AND test_plan_id = ?').get(testId, planId)

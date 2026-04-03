@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
+import { testingPath } from '../lib/appPaths'
 import { formatDateTime } from '../lib/dateTimeConfig'
 import { getBasePath } from '../lib/basePath'
 import {
@@ -112,7 +113,7 @@ export function ResultDetail() {
           {record.planName} – {formatDateTime(record.recordedAt)}
         </h1>
         <Link
-          to="/results"
+          to={testingPath('results')}
           className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
         >
           Back to Results

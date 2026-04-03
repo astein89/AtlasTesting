@@ -13,6 +13,8 @@ import { usersRouter } from './routes/users.js'
 import { preferencesRouter } from './routes/preferences.js'
 import { uploadsRouter } from './routes/uploads.js'
 import { locationsRouter } from './routes/locations.js'
+import { homeRouter } from './routes/home.js'
+import { rolesRouter } from './routes/roles.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -38,8 +40,58 @@ apiRouter.use('/users', usersRouter)
 apiRouter.use('/preferences', preferencesRouter)
 apiRouter.use('/upload', uploadsRouter)
 apiRouter.use('/locations', locationsRouter)
+apiRouter.use('/home', homeRouter)
+apiRouter.use('/roles', rolesRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use(`${prefix}/api`, apiRouter)
+
+/** Old SPA paths (pre–multi-module routing) → /testing/... for bookmarks and external links. */
+function spaLegacyRedirect(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+  let pathname = req.path || req.url?.split('?')[0] || ''
+  if (!pathname.startsWith('/')) pathname = `/${pathname}`
+  const q = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''
+
+  let rel = pathname
+  if (basePath && (pathname === basePath || pathname.startsWith(`${basePath}/`))) {
+    rel = pathname === basePath ? '/' : pathname.slice(basePath.length) || '/'
+    if (!rel.startsWith('/')) rel = `/${rel}`
+  }
+
+  if (
+    rel.startsWith('/api') ||
+    rel.startsWith('/testing') ||
+    rel.startsWith('/locations') ||
+    rel.startsWith('/admin') ||
+    rel === '/' ||
+    rel === '/login'
+  ) {
+    return next()
+  }
+  if (rel.startsWith('/assets/')) return next()
+
+  const targetBase = `${prefix}/testing`.replace(/\/$/, '')
+
+  if (rel === '/tests' || rel.startsWith('/tests/')) {
+    return res.redirect(302, `${targetBase}/test-plans${q}`)
+  }
+  if (rel === '/export' || rel.startsWith('/export/')) {
+    return res.redirect(302, `${targetBase}/test-plans${q}`)
+  }
+
+  if (rel === '/settings' || rel.startsWith('/settings/')) {
+    const adminSettings = `${prefix}/admin/settings`.replace(/\/{2,}/g, '/')
+    return res.redirect(302, `${adminSettings}${q}`)
+  }
+
+  const legacyTesting = /^\/(test-plans|results|fields|users)(\/|$)/.test(rel)
+  if (legacyTesting) {
+    return res.redirect(302, `${targetBase}${rel}${q}`)
+  }
+  next()
+}
+
+app.use(spaLegacyRedirect)
 
 // Debug: log request path for auth (remove after fixing 404)
 app.use((req, res, next) => {
@@ -56,7 +108,7 @@ if (isProd && basePath) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
     let pathname = req.path ?? req.url?.split('?')[0] ?? ''
     if (!pathname.startsWith('/')) pathname = '/' + pathname
-    // req.path may be relative to mount (e.g. /assets/foo when app is under /automation-testing)
+    // req.path may be relative to mount (e.g. /assets/foo when app is under /dc-automation)
     const underBasePath = pathname.startsWith(basePath + '/') || pathname === basePath
     const relativePath = pathname.startsWith('/assets/') || pathname === '/' || pathname === ''
     if (!underBasePath && !relativePath) return next()

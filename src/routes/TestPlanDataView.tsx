@@ -38,6 +38,7 @@ import {
   USER_STATUS_AUTOMATION_LOCK_KEY,
 } from '../utils/planConditionalStatus'
 import { getConditionalFormatStyle } from '../utils/conditionalFormat'
+import { testingPath } from '../lib/appPaths'
 import { formatFieldValue } from '../utils/formatFieldValue'
 import type { FormulaData } from '../utils/formulaEvaluator'
 import { getContrastTextColor } from '../utils/colorContrast'
@@ -281,7 +282,7 @@ export function TestPlanDataView() {
   const [openColumnPicker, setOpenColumnPicker] = useState(false)
   const columnPickerAnchorRef = useRef<HTMLButtonElement | null>(null)
   const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
-  const isAdmin = useAuthStore((s) => s.isAdmin())
+  const canViewRecordHistory = useAuthStore((s) => s.hasPermission('records.history'))
   const canEditData = useAuthStore((s) => s.canEditData())
   const isArchived = currentTest?.archived === true
   const editingAllowed = canEditData && (!testId || (currentTest != null && !currentTest.archived))
@@ -746,7 +747,7 @@ export function TestPlanDataView() {
     setRestoringFromArchive(true)
     try {
       await updateTest(planId, testId, { archived: false })
-      navigate(`/test-plans/${planId}`)
+      navigate(testingPath('test-plans', planId))
     } catch {
       showAlert('Failed to restore test.')
     } finally {
@@ -1231,11 +1232,11 @@ export function TestPlanDataView() {
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/70">
         <div className="flex flex-wrap items-center gap-2">
-          <Link to="/test-plans" className="hover:text-foreground hover:underline">
+          <Link to={testingPath('test-plans')} className="hover:text-foreground hover:underline">
             Test plans
           </Link>
           <span>/</span>
-          <Link to={`/test-plans/${planId}`} className="text-foreground hover:underline">
+          <Link to={testingPath('test-plans', planId)} className="text-foreground hover:underline">
             {plan.name}
           </Link>
           {currentTest && (
@@ -1359,7 +1360,7 @@ export function TestPlanDataView() {
           submitting={submitting}
           formLayoutOrder={plan?.formLayoutOrder}
           plan={plan ?? undefined}
-          isAdmin={isAdmin}
+          isAdmin={canViewRecordHistory}
           readOnly={!editingAllowed || recordModalViewOnly}
           onStartEdit={editingAllowed ? () => setRecordModalViewOnly(false) : undefined}
         />
@@ -1623,7 +1624,7 @@ export function TestPlanDataView() {
             No fields configured. Go to the plan page to edit the plan and add fields, then you can collect data.
           </p>
           <Link
-            to={`/test-plans/${planId}`}
+            to={testingPath('test-plans', planId)}
             className="mt-4 inline-flex min-h-[44px] shrink-0 items-center rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
           >
             ← Back to plan

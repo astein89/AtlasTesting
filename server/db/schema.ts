@@ -189,6 +189,11 @@ export function initSchema(db: DbWrapper) {
   migrateLocationsUniquePerZone(db)
   migrateDropLocationSchemaCodePattern(db)
   migrateTestPlansAndTestsUpdatedAt(db)
+  migrateAppKv(db)
+  migrateRoles(db)
+  migrateRolesReplaceDataWrite(db)
+  migrateUserRoles(db)
+  migrateRolesAddLocationsSchemasManage(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
@@ -578,6 +583,123 @@ function migrateUserPreferences(db: DbWrapper) {
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `)
+  } catch {
+    // Ignore
+  }
+}
+
+/** Key-value store for app-wide config (e.g. home page JSON). */
+function migrateAppKv(db: DbWrapper) {
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS app_kv (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `)
+  } catch {
+    // Ignore
+  }
+}
+
+/** Role definitions: slug matches users.role; permissions is JSON array of strings. */
+function migrateRoles(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS roles (
+        slug TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        permissions TEXT NOT NULL
+      )
+    `)
+    const count = db.prepare('SELECT COUNT(*) as c FROM roles').get() as { c: number }
+    if (count.c > 0) return
+    const seed: Array<[string, string, string]> = [
+      ['admin', 'Administrator', JSON.stringify(['*'])],
+      [
+        'user',
+        'User',
+        JSON.stringify(['module.home', 'module.testing', 'testing.data.write']),
+      ],
+      ['viewer', 'Viewer', JSON.stringify(['module.home', 'module.testing'])],
+    ]
+    const ins = db.prepare('INSERT INTO roles (slug, label, permissions) VALUES (?, ?, ?)')
+    for (const row of seed) {
+      ins.run(...row)
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Replace legacy `data.write` in stored role JSON with `testing.data.write`. */
+function migrateRolesReplaceDataWrite(db: DbWrapper) {
+  try {
+    const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{
+      slug: string
+      permissions: string
+    }>
+    for (const { slug, permissions } of rows) {
+      let arr: unknown
+      try {
+        arr = JSON.parse(permissions)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(arr)) continue
+      const list = arr.filter((x): x is string => typeof x === 'string')
+      if (!list.includes('data.write')) continue
+      const next = list.filter((x) => x !== 'data.write')
+      if (!next.includes('testing.data.write')) next.push('testing.data.write')
+      db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify(next), slug)
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Many-to-many: users can have multiple role slugs; permissions are merged. */
+function migrateUserRoles(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_roles (
+        user_id TEXT NOT NULL,
+        role_slug TEXT NOT NULL,
+        PRIMARY KEY (user_id, role_slug),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `)
+    const users = db.prepare('SELECT id, role FROM users').all() as Array<{ id: string; role: string }>
+    const ins = db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_slug) VALUES (?, ?)')
+    for (const u of users) {
+      if (u.role?.trim()) ins.run(u.id, u.role.trim())
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Grant `locations.schemas.manage` wherever `locations.data.write` was already granted (split permission). */
+function migrateRolesAddLocationsSchemasManage(db: DbWrapper) {
+  try {
+    const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{
+      slug: string
+      permissions: string
+    }>
+    for (const { slug, permissions } of rows) {
+      let arr: unknown
+      try {
+        arr = JSON.parse(permissions)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(arr)) continue
+      const list = arr.filter((x): x is string => typeof x === 'string')
+      if (!list.includes('locations.data.write')) continue
+      if (list.includes('locations.schemas.manage')) continue
+      const next = [...list, 'locations.schemas.manage']
+      db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify(next.sort()), slug)
+    }
   } catch {
     // Ignore
   }

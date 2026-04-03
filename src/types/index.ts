@@ -280,5 +280,8 @@ export interface User {
   id: string
   username: string
   name?: string
-  role: 'admin' | 'user' | 'viewer'
+  /** Primary slug for display / legacy (mirrors server `users.role`). */
+  role: string
+  /** All assigned role slugs; effective permissions are merged. */
+  roles?: string[]
 }

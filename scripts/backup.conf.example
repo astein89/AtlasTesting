@@ -1,18 +1,18 @@
 # Copy to backup.conf next to sqlite-dropbox-backup.sh, or set BACKUP_CONF to this file's path.
 # shellcheck disable=SC2034
 
-# Absolute path to the live SQLite database (must match the running app, e.g. DB_PATH / default atlas.db).
-DB_PATH="/opt/automation-testing/atlas.db"
+# Absolute path to the live SQLite database (must match the running app, e.g. DB_PATH / default dc_automation.db).
+DB_PATH="/opt/dc-automation/dc_automation.db"
 
 # Local staging only: snapshots are uploaded to Dropbox then old local dirs are removed (except policy below).
 STAGING_ROOT="/var/lib/automation-testing-backup"
 
 # rclone remote and folder prefix (no trailing slash). Configure with: rclone config
 # Example: Dropbox app folder or a dedicated backup path.
-RCLONE_REMOTE="dropbox:Backups/automation-testing/sqlite"
+RCLONE_REMOTE="dropbox:Backups/dc-automation/sqlite"
 
 # Filename inside each snapshot directory.
-BACKUP_BASENAME="atlas.db"
+BACKUP_BASENAME="dc_automation.db"
 
 # Remote retention: keep the newest N timestamped snapshots under ${RCLONE_REMOTE}/snapshots/
 KEEP_LAST=24

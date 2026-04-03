@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
-import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
 import {
   normalizeLocationMixedGeneratePartOrNull,
   validateLocationPatternMask,
@@ -30,7 +30,17 @@ function getComponentPatternMask(comp: {
   return t === '' ? null : t
 }
 
-router.use(authMiddleware, requireAdmin)
+router.use(authMiddleware, requirePermission('module.locations'))
+
+/**
+ * Mutations: schema/components/fields → `locations.schemas.manage`; zones & location rows → `locations.data.write`.
+ * GET stays on `module.locations` only (read-only users can list/view).
+ */
+router.use((req: AuthRequest, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
+  const key = req.path.startsWith('/schemas') ? 'locations.schemas.manage' : 'locations.data.write'
+  return requirePermission(key)(req, res, next)
+})
 
 /** Cap for cartesian product size in POST .../locations/generate (memory + insert time). Override with LOCATION_GENERATE_MAX_ROWS (cannot exceed absolute cap). */
 const DEFAULT_MAX_GENERATE_ROWS = 25_000

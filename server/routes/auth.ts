@@ -3,6 +3,11 @@ import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
+import {
+  mergePermissionsForRoleSlugs,
+  primaryRoleSlug,
+} from '../lib/rolePermissions.js'
+import { getRoleSlugsForUserId } from '../lib/userRoles.js'
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
@@ -30,8 +35,11 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' })
   }
 
+  const roleSlugs = getRoleSlugsForUserId(db, user.id)
+  const permissions = mergePermissionsForRoleSlugs(db, roleSlugs)
+  const rolePrimary = primaryRoleSlug(roleSlugs)
   const accessToken = jwt.sign(
-    { sub: user.id, role: user.role },
+    { sub: user.id, role: rolePrimary, roles: roleSlugs, permissions },
     JWT_SECRET,
     { expiresIn: ACCESS_EXPIRY }
   )
@@ -49,7 +57,9 @@ router.post('/login', (req, res) => {
       id: user.id,
       username: user.username,
       name: user.name,
-      role: user.role,
+      role: rolePrimary,
+      roles: roleSlugs,
+      permissions,
     },
   })
 })
@@ -66,16 +76,18 @@ router.post('/refresh', (req, res) => {
       return res.status(401).json({ error: 'Invalid token' })
     }
 
-    const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(payload.sub) as {
-      id: string
-      role: string
-    } | undefined
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(payload.sub) as
+      | { id: string }
+      | undefined
     if (!user) {
       return res.status(401).json({ error: 'User not found' })
     }
 
+    const roleSlugs = getRoleSlugsForUserId(db, user.id)
+    const permissions = mergePermissionsForRoleSlugs(db, roleSlugs)
+    const rolePrimary = primaryRoleSlug(roleSlugs)
     const accessToken = jwt.sign(
-      { sub: user.id, role: user.role },
+      { sub: user.id, role: rolePrimary, roles: roleSlugs, permissions },
       JWT_SECRET,
       { expiresIn: ACCESS_EXPIRY }
     )
@@ -92,11 +104,16 @@ router.get('/me', authMiddleware, (req: AuthRequest, res) => {
   if (!user) {
     return res.status(404).json({ error: 'User not found' })
   }
+  const roleSlugs = getRoleSlugsForUserId(db, user.id)
+  const permissions = mergePermissionsForRoleSlugs(db, roleSlugs)
+  const rolePrimary = primaryRoleSlug(roleSlugs)
   res.json({
     id: user.id,
     username: user.username,
     name: user.name,
-    role: user.role,
+    role: rolePrimary,
+    roles: roleSlugs,
+    permissions,
   })
 })
 

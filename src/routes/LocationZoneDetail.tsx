@@ -313,6 +313,7 @@ function formatGenerateFailureMessage(err: unknown): string {
 
 export function LocationZoneDetail() {
   const { showConfirm } = useAlertConfirm()
+  const canWriteLocations = useAuthStore((s) => s.canEditLocationsData())
   const { zoneId } = useParams<{ zoneId: string }>()
   const [zone, setZone] = useState<Zone | null>(null)
   const [locations, setLocations] = useState<LocationRow[]>([])
@@ -953,8 +954,9 @@ export function LocationZoneDetail() {
 
   const getLocationRowKey = useCallback((l: LocationRow) => l.id, [])
 
-  const tableColumnsWithActions = useMemo(
-    () => [
+  const tableColumnsWithActions = useMemo(() => {
+    if (!canWriteLocations) return locationColumns
+    return [
       ...locationColumns,
       {
         key: 'actions',
@@ -982,9 +984,8 @@ export function LocationZoneDetail() {
           </div>
         ),
       },
-    ],
-    [locationColumns, openEditLocation, handleDeleteLocation, mutationBusy]
-  )
+    ]
+  }, [canWriteLocations, locationColumns, openEditLocation, handleDeleteLocation, mutationBusy])
 
   return (
     <div className="flex h-[calc(100dvh-5rem)] max-h-[calc(100dvh-5rem)] min-h-0 flex-col gap-4">
@@ -1014,7 +1015,7 @@ export function LocationZoneDetail() {
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {zone && (
+            {zone && canWriteLocations && (
               <button
                 type="button"
                 className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card"
@@ -1023,30 +1024,33 @@ export function LocationZoneDetail() {
                 Edit zone
               </button>
             )}
-            <button
-              type="button"
-              className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              onClick={() => {
-                setGenerateFieldValues((prev) => {
-                  const next = { ...prev }
-                  for (const f of schemaFields) {
-                    if (!(f.key in next)) next[f.key] = ''
-                  }
-                  return next
-                })
-                setGenerateError(null)
-                setGenerateFailureReport(null)
-                setGenerateCloseAfterRun(false)
-                setGenerateClearAfterRun(true)
-                setGenerateOpen(true)
-              }}
-              disabled={components.length === 0}
-            >
-              Generate…
-            </button>
+            {canWriteLocations && (
+              <button
+                type="button"
+                className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                onClick={() => {
+                  setGenerateFieldValues((prev) => {
+                    const next = { ...prev }
+                    for (const f of schemaFields) {
+                      if (!(f.key in next)) next[f.key] = ''
+                    }
+                    return next
+                  })
+                  setGenerateError(null)
+                  setGenerateFailureReport(null)
+                  setGenerateCloseAfterRun(false)
+                  setGenerateClearAfterRun(true)
+                  setGenerateOpen(true)
+                }}
+                disabled={components.length === 0}
+              >
+                Generate…
+              </button>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+            {canWriteLocations && (
             <button
               type="button"
               className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
@@ -1060,6 +1064,7 @@ export function LocationZoneDetail() {
             >
               Bulk edit…
             </button>
+            )}
             <button
               type="button"
               className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
@@ -1069,6 +1074,7 @@ export function LocationZoneDetail() {
             >
               Export selected
             </button>
+            {canWriteLocations && (
             <button
               type="button"
               className="rounded border border-red-500/50 bg-background px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10 disabled:opacity-50"
@@ -1078,6 +1084,7 @@ export function LocationZoneDetail() {
             >
               Delete selected
             </button>
+            )}
           <button
             type="button"
             className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
@@ -1104,7 +1111,7 @@ export function LocationZoneDetail() {
             columns={tableColumnsWithActions}
           />
       </div>
-      {bulkLocationsOpen && (
+      {canWriteLocations && bulkLocationsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -1411,7 +1418,7 @@ export function LocationZoneDetail() {
           </div>
         </div>
       )}
-      {editZoneOpen && zone && (
+      {canWriteLocations && editZoneOpen && zone && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -1471,7 +1478,7 @@ export function LocationZoneDetail() {
             </div>
           </div>
         )}
-        {editingLocation && (
+        {canWriteLocations && editingLocation && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -1714,7 +1721,7 @@ export function LocationZoneDetail() {
             </div>
           </div>
         )}
-        {generateOpen && (
+        {canWriteLocations && generateOpen && (
           <div className="fixed inset-0 z-[100] overflow-y-auto overscroll-contain bg-black/50">
             <div className="flex min-h-full items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:p-6">
               <div

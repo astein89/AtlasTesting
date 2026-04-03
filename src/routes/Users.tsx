@@ -1,15 +1,31 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import { PopupSelect } from '../components/ui/PopupSelect'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import type { User } from '../types'
 
-const emptyForm = () => ({ username: '', name: '', password: '', role: 'user' as const })
+type UserForm = { username: string; name: string; password: string; roles: string[] }
+
+const emptyForm = (): UserForm => ({
+  username: '',
+  name: '',
+  password: '',
+  roles: [],
+})
+
+function formatRolesList(u: User): string {
+  if (u.roles && u.roles.length > 0) return u.roles.join(', ')
+  return u.role
+}
 
 export function Users() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
-  const [form, setForm] = useState(emptyForm())
+  const [roleOptions, setRoleOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'admin', label: 'Admin' },
+    { value: 'user', label: 'User' },
+    { value: 'viewer', label: 'Viewer' },
+  ])
+  const [form, setForm] = useState<UserForm>(emptyForm())
   const [userModal, setUserModal] = useState<null | 'new' | string>(null)
   const { showAlert, showConfirm } = useAlertConfirm()
 
@@ -17,6 +33,17 @@ export function Users() {
 
   useEffect(() => {
     load()
+  }, [])
+
+  useEffect(() => {
+    api
+      .get<Array<{ slug: string; label: string }>>('/roles/options')
+      .then((r) =>
+        setRoleOptions(r.data.map((x) => ({ value: x.slug, label: `${x.label} (${x.slug})` })))
+      )
+      .catch(() => {
+        /* keep defaults */
+      })
   }, [])
 
   const load = () => {
@@ -37,7 +64,7 @@ export function Users() {
       username: u.username,
       name: u.name || '',
       password: '',
-      role: u.role,
+      roles: u.roles && u.roles.length > 0 ? [...u.roles] : [u.role],
     })
     setUserModal(u.id)
   }
@@ -47,12 +74,36 @@ export function Users() {
     setForm(emptyForm())
   }
 
+  const toggleRole = (slug: string) => {
+    setForm((f) => {
+      const has = f.roles.includes(slug)
+      if (has && f.roles.length <= 1) return f
+      if (has) return { ...f, roles: f.roles.filter((x) => x !== slug) }
+      return { ...f, roles: [...f.roles, slug] }
+    })
+  }
+
   const handleSave = async () => {
+    if (form.roles.length === 0) {
+      showAlert('Select at least one role.')
+      return
+    }
     try {
       if (isEdit) {
-        await api.put(`/users/${userModal}`, form)
+        const payload: Record<string, unknown> = {
+          username: form.username,
+          name: form.name,
+          roles: form.roles,
+        }
+        if (form.password.trim()) payload.password = form.password
+        await api.put(`/users/${userModal}`, payload)
       } else {
-        await api.post('/users', form)
+        await api.post('/users', {
+          username: form.username,
+          name: form.name,
+          password: form.password,
+          roles: form.roles,
+        })
       }
       load()
       closeUserModal()
@@ -98,7 +149,7 @@ export function Users() {
           >
             <p className="truncate font-medium text-foreground">{u.username}</p>
             <p className="mt-0.5 truncate text-sm text-foreground/70">{u.name || '—'}</p>
-            <p className="mt-0.5 truncate text-sm text-foreground/60">{u.role}</p>
+            <p className="mt-0.5 break-words text-sm text-foreground/60">{formatRolesList(u)}</p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -126,7 +177,7 @@ export function Users() {
             <tr>
               <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Username</th>
               <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Name</th>
-              <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Role</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Roles</th>
               <th className="px-4 py-2 text-right text-sm font-medium text-foreground">Actions</th>
             </tr>
           </thead>
@@ -135,7 +186,7 @@ export function Users() {
               <tr key={u.id} className="bg-background">
                 <td className="px-4 py-2 text-foreground">{u.username}</td>
                 <td className="px-4 py-2 text-foreground">{u.name || '-'}</td>
-                <td className="px-4 py-2 text-foreground">{u.role}</td>
+                <td className="max-w-md px-4 py-2 text-foreground">{formatRolesList(u)}</td>
                 <td className="px-4 py-2 text-right">
                   <button
                     type="button"
@@ -165,6 +216,8 @@ export function Users() {
           form={form}
           setForm={setForm}
           isEdit={isEdit}
+          roleOptions={roleOptions}
+          toggleRole={toggleRole}
           onSave={handleSave}
           onCancel={closeUserModal}
         />
@@ -175,14 +228,25 @@ export function Users() {
 
 interface UserFormModalProps {
   title: string
-  form: { username: string; name: string; password: string; role: string }
-  setForm: React.Dispatch<React.SetStateAction<{ username: string; name: string; password: string; role: string }>>
+  form: UserForm
+  setForm: React.Dispatch<React.SetStateAction<UserForm>>
   isEdit: boolean
+  roleOptions: { value: string; label: string }[]
+  toggleRole: (slug: string) => void
   onSave: () => void
   onCancel: () => void
 }
 
-function UserFormModal({ title, form, setForm, isEdit, onSave, onCancel }: UserFormModalProps) {
+function UserFormModal({
+  title,
+  form,
+  setForm,
+  isEdit,
+  roleOptions,
+  toggleRole,
+  onSave,
+  onCancel,
+}: UserFormModalProps) {
   const [showPassword, setShowPassword] = useState(false)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -266,17 +330,25 @@ function UserFormModal({ title, form, setForm, isEdit, onSave, onCancel }: UserF
             </div>
           </div>
           <div className="sm:col-span-2">
-            <PopupSelect
-              value={form.role}
-              onChange={(v) => setForm((f) => ({ ...f, role: v }))}
-              options={[
-                { value: 'user', label: 'User' },
-                { value: 'viewer', label: 'Viewer' },
-                { value: 'admin', label: 'Admin' },
-              ]}
-              label="Role"
-              placeholder="Role"
-            />
+            <span className="mb-2 block text-sm font-medium text-foreground">Roles</span>
+            <p className="mb-2 text-xs text-foreground/65">
+              Permissions from all selected roles are combined. At least one role is required.
+            </p>
+            <ul className="max-h-48 space-y-2 overflow-y-auto rounded-lg border border-border bg-background p-3">
+              {roleOptions.map((opt) => (
+                <li key={opt.value}>
+                  <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 rounded border-border"
+                      checked={form.roles.includes(opt.value)}
+                      onChange={() => toggleRole(opt.value)}
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
         <div className="mt-6 flex justify-end gap-2">

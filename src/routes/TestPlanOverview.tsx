@@ -6,12 +6,14 @@ import { useAuthStore } from '../store/authStore'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { formatDate, formatDateTime } from '../lib/dateTimeConfig'
+import { testingPath } from '../lib/appPaths'
 import type { Test, TestPlan } from '../types'
 
 export function TestPlanOverview() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
-  const isAdmin = useAuthStore((s) => s.isAdmin())
+  const canManagePlans = useAuthStore((s) => s.hasPermission('testing.plans.manage'))
+  const canManageTests = useAuthStore((s) => s.hasPermission('testing.tests.manage'))
   const { showAlert, showConfirm } = useAlertConfirm()
   const [plan, setPlan] = useState<TestPlan | null>(null)
   const [tests, setTests] = useState<Test[]>([])
@@ -83,7 +85,7 @@ export function TestPlanOverview() {
     api
       .get<TestPlan>(`/test-plans/${planId}`)
       .then((r) => setPlan(r.data))
-      .catch(() => navigate('/test-plans'))
+      .catch(() => navigate(testingPath('test-plans')))
   }
 
   const loadTests = () => {
@@ -238,7 +240,7 @@ export function TestPlanOverview() {
 
   const handleTestRowClick = (t: Test, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
-    navigate(`/test-plans/${planId}/tests/${t.id}/data`)
+    navigate(testingPath('test-plans', planId!, 'tests', t.id, 'data'))
   }
 
   const renderTestsList = (list: Test[], archived: boolean, sortKey: TestSortKey, sortDir: 'asc' | 'desc', onSort: (key: TestSortKey) => void) => (
@@ -271,7 +273,7 @@ export function TestPlanOverview() {
                 {t.recordCount ?? 0}
               </p>
               <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                {isAdmin && (
+                {canManageTests && (
                   <>
                     <button
                       type="button"
@@ -406,7 +408,7 @@ export function TestPlanOverview() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex shrink-0 justify-end gap-2">
-                      {isAdmin && (
+                      {canManageTests && (
                         <>
                           <button
                             type="button"
@@ -457,16 +459,16 @@ export function TestPlanOverview() {
     <div className="w-full min-w-0">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm text-foreground/70">
         <div className="flex flex-wrap items-center gap-2">
-          <Link to="/test-plans" className="hover:text-foreground hover:underline">
+          <Link to={testingPath('test-plans')} className="hover:text-foreground hover:underline">
             Test plans
           </Link>
           <span>/</span>
           <span className="text-foreground">{plan.name}</span>
         </div>
-        {isAdmin && (
+        {canManagePlans && (
           <Link
-            to={`/test-plans/${planId}/edit`}
-            state={{ returnTo: `/test-plans/${planId}` }}
+            to={testingPath('test-plans', planId!, 'edit')}
+            state={{ returnTo: testingPath('test-plans', planId!) }}
             className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background shrink-0"
           >
             Edit plan
@@ -490,7 +492,7 @@ export function TestPlanOverview() {
           >
             Export all plan data
           </button>
-          {isAdmin && (
+          {canManagePlans && (
             <button
               type="button"
               onClick={() => setArchiveModalOpen(true)}
@@ -499,16 +501,18 @@ export function TestPlanOverview() {
               Archive
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setAddTestStart(new Date().toISOString().slice(0, 10))
-              setAddTestOpen(true)
-            }}
-            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
-          >
-            Add new test
-          </button>
+          {canManageTests && (
+            <button
+              type="button"
+              onClick={() => {
+                setAddTestStart(new Date().toISOString().slice(0, 10))
+                setAddTestOpen(true)
+              }}
+              className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
+            >
+              Add new test
+            </button>
+          )}
         </div>
       </div>
 
@@ -750,7 +754,7 @@ export function TestPlanOverview() {
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <Link
-                            to={`/test-plans/${planId}/tests/${t.id}/data`}
+                            to={testingPath('test-plans', planId!, 'tests', t.id, 'data')}
                             onClick={() => setArchiveModalOpen(false)}
                             className="text-sm text-primary hover:underline"
                           >

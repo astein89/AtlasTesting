@@ -3,10 +3,11 @@ import fs from 'fs'
 import multer from 'multer'
 import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
-import { authMiddleware, requireCanEditData, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requireCanEditData, requirePermission, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(authMiddleware)
+router.use(requirePermission('module.testing'))
 
 function sanitizeFilename(name: string): string {
   const base = name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'image'

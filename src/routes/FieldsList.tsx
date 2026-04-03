@@ -5,6 +5,7 @@ import { useSortableHeader } from '../hooks/useSortableHeader'
 import { getFieldsReferencingKey } from '../utils/formulaEvaluator'
 import { anyPlanConditionalStatusRulesTouchField } from '../utils/planConditionalStatus'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { testingPath } from '../lib/appPaths'
 import type { DataField, TestPlan } from '../types'
 
 type SortKey = 'key' | 'label' | 'type' | 'updatedAt'
@@ -87,7 +88,7 @@ export function FieldsList() {
 
   const handleRowClick = (f: DataField, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
-    navigate(`/fields/${f.id}`)
+    navigate(testingPath('fields', f.id))
   }
 
   const plansByFieldId = useMemo(() => {
@@ -166,7 +167,7 @@ export function FieldsList() {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-foreground">Data Fields</h1>
         <Link
-          to="/fields/new"
+          to={testingPath('fields', 'new')}
           className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90"
         >
           Add Field
@@ -226,7 +227,7 @@ export function FieldsList() {
                         })().map((p) => (
                           <div key={p.id} className="min-w-0 truncate" title={p.name}>
                             <Link
-                              to={`/test-plans/${p.id}`}
+                              to={testingPath('test-plans', p.id)}
                               className="block truncate text-primary hover:underline"
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -248,7 +249,7 @@ export function FieldsList() {
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                     <Link
-                      to={`/fields/${f.id}`}
+                      to={testingPath('fields', f.id)}
                       className="min-h-[44px] flex items-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
                     >
                       Edit
@@ -381,7 +382,7 @@ export function FieldsList() {
                         })().map((p) => (
                           <li key={p.id} className="min-w-0 max-w-full overflow-hidden">
                             <Link
-                              to={`/test-plans/${p.id}`}
+                              to={testingPath('test-plans', p.id)}
                               className="block truncate whitespace-nowrap text-primary hover:underline"
                               title={p.name}
                               onClick={(e) => e.stopPropagation()}
@@ -405,7 +406,7 @@ export function FieldsList() {
                   <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-3">
                       <Link
-                        to={`/fields/${f.id}`}
+                        to={testingPath('fields', f.id)}
                         className="text-primary hover:underline"
                       >
                         Edit

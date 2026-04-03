@@ -1,11 +1,17 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
-import { authMiddleware, requireAdmin, requireCanEditData, type AuthRequest } from '../middleware/auth.js'
+import {
+  authMiddleware,
+  requireCanEditData,
+  requirePermission,
+  type AuthRequest,
+} from '../middleware/auth.js'
 
 const router = Router()
 
 router.use(authMiddleware)
+router.use(requirePermission('module.testing'))
 
 function insertRecordHistory(
   recordId: string,
@@ -130,7 +136,7 @@ router.get('/:id', (req: AuthRequest, res) => {
   })
 })
 
-router.get('/:id/history', requireAdmin, (req: AuthRequest, res) => {
+router.get('/:id/history', requirePermission('records.history'), (req: AuthRequest, res) => {
   const { id } = req.params
   const record = db.prepare('SELECT id FROM test_runs WHERE id = ?').get(id)
   if (!record) return res.status(404).json({ error: 'Record not found' })

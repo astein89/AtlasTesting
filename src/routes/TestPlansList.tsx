@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { formatDateTime } from '../lib/dateTimeConfig'
+import { testingPath } from '../lib/appPaths'
 import type { TestPlan } from '../types'
 
 type PlanSortKey = 'name' | 'description' | 'lastEdited' | 'recordCount'
@@ -14,7 +15,7 @@ export function TestPlansList() {
   const [exportPlanId, setExportPlanId] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<PlanSortKey>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-  const isAdmin = useAuthStore((s) => s.isAdmin())
+  const canManagePlans = useAuthStore((s) => s.hasPermission('testing.plans.manage'))
   const navigate = useNavigate()
 
   const sortedPlans = useMemo(() => {
@@ -54,7 +55,7 @@ export function TestPlansList() {
 
   const handleRowClick = (plan: TestPlan, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
-    navigate(`/test-plans/${plan.id}`)
+    navigate(testingPath('test-plans', plan.id))
   }
 
   useEffect(() => {
@@ -66,7 +67,7 @@ export function TestPlansList() {
   }, [])
 
   const handleNewPlan = () => {
-    navigate('/test-plans/new', { state: { returnTo: '/test-plans' } })
+    navigate(testingPath('test-plans', 'new'), { state: { returnTo: testingPath('test-plans') } })
   }
 
   return (
@@ -76,7 +77,7 @@ export function TestPlansList() {
           <h1 className="text-2xl font-semibold text-foreground">Test Plans</h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          {isAdmin && (
+          {canManagePlans && (
             <button
               type="button"
               onClick={handleNewPlan}
@@ -127,10 +128,10 @@ export function TestPlansList() {
                     >
                       Export
                     </button>
-                    {isAdmin && (
+                    {canManagePlans && (
                       <Link
-                        to={`/test-plans/${plan.id}/edit`}
-                        state={{ returnTo: '/test-plans' }}
+                        to={testingPath('test-plans', plan.id, 'edit')}
+                        state={{ returnTo: testingPath('test-plans') }}
                         className="min-h-[44px] flex items-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
                       >
                         Edit
@@ -231,10 +232,10 @@ export function TestPlansList() {
                           >
                             Export
                           </button>
-                          {isAdmin && (
+                          {canManagePlans && (
                             <Link
-                              to={`/test-plans/${plan.id}/edit`}
-                              state={{ returnTo: '/test-plans' }}
+                              to={testingPath('test-plans', plan.id, 'edit')}
+                              state={{ returnTo: testingPath('test-plans') }}
                               className="shrink-0 rounded border border-border px-3 py-1.5 text-sm text-foreground hover:bg-background"
                             >
                               Edit

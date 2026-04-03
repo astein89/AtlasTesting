@@ -1,9 +1,10 @@
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 
 export function AuthGuard({ children }: { children?: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
   const initializing = useAuthStore((s) => s.initializing)
+  const location = useLocation()
 
   if (initializing) {
     return (
@@ -14,7 +15,10 @@ export function AuthGuard({ children }: { children?: React.ReactNode }) {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />
+    const loginReturnTo = `${location.pathname}${location.search}${location.hash}`
+    return (
+      <Navigate to="/" replace state={{ openLoginModal: true, loginReturnTo }} />
+    )
   }
 
   return children ? <>{children}</> : <Outlet />

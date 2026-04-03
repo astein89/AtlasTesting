@@ -1,6 +1,6 @@
 # SQLite → Dropbox backup setup
 
-This guide configures the Bash script [`scripts/sqlite-dropbox-backup.sh`](../scripts/sqlite-dropbox-backup.sh) to back up the app’s SQLite database (`atlas.db` by default) to **Dropbox** using **rclone**, with safe online backups (`sqlite3 .backup`), change detection, retention, and optional alerts.
+This guide configures the Bash script [`scripts/sqlite-dropbox-backup.sh`](../scripts/sqlite-dropbox-backup.sh) to back up the app’s SQLite database (`dc_automation.db` by default) to **Dropbox** using **rclone**, with safe online backups (`sqlite3 .backup`), change detection, retention, and optional alerts.
 
 **Target environment:** Linux (including **Raspberry Pi**). The script is not intended to run under Windows; use the same machine where the app runs in production, or a host that can read the database file over a reliable path.
 
@@ -59,7 +59,7 @@ Configure an MTA (e.g. `msmtp`, Postfix, or your provider’s relay) so `mail` c
 4. Pick a **dedicated folder** for backups (the script uploads under `…/snapshots/` inside that path). Example remote prefix:
 
    ```text
-   dropbox:Backups/automation-testing/sqlite
+   dropbox:Backups/dc-automation/sqlite
    ```
 
    Use **no trailing slash** in config.
@@ -80,9 +80,9 @@ Configure an MTA (e.g. `msmtp`, Postfix, or your provider’s relay) so `mail` c
 
    | Variable | Meaning |
    |----------|--------|
-   | `DB_PATH` | Absolute path to the **live** `atlas.db` (same file the Node app uses; match `DB_PATH` env if you set it in PM2/systemd). |
-   | `STAGING_ROOT` | Local directory for staging, logs, state, and lock (e.g. `/var/lib/automation-testing-backup`). Must be writable by the user that runs the script. |
-   | `RCLONE_REMOTE` | e.g. `dropbox:Backups/automation-testing/sqlite` |
+   | `DB_PATH` | Absolute path to the **live** `dc_automation.db` (same file the Node app uses; match `DB_PATH` env if you set it in PM2/systemd). |
+   | `STAGING_ROOT` | Local directory for staging, logs, state, and lock (e.g. `/var/lib/dc-automation-backup`). Must be writable by the user that runs the script. |
+   | `RCLONE_REMOTE` | e.g. `dropbox:Backups/dc-automation/sqlite` |
 
 3. Adjust retention:
 
@@ -111,8 +111,8 @@ The script loads, in order:
 Example (adjust users/paths):
 
 ```bash
-sudo mkdir -p /var/lib/automation-testing-backup
-sudo chown -R deploy:deploy /var/lib/automation-testing-backup
+sudo mkdir -p /var/lib/dc-automation-backup
+sudo chown -R deploy:deploy /var/lib/dc-automation-backup
 chmod +x /path/to/AutomationTesting/scripts/sqlite-dropbox-backup.sh
 ```
 
@@ -148,7 +148,7 @@ crontab -e
 Example: run every hour on the hour, with an **extra** flock on a system path (optional double lock):
 
 ```cron
-0 * * * * /usr/bin/flock -n /var/run/atlas-backup.lock -c '/path/to/AutomationTesting/scripts/sqlite-dropbox-backup.sh'
+0 * * * * /usr/bin/flock -n /var/run/dc-automation-backup.lock -c '/path/to/AutomationTesting/scripts/sqlite-dropbox-backup.sh'
 ```
 
 If `BACKUP_CONF` is not beside the script, set it inside the cron line:

@@ -1,17 +1,40 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
+import { db } from '../db/index.js'
+import {
+  getPermissionsForRoleSlug,
+  mergePermissionsForRoleSlugs,
+} from '../lib/rolePermissions.js'
+import { normalizePermissionArray, roleHasPermission } from '../lib/permissionsCatalog.js'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'atlas-dev-secret-change-in-production'
 
 export interface JwtPayload {
   sub: string
+  /** Legacy single role; kept for tokens that omit `roles`. */
   role: string
+  /** When present, permissions should reflect the merge of these slugs. */
+  roles?: string[]
+  permissions?: string[]
   iat: number
   exp: number
 }
 
 export interface AuthRequest extends Request {
-  user?: { id: string; role: string }
+  user?: { id: string; role: string; roles: string[]; permissions: string[] }
+}
+
+function resolvePermissions(payload: JwtPayload): string[] {
+  if (Array.isArray(payload.permissions) && payload.permissions.length > 0) {
+    return normalizePermissionArray(payload.permissions)
+  }
+  if (Array.isArray(payload.roles) && payload.roles.length > 0) {
+    return mergePermissionsForRoleSlugs(db, payload.roles)
+  }
+  if (payload.role) {
+    return getPermissionsForRoleSlug(db, payload.role)
+  }
+  return getPermissionsForRoleSlug(db, 'user')
 }
 
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
@@ -24,26 +47,49 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
 
   try {
     const payload = jwt.verify(token, JWT_SECRET) as JwtPayload
-    req.user = { id: payload.sub, role: payload.role }
+    const permissions = resolvePermissions(payload)
+    const roles =
+      Array.isArray(payload.roles) && payload.roles.length > 0
+        ? payload.roles
+        : payload.role
+          ? [payload.role]
+          : []
+    req.user = { id: payload.sub, role: payload.role, roles, permissions }
     next()
   } catch {
     return res.status(401).json({ error: 'Invalid token' })
   }
 }
 
+export function requirePermission(key: string) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!roleHasPermission(req.user.permissions, key)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    next()
+  }
+}
+
+/** Full admin / wildcard (replaces legacy role string check for privileged routes). */
 export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction) {
-  if (!req.user || req.user.role !== 'admin') {
+  if (!req.user) {
+    return res.status(403).json({ error: 'Admin required' })
+  }
+  if (!roleHasPermission(req.user.permissions, '*')) {
     return res.status(403).json({ error: 'Admin required' })
   }
   next()
 }
 
-/** Blocks viewers from mutating data; admin and user can edit. */
+/** Testing module: records & uploads (replaces legacy `data.write`). */
 export function requireCanEditData(req: AuthRequest, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(403).json({ error: 'Unauthorized' })
   }
-  if (req.user.role === 'viewer') {
+  if (!roleHasPermission(req.user.permissions, 'testing.data.write')) {
     return res.status(403).json({ error: 'Viewer cannot edit or add data' })
   }
   next()

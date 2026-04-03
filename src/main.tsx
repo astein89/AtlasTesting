@@ -7,7 +7,7 @@ import './index.css'
 const basePath = import.meta.env.VITE_BASE_PATH ?? ''
 
 if (import.meta.env.DEV) {
-  document.title = 'Automation Testing — dev'
+  document.title = 'DC Automation — dev'
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

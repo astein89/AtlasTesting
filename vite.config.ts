@@ -1,12 +1,26 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { homedir } from 'os'
 
 const base = process.env.VITE_BASE_PATH ? `${process.env.VITE_BASE_PATH.replace(/\/$/, '')}/` : '/'
 
-// Project-local cache (gitignored). A temp-dir cache caused broken loads of optimized deps on
-// Windows (e.g. papaparse.js via @fs/C:/Users/.../AppData/Local/Temp/...).
-const cacheDir = path.resolve(__dirname, '.vite')
+/**
+ * Vite optimized-deps cache **outside the repo** so:
+ * - Dropbox (or similar sync) does not lock `.vite` during rename → `EBUSY` on `deps_temp_*` → `deps`.
+ * - We still avoid arbitrary `os.tmpdir()` subfolders, which broke some optimized deps on Windows
+ *   (e.g. papaparse via @fs/.../Temp/...).
+ */
+function viteCacheDir(): string {
+  if (process.platform === 'win32') {
+    const baseDir = process.env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local')
+    return path.join(baseDir, 'dc-automation-vite-cache')
+  }
+  const baseDir = process.env.XDG_CACHE_HOME || path.join(homedir(), '.cache')
+  return path.join(baseDir, 'dc-automation-vite-cache')
+}
+
+const cacheDir = viteCacheDir()
 
 export default defineConfig({
   appType: 'spa',
@@ -14,7 +28,7 @@ export default defineConfig({
   cacheDir,
   plugins: [
     react(),
-    // Fix favicon and apple-touch-icon paths when served under a base path (e.g. /automation-testing on Pi)
+    // Fix favicon and apple-touch-icon paths when served under a base path (e.g. /dc-automation on Pi)
     {
       name: 'html-favicon-base',
       transformIndexHtml(html) {

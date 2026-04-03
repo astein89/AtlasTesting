@@ -26,7 +26,7 @@ api.interceptors.response.use(
     if (err.response?.status === 401 && !original._retry && !isRefreshRequest) {
       original._retry = true
       const refreshToken = useAuthStore.getState().refreshToken
-      const loginHref = `${basePath}/login`
+      const loginHref = `${basePath}/?login=1`
       if (refreshToken) {
         try {
           const { data } = await axios.post(`${basePath}/api/auth/refresh`, { refreshToken })
@@ -37,10 +37,8 @@ api.interceptors.response.use(
           useAuthStore.getState().logout()
           window.location.href = loginHref
         }
-      } else {
-        useAuthStore.getState().logout()
-        window.location.href = loginHref
       }
+      // No refresh token: typical anonymous session — do not redirect; let callers handle 401 (e.g. preferences on public home).
     }
     return Promise.reject(err)
   }

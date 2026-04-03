@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { testingPath } from '../lib/appPaths'
 
 interface Props {
   children: ReactNode
@@ -38,7 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
             {this.state.error.message}
           </p>
           <Link
-            to={this.props.backTo ?? '/test-plans'}
+            to={this.props.backTo ?? testingPath('test-plans')}
             className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-card"
           >
             {this.props.backLabel ?? 'Back to Test plans'}

@@ -6,6 +6,7 @@ import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { LocationSchemaFieldsEditor } from '../components/locations/LocationSchemaFieldsEditor'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { validateLocationPatternMask } from '../utils/locationPatternMask'
+import { useAuthStore } from '../store/authStore'
 
 interface LocationSchema {
   id: string
@@ -43,6 +44,7 @@ function normalizeComponentRow(c: SchemaComponent): SchemaComponent {
 }
 
 export function LocationSchemaDetail() {
+  const canWrite = useAuthStore((s) => s.canEditLocationSchemas())
   const { showConfirm } = useAlertConfirm()
   const { schemaId } = useParams<{ schemaId: string }>()
   const [schema, setSchema] = useState<LocationSchema | null>(null)
@@ -302,39 +304,45 @@ export function LocationSchemaDetail() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={openEditSchemaModal}
-            className="rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-background disabled:opacity-50"
-            disabled={!schemaId || !schema}
-          >
-            Edit schema
-          </button>
-          <button
-            type="button"
-            onClick={() => setNewComponentOpen(true)}
-            className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            disabled={!schemaId}
-          >
-            New schema item
-          </button>
+          {canWrite && (
+            <>
+              <button
+                type="button"
+                onClick={openEditSchemaModal}
+                className="rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-background disabled:opacity-50"
+                disabled={!schemaId || !schema}
+              >
+                Edit schema
+              </button>
+              <button
+                type="button"
+                onClick={() => setNewComponentOpen(true)}
+                className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                disabled={!schemaId}
+              >
+                New schema item
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
       {reorderError && <p className="text-sm text-red-500">{reorderError}</p>}
 
-      <p className="text-xs text-foreground/65">Drag ⋮⋮ to reorder parts of the location code.</p>
+      <p className="text-xs text-foreground/65">
+        {canWrite ? 'Drag ⋮⋮ to reorder parts of the location code.' : 'View only — reordering and edits require location write access.'}
+      </p>
       <SimpleDataTable
         preferenceKey={`atlas-locations-schema-${schemaId ?? 'unknown'}-components`}
         rows={sortedComponents}
         getRowKey={(c) => c.id}
-        onRowClick={(c) => openEdit(c)}
-        enableRowReorder
+        onRowClick={canWrite ? (c) => openEdit(c) : undefined}
+        enableRowReorder={canWrite}
         disableSort
         disableSearchAndFilters
         onReorder={(orderedIds) => {
-          if (reordering) return
+          if (!canWrite || reordering) return
           void persistOrder(orderedIds)
         }}
         columns={[
@@ -369,7 +377,11 @@ export function LocationSchemaDetail() {
             label: '',
             width: '11rem',
             getValue: () => '',
-            render: (c) => (
+            render: (c) => {
+              if (!canWrite) {
+                return <span className="text-xs text-foreground/50">View only</span>
+              }
+              return (
               <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
                   type="button"
@@ -386,14 +398,15 @@ export function LocationSchemaDetail() {
                   Delete
                 </button>
               </div>
-            ),
+              )
+            },
           },
         ]}
       />
 
       {schemaId && <LocationSchemaFieldsEditor schemaId={schemaId} onError={(msg) => setError(msg)} />}
 
-      {editSchemaOpen && (
+      {canWrite && editSchemaOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -451,7 +464,7 @@ export function LocationSchemaDetail() {
         </div>
       )}
 
-      {newComponentOpen && (
+      {canWrite && newComponentOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -589,7 +602,7 @@ export function LocationSchemaDetail() {
         </div>
       )}
 
-      {editComponentOpen && editComponentId && (
+      {canWrite && editComponentOpen && editComponentId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"

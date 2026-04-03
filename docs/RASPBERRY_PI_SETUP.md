@@ -1,6 +1,8 @@
-# Automation Testing — Raspberry Pi Install & Setup Guide
+# DC Automation — Raspberry Pi Install & Setup Guide
 
-This guide walks you through installing and running Automation Testing on a Raspberry Pi (Raspberry Pi OS).
+This guide walks you through installing and running **DC Automation** on a Raspberry Pi (Raspberry Pi OS).
+
+After login, open **Home** (`/`) to choose **Testing** or **Locations**; the API stays at `/api`.
 
 **Already installed?** See **[Upgrade Instructions](UPGRADE.md)** to update to a newer version.
 
@@ -61,8 +63,8 @@ sudo apt install -y build-essential python3
 
 ```bash
 cd ~
-git clone <your-repo-url> automation-testing
-cd automation-testing
+git clone <your-repo-url> dc-automation
+cd dc-automation
 ```
 
 ### From Another Machine (SCP/rsync)
@@ -70,7 +72,7 @@ cd automation-testing
 On your development machine:
 
 ```bash
-rsync -avz --exclude node_modules --exclude atlas.db ./automation-testing/ pi@<pi-ip>:~/automation-testing/
+rsync -avz --exclude node_modules --exclude dc_automation.db ./dc-automation/ pi@<pi-ip>:~/dc-automation/
 ```
 
 Or use SCP, USB drive, or another transfer method.
@@ -79,19 +81,19 @@ Or use SCP, USB drive, or another transfer method.
 
 ## Step 5: Install Dependencies & Build
 
-If you will serve the app at a path (e.g. under a reverse proxy at `/automation-testing`), set the base path when building: `VITE_BASE_PATH=/automation-testing npm run build` (see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below).
+If you will serve the app at a path (e.g. under a reverse proxy at `/dc-automation`), set the base path when building: `VITE_BASE_PATH=/dc-automation npm run build` (see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below).
 
 ### Option A: Build on the Pi
 
 You need full dependencies (including Vite) to build:
 
 ```bash
-cd ~/automation-testing
+cd ~/dc-automation
 npm install
 npm run build
 ```
 
-For path-based deployment (e.g. at `/automation-testing`), run: `VITE_BASE_PATH=/automation-testing npm run build` instead.
+For path-based deployment (e.g. at `/dc-automation`), run: `VITE_BASE_PATH=/dc-automation npm run build` instead.
 
 ### Option B: Build on Your Dev Machine, Copy to Pi (recommended for low-memory Pi)
 
@@ -102,12 +104,12 @@ npm install
 npm run build
 ```
 
-For path-based deployment, run: `VITE_BASE_PATH=/automation-testing npm run build` instead.
+For path-based deployment, run: `VITE_BASE_PATH=/dc-automation npm run build` instead.
 
 Then copy the project to the Pi (including the `dist` folder). On the Pi:
 
 ```bash
-cd ~/automation-testing
+cd ~/dc-automation
 npm install --omit=dev
 ```
 
@@ -136,10 +138,10 @@ PM2 keeps the app running, restarts it on crash, and can start it on boot.
 
 ## Step 8: Start the Application
 
-When using a base path (e.g. behind a reverse proxy at `/automation-testing`), set `BASE_PATH` in `ecosystem.config.cjs` in the `env` section, e.g. `BASE_PATH: '/automation-testing'`. See [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
+When using a base path (e.g. behind a reverse proxy at `/dc-automation`), set `BASE_PATH` in `ecosystem.config.cjs` in the `env` section, e.g. `BASE_PATH: '/dc-automation'`. See [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
 
 ```bash
-cd ~/automation-testing
+cd ~/dc-automation
 pm2 start ecosystem.config.cjs
 ```
 
@@ -147,7 +149,7 @@ Check status:
 
 ```bash
 pm2 status
-pm2 logs automation-testing
+pm2 logs dc-automation
 ```
 
 ---
@@ -173,7 +175,7 @@ The app will now start automatically after a reboot.
 - **Default:** http://\<raspberry-pi-ip\>:3000
 - **Default login:** `admin` / `admin`
 
-**Port 80 with multiple apps:** To serve on port 80 at a path (e.g. http://\<pi-ip\>/automation-testing) alongside other apps, see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
+**Port 80 with multiple apps:** To serve on port 80 at a path (e.g. http://\<pi-ip\>/dc-automation) alongside other apps, see [Serving on port 80 with a reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) below.
 
 **Change the port** (optional): Edit `ecosystem.config.cjs` and set `PORT` in the `env` section (e.g. 80, 8080). For multiple apps on port 80, use the reverse proxy approach instead.
 
@@ -181,21 +183,21 @@ The app will now start automatically after a reboot.
 
 ## Serving on port 80 with a reverse proxy (multiple apps)
 
-To access the app at **http://\<pi-ip\>/automation-testing** (port 80, no `:3000`) and host other apps the same way, use a reverse proxy on port 80.
+To access the app at **http://\<pi-ip\>/dc-automation** (port 80, no `:3000`) and host other apps the same way, use a reverse proxy on port 80.
 
 ### Recommended: nginx strips the path (no BASE_PATH)
 
-The app runs at the **root** (no `BASE_PATH`). Nginx rewrites `/automation-testing/...` to `/...` before proxying, so the Node app receives `/`, `/assets/...`, `/api/...` and serves them normally.
+The app runs at the **root** (no `BASE_PATH`). Nginx rewrites `/dc-automation/...` to `/...` before proxying, so the Node app receives `/`, `/assets/...`, `/api/...` and serves them normally.
 
-**1. Build with base path** (so the client requests `/automation-testing/...` in the browser):
+**1. Build with base path** (so the client requests `/dc-automation/...` in the browser):
 
 ```bash
-VITE_BASE_PATH=/automation-testing npm run build
+VITE_BASE_PATH=/dc-automation npm run build
 ```
 
 **2. Do not set BASE_PATH** in `ecosystem.config.cjs`. Leave only `NODE_ENV` and `PORT` in the `env` section (comment out or remove `BASE_PATH`).
 
-**3. Configure nginx** to strip `/automation-testing` and proxy:
+**3. Configure nginx** to strip `/dc-automation` and proxy:
 
 ```bash
 sudo apt install nginx
@@ -204,8 +206,8 @@ sudo apt install nginx
 Edit `/etc/nginx/sites-available/default` (or your site config). Use a **rewrite** so the backend sees paths at root:
 
 ```nginx
-location /automation-testing/ {
-    rewrite ^/automation-testing/?(.*)$ /$1 break;
+location /dc-automation/ {
+    rewrite ^/dc-automation/?(.*)$ /$1 break;
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -213,7 +215,7 @@ location /automation-testing/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
-location = /automation-testing {
+location = /dc-automation {
     rewrite ^ / break;
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -226,16 +228,16 @@ location = /automation-testing {
 
 Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`.
 
-**Access:** http://\<pi-ip\>/automation-testing — the app and assets load correctly because nginx sends `/`, `/assets/...`, `/api/...` to Node.
+**Access:** http://\<pi-ip\>/dc-automation — the app and assets load correctly because nginx sends `/`, `/assets/...`, `/api/...` to Node.
 
 **Add more apps:** Add similar `location` blocks for other paths (e.g. `/other-app/`) with rewrite and their own backend port.
 
 ### Alternative: proxy without rewrite (Node uses BASE_PATH)
 
-If you prefer the Node app to handle the full path, set `BASE_PATH: '/automation-testing'` in `ecosystem.config.cjs` and use a simple proxy (no rewrite). This can be fragile depending on how the request path is seen by Node; the nginx-rewrite approach above is more reliable.
+If you prefer the Node app to handle the full path, set `BASE_PATH: '/dc-automation'` in `ecosystem.config.cjs` and use a simple proxy (no rewrite). This can be fragile depending on how the request path is seen by Node; the nginx-rewrite approach above is more reliable.
 
 ```nginx
-location /automation-testing {
+location /dc-automation {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -250,16 +252,16 @@ location /automation-testing {
 With Caddy you can strip the path before proxying so the app sees root paths. Example (strip prefix and proxy):
 
 ```
-handle_path /automation-testing/* {
+handle_path /dc-automation/* {
     reverse_proxy 127.0.0.1:3000
 }
 ```
 
-Reload Caddy. Use the same build and no `BASE_PATH` as in the nginx section. Access at http://\<pi-ip\>/automation-testing.
+Reload Caddy. Use the same build and no `BASE_PATH` as in the nginx section. Access at http://\<pi-ip\>/dc-automation.
 
 ### Landing page at root (links to all apps)
 
-The repo includes a simple landing page at **`landing/index.html`** that you can serve at **http://\<pi-ip\>/** with links to Automation Testing and other apps.
+The repo includes a simple landing page at **`landing/index.html`** that you can serve at **http://\<pi-ip\>/** with links to DC Automation and other apps.
 
 **1. Copy the landing folder to the Pi** (e.g. next to your app or under `/var/www`):
 
@@ -271,7 +273,7 @@ mkdir -p /var/www/landing
 
 Or from your dev machine: `scp -r landing pi@<pi-ip>:/var/www/landing`
 
-**2. Configure nginx** so the default server root serves the landing page, and keep your app under `/automation-testing/`:
+**2. Configure nginx** so the default server root serves the landing page, and keep your app under `/dc-automation/`:
 
 ```nginx
 server {
@@ -286,13 +288,13 @@ server {
         try_files /index.html =404;
     }
 
-    # Redirect /at to /automation-testing/
-    location = /at { return 301 /automation-testing/; }
-    location = /at/ { return 301 /automation-testing/; }
+    # Redirect /at to /dc-automation/
+    location = /at { return 301 /dc-automation/; }
+    location = /at/ { return 301 /dc-automation/; }
 
-    # Automation Testing app
-    location /automation-testing/ {
-        rewrite ^/automation-testing/?(.*)$ /$1 break;
+    # DC Automation app
+    location /dc-automation/ {
+        rewrite ^/dc-automation/?(.*)$ /$1 break;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -314,10 +316,10 @@ Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`. Then **http://\<pi
 | Command | Description |
 |--------|-------------|
 | `pm2 status` | List running apps |
-| `pm2 logs automation-testing` | View logs |
-| `pm2 restart automation-testing` | Restart app |
-| `pm2 stop automation-testing` | Stop app |
-| `pm2 delete automation-testing` | Remove from PM2 |
+| `pm2 logs dc-automation` | View logs |
+| `pm2 restart dc-automation` | Restart app |
+| `pm2 stop dc-automation` | Stop app |
+| `pm2 delete dc-automation` | Remove from PM2 |
 
 ---
 
@@ -326,13 +328,13 @@ Reload nginx: `sudo nginx -t && sudo systemctl reload nginx`. Then **http://\<pi
 The SQLite database is stored at:
 
 ```
-~/automation-testing/atlas.db
+~/dc-automation/dc_automation.db
 ```
 
 Back it up regularly:
 
 ```bash
-cp ~/automation-testing/atlas.db ~/automation-testing/atlas.db.backup
+cp ~/dc-automation/dc_automation.db ~/dc-automation/dc_automation.db.backup
 ```
 
 ---
@@ -343,11 +345,11 @@ cp ~/automation-testing/atlas.db ~/automation-testing/atlas.db.backup
 - [ ] Node.js 18+ installed
 - [ ] Project copied to Pi
 - [ ] `npm install` run (full install if building on Pi)
-- [ ] `npm run build` completed (use `VITE_BASE_PATH=/automation-testing npm run build` if using reverse proxy at a path)
+- [ ] `npm run build` completed (use `VITE_BASE_PATH=/dc-automation npm run build` if using reverse proxy at a path)
 - [ ] PM2 installed globally
 - [ ] `pm2 start ecosystem.config.cjs` run (set `BASE_PATH` in ecosystem if using reverse proxy)
 - [ ] `pm2 startup` and `pm2 save` executed
-- [ ] App accessible at http://\<pi-ip\>:3000 (or http://\<pi-ip\>/automation-testing if using reverse proxy)
+- [ ] App accessible at http://\<pi-ip\>:3000 (or http://\<pi-ip\>/dc-automation if using reverse proxy)
 
 ---
 
@@ -406,7 +408,7 @@ The app listens on `0.0.0.0` by default (all network interfaces). If you changed
 hostname -I
 ```
 
-Use that IP from another device: `http://192.168.1.xxx:3000` (or `http://192.168.1.xxx/automation-testing` if using a reverse proxy).
+Use that IP from another device: `http://192.168.1.xxx:3000` (or `http://192.168.1.xxx/dc-automation` if using a reverse proxy).
 
 **4. Same network**
 
@@ -442,7 +444,7 @@ sudo setcap 'cap_net_bind_service=+ep' $(which node)
 Then set `PORT: 80` in `ecosystem.config.cjs` and restart:
 
 ```bash
-pm2 restart automation-testing
+pm2 restart dc-automation
 ```
 
-For **multiple apps** on port 80 (e.g. http://\<pi-ip\>/automation-testing and http://\<pi-ip\>/other-app), use the [reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) approach instead.
+For **multiple apps** on port 80 (e.g. http://\<pi-ip\>/dc-automation and http://\<pi-ip\>/other-app), use the [reverse proxy](#serving-on-port-80-with-a-reverse-proxy-multiple-apps) approach instead.

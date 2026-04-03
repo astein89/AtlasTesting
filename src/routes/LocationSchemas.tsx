@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { useAuthStore } from '../store/authStore'
 
 interface LocationSchema {
   id: string
@@ -18,6 +19,7 @@ interface ZoneRow {
 }
 
 export function LocationSchemas() {
+  const canWrite = useAuthStore((s) => s.canEditLocationSchemas())
   const { showConfirm, showAlert } = useAlertConfirm()
   const [schemas, setSchemas] = useState<LocationSchema[]>([])
   const [zones, setZones] = useState<ZoneRow[]>([])
@@ -134,13 +136,15 @@ export function LocationSchemas() {
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold text-foreground">Location schemas</h1>
-        <button
-          type="button"
-          onClick={() => setNewSchemaOpen(true)}
-          className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
-        >
-          New schema
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={() => setNewSchemaOpen(true)}
+            className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+          >
+            New schema
+          </button>
+        )}
       </div>
       <p className="text-sm text-foreground/70">
         Define schemas and their components. Zones use these schemas when generating locations.
@@ -162,6 +166,9 @@ export function LocationSchemas() {
             render: (s) => {
               const row = s as LocationSchema
               const deleteBlocked = schemaDeleteBlockedReason(row.id)
+              if (!canWrite) {
+                return <span className="text-xs text-foreground/50">View only</span>
+              }
               return (
               <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
@@ -186,7 +193,7 @@ export function LocationSchemas() {
           },
         ]}
       />
-        {editSchema && (
+        {canWrite && editSchema && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -243,7 +250,7 @@ export function LocationSchemas() {
             </div>
           </div>
         )}
-        {newSchemaOpen && (
+        {canWrite && newSchemaOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"

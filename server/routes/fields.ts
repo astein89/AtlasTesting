@@ -1,11 +1,12 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
-import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 
 router.use(authMiddleware)
+router.use(requirePermission('module.testing'))
 
 function toFieldJson(r: {
   id: string
@@ -92,7 +93,7 @@ router.get('/:id', (req, res) => {
   res.json(toFieldJson(row))
 })
 
-router.post('/', requireAdmin, (req: AuthRequest, res) => {
+router.post('/', requirePermission('fields.manage'), (req: AuthRequest, res) => {
   const { key, label, type, config, ownerTestPlanId } = req.body as {
     key?: string
     label?: string
@@ -135,7 +136,7 @@ router.post('/', requireAdmin, (req: AuthRequest, res) => {
   res.status(201).json(toFieldJson(row))
 })
 
-router.put('/:id', requireAdmin, (req: AuthRequest, res) => {
+router.put('/:id', requirePermission('fields.manage'), (req: AuthRequest, res) => {
   const { key: newKey, label, type, config, ownerTestPlanId } = req.body as {
     key?: string
     label?: string
@@ -275,7 +276,7 @@ router.put('/:id', requireAdmin, (req: AuthRequest, res) => {
   res.json(toFieldJson(row))
 })
 
-router.delete('/:id', requireAdmin, (req, res) => {
+router.delete('/:id', requirePermission('fields.manage'), (req, res) => {
   const result = db.prepare('DELETE FROM fields WHERE id = ?').run(req.params.id)
   if (result.changes === 0) return res.status(404).json({ error: 'Field not found' })
   res.status(204).send()

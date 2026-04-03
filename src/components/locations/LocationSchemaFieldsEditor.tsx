@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { SimpleDataTable } from '../data/SimpleDataTable'
 import type { LocationSchemaField, LocationSchemaFieldConfig, LocationSchemaFieldType } from '../../types/locationSchemaFields'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
+import { useAuthStore } from '../../store/authStore'
 
 const localeCompare = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base' })
@@ -60,6 +61,7 @@ interface LocationSchemaFieldsEditorProps {
 }
 
 export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchemaFieldsEditorProps) {
+  const canWrite = useAuthStore((s) => s.canEditLocationSchemas())
   const { showConfirm } = useAlertConfirm()
   const [fields, setFields] = useState<LocationSchemaField[]>([])
   const [loading, setLoading] = useState(true)
@@ -297,16 +299,20 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
         <div>
           <h2 className="text-xl font-semibold text-foreground">Fields</h2>
           <p className="mt-1 text-sm text-foreground/70">
-            Drag ⋮⋮ to reorder. Order is used in zone forms and tables.
+            {canWrite
+              ? 'Drag ⋮⋮ to reorder. Order is used in zone forms and tables.'
+              : 'View only — editing fields requires location write access.'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
-        >
-          Add field
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+          >
+            Add field
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -316,10 +322,10 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
           preferenceKey={`atlas-locations-schema-${schemaId}-custom-fields`}
           rows={sorted}
           getRowKey={(f) => f.id}
-          onRowClick={(f) => openEdit(f)}
-          enableRowReorder
+          onRowClick={canWrite ? (f) => openEdit(f) : undefined}
+          enableRowReorder={canWrite}
           onReorder={(orderedIds) => {
-            if (reordering) return
+            if (!canWrite || reordering) return
             void persistFieldOrder(orderedIds)
           }}
           disableSort
@@ -338,30 +344,33 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
               label: '',
               width: '11rem',
               getValue: () => '',
-              render: (f) => (
-                <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-                    onClick={() => openEdit(f)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
-                    onClick={() => void handleDelete(f.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ),
+              render: (f) =>
+                canWrite ? (
+                  <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+                      onClick={() => openEdit(f)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
+                      onClick={() => void handleDelete(f.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-xs text-foreground/50">View only</span>
+                ),
             },
           ]}
         />
       )}
 
-      {editorOpen && (
+      {canWrite && editorOpen && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
           role="presentation"

@@ -18,6 +18,7 @@ import {
 } from '../utils/formLayout'
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { testingPath } from '../lib/appPaths'
 import type {
   ConditionalFormatRule,
   ConditionalStatusOptionCondition,
@@ -81,7 +82,7 @@ export function TestPlanEditor() {
   const navState = (location.state as { returnTo?: string; createdInline?: boolean; newFieldId?: string } | null) ?? {}
   const returnTo = navState.returnTo
   const [createdInline] = useState<boolean>(navState.createdInline === true)
-  const isAdmin = useAuthStore((s) => s.isAdmin())
+  const canManagePlans = useAuthStore((s) => s.hasPermission('testing.plans.manage'))
   const isNew = !planId
   const [name, setName] = useState('')
   const [nameError, setNameError] = useState<string | null>(null)
@@ -173,7 +174,7 @@ export function TestPlanEditor() {
           }, 0)
         }
       })
-      .catch(() => navigate('/test-plans'))
+      .catch(() => navigate(testingPath('test-plans')))
       .finally(() => setLoading(false))
   }, [planId, navigate])
 
@@ -333,7 +334,7 @@ export function TestPlanEditor() {
           conditionalStatusRuleOrder:
             Object.keys(conditionalStatusRuleOrder).length > 0 ? conditionalStatusRuleOrder : undefined,
         })
-        navigate(returnTo ?? `/test-plans/${data.id}/edit`, { replace: true })
+        navigate(returnTo ?? testingPath('test-plans', data.id, 'edit'), { replace: true })
       } else {
         await api.put(`/test-plans/${planId}`, {
           name: name.trim(),
@@ -351,7 +352,7 @@ export function TestPlanEditor() {
           conditionalStatusRules,
           conditionalStatusRuleOrder,
         })
-        navigate(returnTo ?? '/test-plans', { replace: true })
+        navigate(returnTo ?? testingPath('test-plans'), { replace: true })
       }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -388,13 +389,13 @@ export function TestPlanEditor() {
                   // Ignore delete errors on cancel; still navigate away
                 }
               }
-              navigate(returnTo ?? '/test-plans')
+              navigate(returnTo ?? testingPath('test-plans'))
             }}
             className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
           >
             Cancel
           </button>
-          {isAdmin && !isNew && (
+          {canManagePlans && !isNew && (
             <button
               type="button"
               onClick={async () => {
@@ -402,7 +403,7 @@ export function TestPlanEditor() {
                 if (!ok) return
                 try {
                   await api.delete(`/test-plans/${planId}`)
-                  navigate(returnTo ?? '/test-plans', { replace: true })
+                  navigate(returnTo ?? testingPath('test-plans'), { replace: true })
                 } catch (e: unknown) {
                   const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
                   showAlert(err || 'Failed to delete plan')
@@ -1098,12 +1099,12 @@ export function TestPlanEditor() {
                           ? conditionalStatusRuleOrder
                           : undefined,
                     })
-                    navigate('/fields/new', {
+                    navigate(testingPath('fields', 'new'), {
                       replace: true,
                       state: {
                         fromPlan: true,
                         ownerTestPlanId: data.id,
-                        returnTo: `/test-plans/${data.id}/edit`,
+                        returnTo: testingPath('test-plans', data.id, 'edit'),
                         createdInline: true,
                       },
                     })
@@ -1114,11 +1115,11 @@ export function TestPlanEditor() {
                     return
                   }
                 }
-                navigate('/fields/new', {
+                navigate(testingPath('fields', 'new'), {
                   state: {
                     fromPlan: true,
                     ownerTestPlanId: planId,
-                    returnTo: `/test-plans/${planId}/edit`,
+                    returnTo: testingPath('test-plans', planId!, 'edit'),
                     createdInline,
                   },
                 })

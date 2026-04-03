@@ -1,27 +1,54 @@
 import { Router } from 'express'
 import { db } from '../db/index.js'
-import { authMiddleware, requireAdmin, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
-const APP_TABLES = ['users', 'fields', 'test_plans', 'test_runs', 'refresh_tokens', 'user_preferences']
 
-router.get('/tables', authMiddleware, requireAdmin, (_, res) => {
-  res.json(APP_TABLES)
+/** All non-internal SQLite tables (keeps admin list in sync with migrations). */
+function listAppTableNames(): string[] {
+  const rows = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+    )
+    .all() as Array<{ name: string }>
+  return rows.map((r) => r.name)
+}
+
+function isAppTable(name: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name = ?`
+    )
+    .get(name) as { ok: number } | undefined
+  return row != null
+}
+
+function quoteSQLiteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`
+}
+
+router.get('/tables', authMiddleware, requirePermission('admin.db'), (_, res) => {
+  try {
+    res.json(listAppTableNames())
+  } catch {
+    res.status(500).json({ error: 'Failed to list tables' })
+  }
 })
 
-router.get('/tables/:name', authMiddleware, requireAdmin, (req: AuthRequest, res) => {
+router.get('/tables/:name', authMiddleware, requirePermission('admin.db'), (req: AuthRequest, res) => {
   const { name } = req.params
-  if (!APP_TABLES.includes(name)) {
-    return res.status(400).json({ error: 'Invalid table name' })
+  if (!isAppTable(name)) {
+    return res.status(400).json({ error: 'Invalid or unknown table name' })
   }
 
   const limit = Math.min(parseInt(req.query.limit as string) || 100, 500)
   const offset = parseInt(req.query.offset as string) || 0
 
   try {
-    const rows = db.prepare(`SELECT * FROM ${name} LIMIT ? OFFSET ?`).all(limit, offset)
+    const q = `SELECT * FROM ${quoteSQLiteIdent(name)} LIMIT ? OFFSET ?`
+    const rows = db.prepare(q).all(limit, offset)
     res.json(rows)
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Failed to fetch table data' })
   }
 })

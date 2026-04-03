@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Control Automation Testing app: start, stop, status, restart, update.
+# Control DC Automation app: start, stop, status, restart, update.
 # Usage: ./scripts/ctl.sh <command> [options]
 # Commands: start | stop | status | restart | update
 # For update: --yes to skip confirmation; --force to run even when already up to date.
@@ -33,18 +33,18 @@ usage() {
 CMD="${1:-}"
 case "$CMD" in
   start)
-    pm2 start automation-testing 2>/dev/null || pm2 start ecosystem.config.cjs
+    pm2 start dc-automation 2>/dev/null || pm2 start ecosystem.config.cjs
     ;;
   stop)
-    pm2 stop automation-testing
+    pm2 stop dc-automation
     ;;
   status)
     pm2 status
     echo ""
-    echo "Logs: pm2 logs automation-testing"
+    echo "Logs: pm2 logs dc-automation"
     ;;
   restart)
-    pm2 restart automation-testing
+    pm2 restart dc-automation
     ;;
   update)
     SKIP_CONFIRM=false

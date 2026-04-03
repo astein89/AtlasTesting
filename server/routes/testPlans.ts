@@ -2,12 +2,13 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../db/index.js'
 import { toIsoUtcString } from '../lib/timestamps.js'
-import { authMiddleware, requireAdmin } from '../middleware/auth.js'
+import { authMiddleware, requirePermission } from '../middleware/auth.js'
 import { testsRouter } from './tests.js'
 
 const router = Router()
 
 router.use(authMiddleware)
+router.use(requirePermission('module.testing'))
 
 router.use('/:planId/tests', testsRouter)
 
@@ -469,7 +470,7 @@ router.get('/:id', (req, res) => {
   })
 })
 
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requirePermission('testing.plans.manage'), (req, res) => {
   const { name, description, constraints, testPlan, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate, hiddenFieldIds, requiredFieldIds } =
     req.body
   if (!name) {
@@ -578,7 +579,7 @@ router.post('/', requireAdmin, (req, res) => {
   })
 })
 
-router.put('/:id', requireAdmin, (req, res) => {
+router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
   const {
     name,
     description,
@@ -868,7 +869,7 @@ router.put('/:id', requireAdmin, (req, res) => {
   })
 })
 
-router.delete('/:id', requireAdmin, (req, res) => {
+router.delete('/:id', requirePermission('testing.plans.manage'), (req, res) => {
   const id = req.params.id
   const existing = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })

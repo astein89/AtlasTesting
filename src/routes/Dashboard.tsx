@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { formatDateTime } from '../lib/dateTimeConfig'
+import { testingPath } from '../lib/appPaths'
 
 interface PlanStats {
   id: string
@@ -45,13 +46,13 @@ export function Dashboard() {
       <h1 className="mb-6 text-2xl font-semibold text-foreground">Dashboard</h1>
       <div className="mb-6 flex gap-4">
         <Link
-          to="/test-plans"
+          to={testingPath('test-plans')}
           className="rounded-lg border border-border bg-card px-4 py-2 text-foreground hover:bg-background"
         >
           View Test Plans
         </Link>
         <Link
-          to="/results"
+          to={testingPath('results')}
           className="rounded-lg border border-border bg-card px-4 py-2 text-foreground hover:bg-background"
         >
           View Results
@@ -71,7 +72,7 @@ export function Dashboard() {
                 {planStats.map((plan) => (
                   <Link
                     key={plan.id}
-                    to={`/test-plans/${plan.id}/data`}
+                    to={testingPath('test-plans', plan.id, 'data')}
                     className="flex items-center justify-between rounded-lg border border-border bg-background p-4 transition-colors hover:bg-card"
                   >
                     <span className="font-medium text-foreground">{plan.name}</span>
@@ -98,7 +99,7 @@ export function Dashboard() {
                 {recentRecords.map((r) => (
                   <li key={r.id} className="flex items-center justify-between">
                     <Link
-                      to={`/results/${r.id}`}
+                      to={testingPath('results', r.id)}
                       className="text-foreground hover:underline"
                     >
                       {r.planName} - {formatDateTime(r.recordedAt)}

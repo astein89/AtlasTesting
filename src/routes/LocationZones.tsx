@@ -6,6 +6,7 @@ import { buildMultiZoneLocationsExportFilename } from '../utils/safeFilename'
 import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { useAuthStore } from '../store/authStore'
 
 interface Zone {
   id: string
@@ -22,6 +23,7 @@ interface LocationSchema {
 }
 
 export function LocationZones() {
+  const canWrite = useAuthStore((s) => s.canEditLocationsData())
   const { showConfirm } = useAlertConfirm()
   const navigate = useNavigate()
   const [zones, setZones] = useState<Zone[]>([])
@@ -170,32 +172,34 @@ export function LocationZones() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={async () => {
-              if (schemas.length === 0) {
-                const go = await showConfirm(
-                  'Every zone is tied to a location schema. Create at least one schema first, then come back here to add a zone.',
-                  {
-                    title: 'Create a schema first',
-                    confirmLabel: 'Go to Schemas',
-                    cancelLabel: 'Cancel',
-                    variant: 'default',
-                  }
-                )
-                if (go) navigate('/locations/schemas')
-                return
-              }
-              setNewZoneName('')
-              setNewZoneDescription('')
-              setNewZoneSchemaId(schemas[0]?.id ?? '')
-              setNewZoneOpen(true)
-            }}
-            title="Add a new zone"
-            className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
-          >
-            New zone
-          </button>
+          {canWrite && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (schemas.length === 0) {
+                  const go = await showConfirm(
+                    'Every zone is tied to a location schema. Create at least one schema first, then come back here to add a zone.',
+                    {
+                      title: 'Create a schema first',
+                      confirmLabel: 'Go to Schemas',
+                      cancelLabel: 'Cancel',
+                      variant: 'default',
+                    }
+                  )
+                  if (go) navigate('/locations/schemas')
+                  return
+                }
+                setNewZoneName('')
+                setNewZoneDescription('')
+                setNewZoneSchemaId(schemas[0]?.id ?? '')
+                setNewZoneOpen(true)
+              }}
+              title="Add a new zone"
+              className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            >
+              New zone
+            </button>
+          )}
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -217,7 +221,7 @@ export function LocationZones() {
           Export all (CSV)
         </button>
       </div>
-      {editZone && (
+      {canWrite && editZone && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -277,7 +281,7 @@ export function LocationZones() {
           </div>
         </div>
       )}
-      {newZoneOpen && (
+      {canWrite && newZoneOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
@@ -382,7 +386,11 @@ export function LocationZones() {
             label: '',
             width: '8rem',
             getValue: () => '',
-            render: (z) => (
+            render: (z) => {
+              if (!canWrite) {
+                return <span className="text-xs text-foreground/50">View only</span>
+              }
+              return (
               <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
                   type="button"
@@ -399,7 +407,8 @@ export function LocationZones() {
                   Delete
                 </button>
               </div>
-            ),
+              )
+            },
           },
         ]}
       />

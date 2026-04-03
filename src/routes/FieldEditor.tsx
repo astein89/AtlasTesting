@@ -14,6 +14,7 @@ import type { ConditionalFormatRule, DataField, FieldType, TestPlan } from '../t
 import { STATUS_OPTIONS } from '../types'
 import { formatDateTime, DATE_TIME_DISPLAY_OPTIONS, getExampleForDateTimeDisplay, type DateTimeDisplayKind } from '../lib/dateTimeConfig'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { testingPath } from '../lib/appPaths'
 import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPresetsContext'
 import { anyPlanConditionalStatusRulesTouchField } from '../utils/planConditionalStatus'
 
@@ -376,15 +377,15 @@ export function FieldEditor() {
           navigate(url.pathname + url.search, {
             replace: true,
             state: {
-              returnTo: navState.returnTo.startsWith('/test-plans')
-                ? '/test-plans'
+              returnTo: navState.returnTo.startsWith(testingPath('test-plans'))
+                ? testingPath('test-plans')
                 : undefined,
               createdInline: !!navState.createdInlinePlanId,
               newFieldId: created.id,
             },
           })
         } else {
-          navigate('/fields')
+          navigate(testingPath('fields'))
         }
       } else {
         await api.put(`/fields/${id}`, {
@@ -395,7 +396,7 @@ export function FieldEditor() {
         if (navState.fromPlan && navState.returnTo) {
           navigate(navState.returnTo, { replace: true })
         } else {
-          navigate('/fields')
+          navigate(testingPath('fields'))
         }
       }
     } catch (e: unknown) {
@@ -573,7 +574,7 @@ export function FieldEditor() {
             setCfRules([])
           }
         })
-        .catch(() => navigate('/fields'))
+        .catch(() => navigate(testingPath('fields')))
     }
   }, [id, isNew, setValue, navigate])
 
@@ -853,7 +854,7 @@ export function FieldEditor() {
           <div>
             <label className="block text-sm font-medium text-foreground">Display as</label>
             <p className="mt-1 mb-1 text-xs text-foreground/60">
-              How this date/time field is shown in tables and cards. Date and time uses your Settings format.
+              How this date/time field is shown in tables and cards. Date and time uses the format from Administration → Settings.
             </p>
             <PopupSelect
               label=""
@@ -1821,7 +1822,7 @@ export function FieldEditor() {
                     Excel-style rules: the <strong>first</strong> matching rule wins. Click the <strong>background
                     swatch</strong> for fill (<strong>No fill</strong> first in quick picks) or the <strong>text swatch</strong>{' '}
                     (<strong>Aa</strong> = default text; first quick pick). Swatch colors are set under{' '}
-                    <strong>Settings → Conditional formatting</strong>. Optional <strong>Bold</strong>. Put the most specific
+                    <strong>Administration → Settings → Conditional formatting</strong>. Optional <strong>Bold</strong>. Put the most specific
                     rule first; use <strong>Move up</strong> to reorder.
                   </p>
                   <p>
@@ -2305,7 +2306,7 @@ export function FieldEditor() {
               if (navState.fromPlan && navState.returnTo) {
                 navigate(navState.returnTo, { replace: true })
               } else {
-                navigate('/fields')
+                navigate(testingPath('fields'))
               }
             }}
             className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
@@ -2349,17 +2350,17 @@ export function FieldEditor() {
                 if (!ok) return
                 try {
                   await api.delete(`/fields/${id}`)
-                  navigate('/fields', { replace: true })
+                  navigate(testingPath('fields'), { replace: true })
                 } catch (e: unknown) {
                   const errObj = e as { response?: { status?: number; data?: { error?: string } } }
                   // If the field is already gone (404), treat as success and just go back to list.
                   if (errObj.response?.status === 404) {
-                    navigate('/fields', { replace: true })
+                    navigate(testingPath('fields'), { replace: true })
                     return
                   }
                   const err = errObj.response?.data?.error
                   showAlert(err || 'Failed to delete field')
-                  navigate('/fields', { replace: true })
+                  navigate(testingPath('fields'), { replace: true })
                 }
               }}
               className="rounded-lg border border-red-500/50 px-4 py-2 text-red-500 hover:bg-red-500/10"
