@@ -1,6 +1,3 @@
-/// <reference path="../sqljs.d.ts" />
-type SqlDb = import('sql.js').Database
-
 /** Prepared statement handle (better-sqlite3 style) used by schema migrations. */
 export interface PreparedStatement {
   run(...params: unknown[]): { changes: number }
@@ -8,21 +5,22 @@ export interface PreparedStatement {
   all(...params: unknown[]): Record<string, unknown>[]
 }
 
-/** DB wrapper used by schema (prepare/run/exec/execQuery). */
+/** DB wrapper used by schema (prepare/run/exec). */
 export interface DbWrapper {
   prepare(sql: string): PreparedStatement
   run(sql: string, params?: unknown[] | unknown): void
   exec(sql: string): void
-  execQuery(sql: string): import('sql.js').QueryExecResult[]
+}
+
+/** PRAGMA table_info column names. `table` must be a trusted identifier (migration-only). */
+function tableColumnNames(db: DbWrapper, table: string): string[] {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  return rows.map((r) => r.name)
 }
 
 function migrateEmailToUsername(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(users)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasEmail = rows.some((r) => r[1] === 'email')
-    if (!hasEmail) return
+    if (!tableColumnNames(db, 'users').includes('email')) return
     db.run(`ALTER TABLE users RENAME COLUMN email TO username`)
   } catch {
     // Ignore migration errors (e.g. column already renamed)
@@ -31,11 +29,7 @@ function migrateEmailToUsername(db: DbWrapper) {
 
 function migrateFieldsOwnerTestPlanId(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(fields)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasOwner = rows.some((r) => r[1] === 'owner_test_plan_id')
-    if (hasOwner) return
+    if (tableColumnNames(db, 'fields').includes('owner_test_plan_id')) return
     db.run('ALTER TABLE fields ADD COLUMN owner_test_plan_id TEXT')
   } catch {
     // Ignore migration errors (older DBs may not support ALTER in some environments)
@@ -227,11 +221,7 @@ function migrateRecordHistory(db: DbWrapper) {
 
 function migrateLocationSchemaComponentPatternMask(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(location_schema_components)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'pattern_mask')
-    if (has) return
+    if (tableColumnNames(db, 'location_schema_components').includes('pattern_mask')) return
     db.run('ALTER TABLE location_schema_components ADD COLUMN pattern_mask TEXT')
   } catch {
     // Ignore
@@ -248,10 +238,7 @@ function migrateLocationSchemaComponentMixToMixed(db: DbWrapper) {
 
 function migrateLocationsCodeToLocationColumn(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(locations)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const colNames = rows.map((r) => r[1] as string)
+    const colNames = tableColumnNames(db, 'locations')
     if (colNames.includes('location')) return
     if (!colNames.includes('code')) return
     db.run('ALTER TABLE locations RENAME COLUMN code TO location')
@@ -294,11 +281,7 @@ function migrateLocationsUniquePerZone(db: DbWrapper) {
 
 function migrateDropLocationSchemaCodePattern(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(location_schemas)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasCodePattern = rows.some((r) => r[1] === 'code_pattern')
-    if (!hasCodePattern) return
+    if (!tableColumnNames(db, 'location_schemas').includes('code_pattern')) return
     db.run('ALTER TABLE location_schemas DROP COLUMN code_pattern')
   } catch {
     // Ignore (e.g. SQLite < 3.35 without DROP COLUMN — column remains unused)
@@ -326,11 +309,7 @@ function migrateLocationSchemaFieldsAndFieldValues(db: DbWrapper) {
     // Ignore
   }
   try {
-    const info = db.execQuery('PRAGMA table_info(locations)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasFv = rows.some((r) => r[1] === 'field_values')
-    if (hasFv) return
+    if (tableColumnNames(db, 'locations').includes('field_values')) return
     db.run('ALTER TABLE locations ADD COLUMN field_values TEXT')
   } catch {
     // Ignore
@@ -375,11 +354,7 @@ function migrateRecordsToPlanDirect(db: DbWrapper) {
 
 function migratePlanConstraints(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasConstraints = rows.some((r) => r[1] === 'constraints')
-    if (hasConstraints) return
+    if (tableColumnNames(db, 'test_plans').includes('constraints')) return
     db.run('ALTER TABLE test_plans ADD COLUMN constraints TEXT')
   } catch {
     // Ignore
@@ -388,11 +363,7 @@ function migratePlanConstraints(db: DbWrapper) {
 
 function migratePlanShortDescription(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasShortDesc = rows.some((r) => r[1] === 'short_description')
-    if (hasShortDesc) return
+    if (tableColumnNames(db, 'test_plans').includes('short_description')) return
     db.run('ALTER TABLE test_plans ADD COLUMN short_description TEXT')
   } catch {
     // Ignore
@@ -401,11 +372,7 @@ function migratePlanShortDescription(db: DbWrapper) {
 
 function migratePlanFieldLayout(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasFieldLayout = rows.some((r) => r[1] === 'field_layout')
-    if (hasFieldLayout) return
+    if (tableColumnNames(db, 'test_plans').includes('field_layout')) return
     db.run('ALTER TABLE test_plans ADD COLUMN field_layout TEXT')
   } catch {
     // Ignore
@@ -414,11 +381,7 @@ function migratePlanFieldLayout(db: DbWrapper) {
 
 function migratePlanFormLayout(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasFormLayout = rows.some((r) => r[1] === 'form_layout')
-    if (hasFormLayout) return
+    if (tableColumnNames(db, 'test_plans').includes('form_layout')) return
     db.run('ALTER TABLE test_plans ADD COLUMN form_layout TEXT')
   } catch {
     // Ignore
@@ -427,11 +390,7 @@ function migratePlanFormLayout(db: DbWrapper) {
 
 function migratePlanDefaultSortOrder(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'default_sort_order')
-    if (has) return
+    if (tableColumnNames(db, 'test_plans').includes('default_sort_order')) return
     db.run('ALTER TABLE test_plans ADD COLUMN default_sort_order TEXT')
   } catch {
     // Ignore
@@ -440,11 +399,7 @@ function migratePlanDefaultSortOrder(db: DbWrapper) {
 
 function migratePlanDefaultVisibleColumns(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'default_visible_columns')
-    if (has) return
+    if (tableColumnNames(db, 'test_plans').includes('default_visible_columns')) return
     db.run('ALTER TABLE test_plans ADD COLUMN default_visible_columns TEXT')
   } catch {
     // Ignore
@@ -453,11 +408,7 @@ function migratePlanDefaultVisibleColumns(db: DbWrapper) {
 
 function migratePlanFieldDefaults(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'field_defaults')
-    if (has) return
+    if (tableColumnNames(db, 'test_plans').includes('field_defaults')) return
     db.run('ALTER TABLE test_plans ADD COLUMN field_defaults TEXT')
   } catch {
     // Ignore
@@ -466,11 +417,7 @@ function migratePlanFieldDefaults(db: DbWrapper) {
 
 function migratePlanKeyField(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'key_field')
-    if (has) return
+    if (tableColumnNames(db, 'test_plans').includes('key_field')) return
     db.run('ALTER TABLE test_plans ADD COLUMN key_field TEXT')
   } catch {
     // Ignore
@@ -479,11 +426,7 @@ function migratePlanKeyField(db: DbWrapper) {
 
 function migratePlanHiddenFieldIds(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'hidden_field_ids')
-    if (has) return
+    if (tableColumnNames(db, 'test_plans').includes('hidden_field_ids')) return
     db.run('ALTER TABLE test_plans ADD COLUMN hidden_field_ids TEXT')
   } catch {
     // Ignore
@@ -492,11 +435,7 @@ function migratePlanHiddenFieldIds(db: DbWrapper) {
 
 function migratePlanRequiredFieldIds(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const has = rows.some((r) => r[1] === 'required_field_ids')
-    if (has) return
+    if (tableColumnNames(db, 'test_plans').includes('required_field_ids')) return
     db.run('ALTER TABLE test_plans ADD COLUMN required_field_ids TEXT')
   } catch {
     // Ignore
@@ -505,10 +444,7 @@ function migratePlanRequiredFieldIds(db: DbWrapper) {
 
 function migratePlanStartEndDate(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const cols = rows.map((r) => r[1] as string)
+    const cols = tableColumnNames(db, 'test_plans')
     if (!cols.includes('start_date')) {
       db.run('ALTER TABLE test_plans ADD COLUMN start_date TEXT')
     }
@@ -522,10 +458,7 @@ function migratePlanStartEndDate(db: DbWrapper) {
 
 function migratePlanArchivedRuns(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const cols = rows.map((r) => r[1] as string)
+    const cols = tableColumnNames(db, 'test_plans')
     if (!cols.includes('archived_runs')) {
       db.run('ALTER TABLE test_plans ADD COLUMN archived_runs TEXT')
     }
@@ -536,10 +469,7 @@ function migratePlanArchivedRuns(db: DbWrapper) {
 
 function migratePlanConditionalStatusRules(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const cols = rows.map((r) => r[1] as string)
+    const cols = tableColumnNames(db, 'test_plans')
     if (!cols.includes('conditional_status_rules')) {
       db.run('ALTER TABLE test_plans ADD COLUMN conditional_status_rules TEXT')
     }
@@ -550,10 +480,7 @@ function migratePlanConditionalStatusRules(db: DbWrapper) {
 
 function migratePlanConditionalStatusRuleOrder(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_plans)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const cols = rows.map((r) => r[1] as string)
+    const cols = tableColumnNames(db, 'test_plans')
     if (!cols.includes('conditional_status_rule_order')) {
       db.run('ALTER TABLE test_plans ADD COLUMN conditional_status_rule_order TEXT')
     }
@@ -564,10 +491,7 @@ function migratePlanConditionalStatusRuleOrder(db: DbWrapper) {
 
 function migrateTestRunsRunId(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(test_runs)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const cols = rows.map((r) => r[1] as string)
+    const cols = tableColumnNames(db, 'test_runs')
     if (!cols.includes('run_id')) {
       db.run('ALTER TABLE test_runs ADD COLUMN run_id TEXT')
     }
@@ -661,10 +585,7 @@ function migrateUserPreferences(db: DbWrapper) {
 
 function migrateFieldsAudit(db: DbWrapper) {
   try {
-    const info = db.execQuery('PRAGMA table_info(fields)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const cols = rows.map((r) => r[1] as string)
+    const cols = tableColumnNames(db, 'fields')
     if (!cols.includes('updated_at')) {
       db.run('ALTER TABLE fields ADD COLUMN updated_at TEXT')
     }
@@ -697,11 +618,7 @@ function migrateTestPlansAndTestsUpdatedAt(db: DbWrapper) {
 function migrateTestsToPlans(db: DbWrapper) {
   try {
     db.run('CREATE TABLE IF NOT EXISTS test_plans (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT DEFAULT (datetime(\'now\')))')
-    const info = db.execQuery('PRAGMA table_info(tests)')
-    if (!info.length || !info[0].values) return
-    const rows = info[0].values as unknown[][]
-    const hasPlanId = rows.some((r) => r[1] === 'test_plan_id')
-    if (hasPlanId) return
+    if (tableColumnNames(db, 'tests').includes('test_plan_id')) return
     const planId = 'default-plan'
     db.run('INSERT OR IGNORE INTO test_plans (id, name, description) VALUES (?, ?, ?)', [
       planId,

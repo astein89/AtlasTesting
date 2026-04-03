@@ -12,6 +12,6 @@
     "declaration": true,
     "declarationMap": true
   },
-  "include": ["./**/*.ts", "./sqljs.d.ts"],
+  "include": ["./**/*.ts"],
   "exclude": ["node_modules"]
 }

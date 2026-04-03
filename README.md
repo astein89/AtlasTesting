@@ -27,6 +27,8 @@ See **[Raspberry Pi Install & Setup Guide](docs/RASPBERRY_PI_SETUP.md)** for det
 
 **Upgrading?** See **[Upgrade Instructions](docs/UPGRADE.md)**.
 
+**SQLite backups to Dropbox (cron, rclone)?** See **[Backup setup guide](docs/BACKUP_SETUP.md)**.
+
 Quick steps:
 
 1. Install Node.js 18+ and PM2
@@ -40,5 +42,19 @@ To serve on port 80 at a path (e.g. http://\<pi-ip\>/automation-testing) alongsi
 ## Tech Stack
 
 - React 18 + Vite + Tailwind CSS
-- Express + SQLite (sql.js)
+- Express + SQLite ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3))
 - JWT auth, Zustand, react-hook-form, zod
+
+**Native module:** `better-sqlite3` ships prebuilt binaries for some Node + OS pairs; otherwise it compiles with `node-gyp`.
+
+### Troubleshooting: `Could not locate the bindings file` (Windows)
+
+1. **Prefer Node 20 LTS** (prebuilds are more likely than on Node 22/24). With [nvm-windows](https://github.com/coreybutler/nvm-windows) or similar: `nvm install 20`, `nvm use 20`, then delete `node_modules/better-sqlite3` and run `npm install` again (or `npm rebuild better-sqlite3`).
+2. **Or compile locally:** install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload, then run `npm rebuild better-sqlite3`.
+3. **Or** use **WSL2** or develop on the Pi/Linux where `build-essential` is enough.
+
+Avoid `npm install --ignore-scripts` for normal dev; it skips the native build.
+
+### Troubleshooting: Vite `EBUSY` / `resource busy` (repo in Dropbox)
+
+Dropbox can lock folders under `.vite` while syncing. Exclude `.vite` from sync, move the repo outside Dropbox, or pause syncing while running `npm run dev`.

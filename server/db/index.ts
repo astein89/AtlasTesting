@@ -1,101 +1,71 @@
-/// <reference path="../sqljs.d.ts" />
-import initSqlJs from 'sql.js'
+import Database from 'better-sqlite3'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import fs from 'fs'
 import { initSchema, type DbWrapper } from './schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-// Dev (tsx): __dirname is server/db -> 2 levels up to project root
-// Prod: __dirname is dist/server/db -> 3 levels up to project root
 const levelsUp = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
 const dbPath = process.env.DB_PATH || path.join(__dirname, ...Array(levelsUp).fill('..'), 'atlas.db')
 
-let sqlDb: import('sql.js').Database
-
-function save() {
-  const data = sqlDb.export()
-  const buffer = Buffer.from(data)
-  fs.writeFileSync(dbPath, buffer)
-}
-
-// Wrapper to mimic better-sqlite3 API (used by schema migrations and routes)
-function createDbWrapper() {
+function createDbWrapper(sqlite: Database.Database): DbWrapper {
   return {
     prepare(sql: string) {
+      const stmt = sqlite.prepare(sql)
       return {
-        run: (...params: unknown[]) => {
-          try {
-            const stmt = sqlDb.prepare(sql)
-            if (params.length > 0) {
-              stmt.bind(params as (string | number | null)[])
-            }
-            stmt.step()
-            stmt.free()
-            // Read before save(): export in save() can leave getRowsModified() as 0 in sql.js.
-            const changes = sqlDb.getRowsModified()
-            save()
-            return { changes }
-          } catch (e) {
-            throw e
-          }
+        run(...params: unknown[]) {
+          const r = stmt.run(...(params as []))
+          return { changes: r.changes }
         },
-        get: (...params: unknown[]) => {
-          const stmt = sqlDb.prepare(sql)
-          if (params.length > 0) stmt.bind(params as (string | number | null)[])
-          const row = stmt.step() ? stmt.getAsObject() : undefined
-          stmt.free()
-          return row
+        get(...params: unknown[]) {
+          return stmt.get(...(params as [])) as Record<string, string | number | null> | undefined
         },
-        all: (...params: unknown[]) => {
-          const stmt = sqlDb.prepare(sql)
-          if (params.length > 0) stmt.bind(params as (string | number | null)[])
-          const rows: Record<string, unknown>[] = []
-          while (stmt.step()) rows.push(stmt.getAsObject())
-          stmt.free()
-          return rows
+        all(...params: unknown[]) {
+          return stmt.all(...(params as [])) as Record<string, unknown>[]
         },
       }
     },
     run(sql: string, params?: unknown[] | unknown) {
       const list = Array.isArray(params) ? params : params !== undefined ? [params] : []
       if (list.length > 0) {
-        const stmt = sqlDb.prepare(sql)
-        stmt.bind(list as (string | number | null)[])
-        stmt.step()
-        stmt.free()
+        sqlite.prepare(sql).run(...(list as []))
       } else {
-        sqlDb.run(sql)
+        sqlite.prepare(sql).run()
       }
-      save()
     },
     exec(sql: string) {
-      sqlDb.run(sql)
-      save()
-    },
-    /** Used by schema migrations (PRAGMA, etc.). Must not call save() — read-only. */
-    execQuery(sql: string): import('sql.js').QueryExecResult[] {
-      const out = sqlDb.exec(sql)
-      return out ?? []
+      sqlite.exec(sql)
     },
   }
 }
 
-async function init() {
-  const SQL = await initSqlJs()
-  const resolvedDb = path.resolve(dbPath)
-  // eslint-disable-next-line no-console
-  console.log(`[db] atlas.db path: ${resolvedDb}`)
-  if (fs.existsSync(dbPath)) {
-    const buf = fs.readFileSync(dbPath)
-    sqlDb = new SQL.Database(buf)
-  } else {
-    sqlDb = new SQL.Database()
-  }
-  const dbWrapper = createDbWrapper()
-  initSchema(dbWrapper as Parameters<typeof initSchema>[0])
-  save()
-  return dbWrapper
-}
+const resolvedDb = path.resolve(dbPath)
+// eslint-disable-next-line no-console
+console.log(`[db] atlas.db path: ${resolvedDb}`)
 
-export const db = await init()
+let sqlite: Database.Database
+try {
+  sqlite = new Database(resolvedDb)
+} catch (e) {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (msg.includes('bindings') || msg.includes('better_sqlite3.node')) {
+    // eslint-disable-next-line no-console
+    console.error(`
+[better-sqlite3] Native addon failed to load (missing .node binary).
+
+On Windows this often happens when:
+  • Node has no prebuilt binary (e.g. Node 22+): use Node 20 LTS, then run: npm rebuild better-sqlite3
+  • Install never compiled: install "Desktop development with C++" (Visual Studio Build Tools), then: npm rebuild better-sqlite3
+  • Or develop with WSL2 / Linux / Raspberry Pi where build tools are normal.
+
+See README.md (Tech Stack / troubleshooting).
+`)
+  }
+  throw e
+}
+sqlite.pragma('journal_mode = WAL')
+sqlite.pragma('synchronous = NORMAL')
+
+const dbWrapper = createDbWrapper(sqlite)
+initSchema(dbWrapper)
+
+export const db = dbWrapper

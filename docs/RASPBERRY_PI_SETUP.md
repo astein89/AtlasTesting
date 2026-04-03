@@ -47,7 +47,7 @@ node -v
 
 ## Step 3: Install Build Tools (if needed)
 
-Required for native modules (e.g. `better-sqlite3` if you switch from sql.js):
+Required to compile **better-sqlite3** (native SQLite bindings):
 
 ```bash
 sudo apt install -y build-essential python3

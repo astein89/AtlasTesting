@@ -1613,8 +1613,7 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
           JSON.stringify(r),
           optionalFieldValuesJson
         )
-        // Do not use sql.js getRowsModified() for success: the db wrapper calls save() before
-        // reading changes and may report 0 even when the INSERT succeeded.
+        // Count successful inserts explicitly (avoid relying on statement side effects alone).
         created++
         insertedThisBatch.add(locationValue)
       } catch (e: unknown) {
