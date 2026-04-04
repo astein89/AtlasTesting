@@ -32,18 +32,7 @@ export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSideba
         >
           Home
         </NavLink>
-        <NavLink
-          to={adminPath()}
-          end
-          onClick={onClose}
-          className={({ isActive }) =>
-            `${baseLink} ${
-              isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'
-            }`
-          }
-        >
-          Admin home
-        </NavLink>
+        <div className="my-2 border-t border-border" aria-hidden />
         {hasPermission('roles.manage') && (
           <NavLink
             to={adminPath('roles')}

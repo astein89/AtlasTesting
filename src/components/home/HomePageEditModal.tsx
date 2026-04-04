@@ -19,9 +19,37 @@ import { CSS } from '@dnd-kit/utilities'
 import { api } from '@/api/client'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { HomeCustomLinkEditModal } from '@/components/home/HomeCustomLinkEditModal'
+import { getBasePath } from '@/lib/basePath'
+import { faviconUrlForHref } from '@/lib/linkFavicon'
 import type { HomeCustomLink, HomePageConfig } from '@/types/homePage'
 
 type LinkDialogState = null | 'add' | { edit: number }
+
+function LinkRowFavicon({ href }: { href: string }) {
+  const h = href.trim()
+  if (h.startsWith('mailto:')) {
+    return (
+      <span
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border/60 bg-background text-[11px] text-foreground/40"
+        title="Email"
+      >
+        @
+      </span>
+    )
+  }
+  const ext = faviconUrlForHref(h)
+  const src = ext ?? `${getBasePath()}/icon.png`
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-8 w-8 shrink-0 rounded border border-border object-contain"
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+    />
+  )
+}
 
 interface HomePageEditModalProps {
   initial: HomePageConfig
@@ -61,7 +89,10 @@ function SortableLinkRow({
           </svg>
         </button>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">{link.title || '—'}</div>
+          <div className="flex min-w-0 items-center gap-2">
+            <LinkRowFavicon href={link.href} />
+            <div className="truncate text-sm font-medium text-foreground">{link.title || '—'}</div>
+          </div>
           <div className="truncate font-mono text-xs text-foreground/60">{link.href || '—'}</div>
         {link.allowedRoleSlugs && link.allowedRoleSlugs.length > 0 ? (
           <div className="truncate text-xs text-foreground/45">Roles: {link.allowedRoleSlugs.join(', ')}</div>

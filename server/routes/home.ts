@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Router } from 'express'
 import { db } from '../db/index.js'
 import {
@@ -29,13 +32,27 @@ export interface HomePagePayload {
   customLinks: HomeCustomLink[]
 }
 
-const DEFAULT_HOME: HomePagePayload = {
-  introMarkdown: 'Choose a module to continue.',
-  customLinks: [],
-}
-
 const MAX_LINKS = 40
 const MAX_INTRO_MARKDOWN = 50_000
+
+function readDefaultIntroFromRepoFile(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const levelsUp = here.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
+  const root = path.resolve(here, ...Array(levelsUp).fill('..'))
+  const file = path.join(root, 'content', 'home-intro.md')
+  try {
+    const text = fs.readFileSync(file, 'utf8').trim()
+    if (text.length > 0) return text.slice(0, MAX_INTRO_MARKDOWN)
+  } catch {
+    /* missing or unreadable */
+  }
+  return 'Choose a module to continue.'
+}
+
+const DEFAULT_HOME: HomePagePayload = {
+  introMarkdown: readDefaultIntroFromRepoFile(),
+  customLinks: [],
+}
 const MAX_LINK_TITLE = 120
 const MAX_LINK_DESC = 400
 const MAX_HREF = 2000

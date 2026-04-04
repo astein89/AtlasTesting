@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
+import { getBasePath } from '@/lib/basePath'
+import { faviconUrlForHref } from '@/lib/linkFavicon'
 import type { HomeCustomLink } from '@/types/homePage'
 
 interface HomeCustomLinkEditModalProps {
@@ -39,6 +41,10 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
       .then((r) => setRoleOptions(r.data))
       .catch(() => setRoleOptions([]))
   }, [])
+
+  const faviconPreview = useMemo(() => faviconUrlForHref(href.trim()), [href])
+  const isInAppPath = href.trim().startsWith('/') && !href.trim().startsWith('//')
+  const appIconPreview = `${getBasePath()}/icon.png`
 
   const toggleRole = (slug: string) => {
     setAllowedRoleSlugs((prev) => {
@@ -122,6 +128,35 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
               className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
               required
             />
+            {faviconPreview ? (
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed border-border/80 bg-background/50 px-2 py-2">
+                <img
+                  src={faviconPreview}
+                  alt=""
+                  className="h-10 w-10 shrink-0 rounded border border-border bg-background object-contain"
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                />
+                <p className="text-xs leading-snug text-foreground/65">
+                  Card shows this site&apos;s favicon (looked up from the URL host).
+                </p>
+              </div>
+            ) : isInAppPath ? (
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed border-border/80 bg-background/50 px-2 py-2">
+                <img
+                  src={appIconPreview}
+                  alt=""
+                  className="h-10 w-10 shrink-0 rounded border border-border bg-background object-contain"
+                  loading="lazy"
+                />
+                <p className="text-xs leading-snug text-foreground/65">
+                  In-app paths use this app&apos;s icon on the card.
+                </p>
+              </div>
+            ) : href.trim().startsWith('mailto:') ? (
+              <p className="mt-2 text-xs text-foreground/60">Email links use a mail icon on the card.</p>
+            ) : null}
           </div>
           <div>
             <span className="mb-1 block text-sm font-medium text-foreground">Visible to roles</span>

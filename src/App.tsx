@@ -5,7 +5,7 @@ import { PermissionGuard } from './components/auth/PermissionGuard'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Layout } from './components/layout/Layout'
 import { HomePage } from './routes/HomePage'
-import { Dashboard } from './routes/Dashboard'
+import { AdminIndexRedirect } from './routes/AdminIndexRedirect'
 import { useAuthStore } from './store/authStore'
 import { api } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
@@ -37,7 +37,6 @@ const LocationZones = lazy(() =>
 const LocationZoneDetail = lazy(() =>
   import('./routes/LocationZoneDetail').then((m) => ({ default: m.LocationZoneDetail }))
 )
-const AdminHome = lazy(() => import('./routes/AdminHome').then((m) => ({ default: m.AdminHome })))
 const RolesEditor = lazy(() => import('./routes/RolesEditor').then((m) => ({ default: m.RolesEditor })))
 
 const REHYDRATE_DELAY_MS = 300
@@ -205,7 +204,7 @@ function App() {
             <Route index element={<HomePage />} />
           </Route>
           <Route path="/testing" element={testingLayout}>
-            <Route index element={<Dashboard />} />
+            <Route index element={<Navigate to={tp} replace />} />
             <Route
               path="fields"
               element={
@@ -275,7 +274,7 @@ function App() {
             <Route path="admin/db" element={<Navigate to="/admin/db" replace />} />
           </Route>
           <Route path="/admin" element={adminLayout}>
-            <Route index element={<AdminHome />} />
+            <Route index element={<AdminIndexRedirect />} />
             <Route
               path="roles"
               element={

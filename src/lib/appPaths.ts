@@ -36,3 +36,15 @@ export function adminPath(...segments: string[]): string {
     .replace(/^\/+/, '')
   return `${ADMIN_PREFIX}/${tail}`
 }
+
+/**
+ * First admin sub-route the user may open (roles → users → settings → db).
+ * `null` if they have no admin section permissions.
+ */
+export function firstAccessibleAdminPath(hasPermission: (key: string) => boolean): string | null {
+  if (hasPermission('roles.manage')) return adminPath('roles')
+  if (hasPermission('users.manage')) return adminPath('users')
+  if (hasPermission('settings.access')) return adminPath('settings')
+  if (hasPermission('admin.db')) return adminPath('db')
+  return null
+}

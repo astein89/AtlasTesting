@@ -41,8 +41,9 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
         )}
         {inTesting && (
           <>
+            <div className="my-2 border-t border-border" aria-hidden />
             <NavLink
-              to={testingPath()}
+              to={testingPath('test-plans')}
               end
               onClick={onClose}
               className={({ isActive }) =>
@@ -53,20 +54,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
                 }`
               }
             >
-              Dashboard
-            </NavLink>
-            <NavLink
-              to={testingPath('test-plans')}
-              onClick={onClose}
-              className={({ isActive }) =>
-                `${baseLink} ${
-                  isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-foreground hover:bg-background'
-                }`
-              }
-            >
-              Test Plans
+              Testing
             </NavLink>
             <NavLink
               to={testingPath('results')}
@@ -118,6 +106,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             >
               Locations
             </NavLink>
+            <div className="my-2 border-t border-border" aria-hidden />
             <NavLink
               to={locationsPath('schemas')}
               end

@@ -8,8 +8,10 @@ import { useAuthStore } from '@/store/authStore'
 import { useHomePageEditStore } from '@/store/homePageEditStore'
 import type { HomeCustomLink, HomePageConfig } from '@/types/homePage'
 
+/** Shown only if `/api/home` fails; normal default is `content/home-intro.md` on the server. */
 const FALLBACK_HOME: HomePageConfig = {
-  introMarkdown: 'Choose a module to continue.',
+  introMarkdown:
+    '# Welcome to **DC Automation**\n\nUse the modules to open **Testing** or **Locations**. Sign in when needed.\n\nIf this message persists, the home configuration could not be loaded—check the API and network.',
   customLinks: [],
 }
 
@@ -93,7 +95,12 @@ export function HomePage() {
           <ul className="flex flex-col gap-3">
             {visibleModules.map((m) => (
               <li key={m.id} className="flex">
-                <HomeLinkCard title={m.title} description={m.description} href={m.to} />
+                <HomeLinkCard
+                  title={m.title}
+                  description={m.description}
+                  href={m.to}
+                  moduleIconId={m.id}
+                />
               </li>
             ))}
           </ul>

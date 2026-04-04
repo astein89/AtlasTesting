@@ -1,6 +1,7 @@
 import { ADMIN_PREFIX, TESTING_PREFIX, LOCATIONS_PREFIX } from '@/lib/appPaths'
 
 export interface AppModule {
+  /** Used for home module cards; artwork is mapped in `HomeModuleCardIcon` for `testing` | `locations` | `admin`. */
   id: string
   /** First URL segment, e.g. "testing" -> /testing */
   path: string
