@@ -4,14 +4,13 @@ import { SimpleDataTable } from '../data/SimpleDataTable'
 import type { LocationSchemaField, LocationSchemaFieldConfig, LocationSchemaFieldType } from '../../types/locationSchemaFields'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { useAuthStore } from '../../store/authStore'
+import { randomUuid } from '@/lib/randomUuid'
 
 const localeCompare = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base' })
 
 function newRowId(): string {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `opt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+  return `opt-${randomUuid()}`
 }
 
 interface SelectOptionRow {

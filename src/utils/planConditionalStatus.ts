@@ -9,6 +9,7 @@ import { getStatusOptions } from '../types'
 import type { FormulaData } from './formulaEvaluator'
 import { computeFormulaValues, getFormulaReferencedFieldKeys } from './formulaEvaluator'
 import { conditionalRuleConditionMatches, matchStandardCell } from './conditionalRuleMatch'
+import { randomUuid } from '@/lib/randomUuid'
 
 /** Stored on each record’s `data` JSON; keys are status field keys (`f.key`). */
 export const USER_STATUS_AUTOMATION_LOCK_KEY = '__userLockedStatus' as const
@@ -21,11 +22,7 @@ export function isPendingStatusConditionalRow(label: string): boolean {
 }
 
 export function makePendingStatusConditionalRowId(): string {
-  const id =
-    typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
-  return `${STATUS_CONDITIONAL_PENDING_PREFIX}${id}`
+  return `${STATUS_CONDITIONAL_PENDING_PREFIX}${randomUuid()}`
 }
 
 export type UserStatusLockMap = Record<string, true>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
 import { getBasePath } from '@/lib/basePath'
 import { faviconUrlForHref } from '@/lib/linkFavicon'
+import { randomUuid } from '@/lib/randomUuid'
 import type { HomeCustomLink } from '@/types/homePage'
 
 interface HomeCustomLinkEditModalProps {
@@ -61,7 +62,7 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
     if (!t || !h) return
     const sortedRoles = [...new Set(allowedRoleSlugs)].sort()
     onSave({
-      id: initial?.id ?? crypto.randomUUID(),
+      id: initial?.id ?? randomUuid(),
       title: t,
       description: description.trim(),
       href: h,

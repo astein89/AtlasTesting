@@ -1,4 +1,5 @@
 import type { DataField } from '../types'
+import { randomUuid } from '@/lib/randomUuid'
 
 export interface LayoutCell {
   field: DataField
@@ -51,19 +52,11 @@ export function getBaseFieldId(entry: string): string {
 }
 
 export function createSeparatorId(): string {
-  const uuid =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return NEWLINE_PREFIX + uuid
+  return NEWLINE_PREFIX + randomUuid()
 }
 
 export function createSeparatorLineId(): string {
-  const uuid =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return SEPARATOR_LINE_PREFIX + uuid
+  return SEPARATOR_LINE_PREFIX + randomUuid()
 }
 
 /** Normalize formLayoutOrder: must be array of strings, else use field order. */
