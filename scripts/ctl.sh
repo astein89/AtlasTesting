@@ -3,6 +3,9 @@
 # Usage: ./scripts/ctl.sh <command> [options]
 # Commands: start | stop | status | restart | update
 # For update: --yes to skip confirmation; --force to run even when already up to date.
+#
+# One-time: chmod +x scripts/ctl.sh scripts/pi-update.sh
+# Optional: git config core.fileMode false  (ignore chmod-only noise; see docs/SYSTEM_COMMANDS.md)
 
 set -e
 

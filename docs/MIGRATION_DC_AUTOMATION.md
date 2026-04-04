@@ -228,6 +228,8 @@ pm2 start dc-automation
 cd ~/dc-automation && ./scripts/ctl.sh update
 ```
 
+If you get **Permission denied**, run once: **`chmod +x scripts/ctl.sh scripts/pi-update.sh`**. If **`git status`** then shows those files as changed with no real diff, run **`git config core.fileMode false`** in the repo (local only — see [SYSTEM_COMMANDS.md](SYSTEM_COMMANDS.md)).
+
 Or manually: backup DB → `pm2 stop dc-automation` → `git pull` → `npm install` → `npm run build` → `pm2 start dc-automation`.
 
 See [SYSTEM_COMMANDS.md](SYSTEM_COMMANDS.md) for a global `ctl` command.

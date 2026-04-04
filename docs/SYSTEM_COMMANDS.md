@@ -43,12 +43,21 @@ You can call the script from anywhere by linking it into a directory on your `PA
 
 **On Linux / Raspberry Pi:**
 
-1. Make the script executable (required when using a symlink; otherwise you may get "Permission denied"):
+1. Make the control and update scripts executable (required for `./scripts/...`; symlinks need the target file to be `+x` or you get “Permission denied”):
 
 ```bash
 cd /path/to/dc-automation   # your repo path
-chmod +x scripts/ctl.sh
+chmod +x scripts/ctl.sh scripts/pi-update.sh
 ```
+
+**Git and `chmod`:** On Linux the executable bit often differs from what Git recorded on Windows. After `chmod +x`, `git status` may list the scripts as modified even though only permissions changed. In this repo only, you can stop tracking mode-only differences:
+
+```bash
+cd /path/to/dc-automation
+git config core.fileMode false
+```
+
+That sets **local** config (not committed). Content edits are still detected; only permission-only noise is ignored.
 
 2. Create the symlink (use your actual repo path instead of `/path/to/dc-automation`):
 

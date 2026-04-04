@@ -2,6 +2,12 @@
 # Update DC Automation on the Pi — follows docs/MIGRATION_DC_AUTOMATION.md (Upgrades).
 # Usage: ./scripts/pi-update.sh [path-to-repo]
 # Default repo path: parent of scripts/ (repo root).
+#
+# One-time (clone or new machine): executable bits for this script and ctl.sh; keep Git from
+# tracking permission-only noise (especially Linux after chmod or Windows/Linux checkout mix):
+#   chmod +x scripts/pi-update.sh scripts/ctl.sh
+#   git config core.fileMode false
+# See docs/SYSTEM_COMMANDS.md
 
 set -e
 
