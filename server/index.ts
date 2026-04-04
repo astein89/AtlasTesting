@@ -101,9 +101,23 @@ app.use((req, res, next) => {
   next()
 })
 
+// Browsers request /favicon.ico; without a real file the SPA fallback returns HTML. Serve icon.png as the tab icon.
+const distPath = path.join(__dirname, '..')
+const iconPngPath = path.join(distPath, 'icon.png')
+function sendFaviconAsPng(_req: express.Request, res: express.Response) {
+  res.type('image/png')
+  res.sendFile(iconPngPath)
+}
+
+if (isProd) {
+  app.get(`${prefix}/favicon.ico`, sendFaviconAsPng)
+  if (prefix) {
+    app.get('/favicon.ico', sendFaviconAsPng)
+  }
+}
+
 // Middleware: for GET under basePath (except /api), serve file from dist or pass through (no route pattern)
 if (isProd && basePath) {
-  const distPath = path.join(__dirname, '..')
   app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
     let pathname = req.path ?? req.url?.split('?')[0] ?? ''
@@ -148,7 +162,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 runSeed()
 
 if (isProd && !basePath) {
-  const distPath = path.join(__dirname, '..')
   app.use(express.static(distPath))
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api')) return next()

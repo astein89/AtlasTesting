@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { api } from '../api/client'
+import { api, ensureAccessToken } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import {
   getPrefsCache,
@@ -14,9 +14,12 @@ export { clearPreferencesCache }
 async function fetchPrefs(): Promise<Record<string, string>> {
   const { accessToken, refreshToken } = useAuthStore.getState()
   if (!accessToken && !refreshToken) {
-    const empty: Record<string, string> = {}
-    setPrefsCache(empty)
-    return empty
+    return {}
+  }
+
+  if (refreshToken && !accessToken) {
+    const ok = await ensureAccessToken()
+    if (!ok) return {}
   }
 
   const cached = getPrefsCache()
@@ -31,10 +34,10 @@ async function fetchPrefs(): Promise<Record<string, string>> {
       return data
     })
     .catch(() => {
-      const empty: Record<string, string> = {}
-      setPrefsCache(empty)
-      return empty
+      setPrefsCache(null)
+      return {}
     })
+    .finally(() => setPrefsPromise(null))
   setPrefsPromise(promise)
   return promise
 }

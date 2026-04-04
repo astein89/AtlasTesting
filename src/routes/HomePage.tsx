@@ -4,6 +4,8 @@ import { appModules, getModuleRequiredPermission } from '@/config/modules'
 import { HomeIntroMarkdown } from '@/components/home/HomeIntroMarkdown'
 import { HomeLinkCard } from '@/components/home/HomeLinkCard'
 import { HomePageEditModal } from '@/components/home/HomePageEditModal'
+import { publicAsset } from '@/lib/basePath'
+import { WELCOME_LOGO_DEFAULT_REM, clampWelcomeLogoMaxRem } from '@/lib/welcomeLogoSize'
 import { useAuthStore } from '@/store/authStore'
 import { useHomePageEditStore } from '@/store/homePageEditStore'
 import type { HomeCustomLink, HomePageConfig } from '@/types/homePage'
@@ -13,6 +15,8 @@ const FALLBACK_HOME: HomePageConfig = {
   introMarkdown:
     '# Welcome to **DC Automation**\n\nUse the modules to open **Testing** or **Locations**. Sign in when needed.\n\nIf this message persists, the home configuration could not be loaded—check the API and network.',
   customLinks: [],
+  showWelcomeLogo: false,
+  welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
 }
 
 function userRoleSlugs(user: ReturnType<typeof useAuthStore.getState>['user']): string[] {
@@ -59,6 +63,8 @@ export function HomePage() {
       setConfig({
         introMarkdown,
         customLinks: Array.isArray(data.customLinks) ? data.customLinks : [],
+        showWelcomeLogo: data.showWelcomeLogo === true,
+        welcomeLogoMaxRem: clampWelcomeLogoMaxRem(data.welcomeLogoMaxRem),
       })
     } catch {
       setConfig(FALLBACK_HOME)
@@ -84,35 +90,73 @@ export function HomePage() {
   const visibleCustomLinks = config.customLinks.filter((link) =>
     customLinkVisible(link, hasPermission, roleSlugs)
   )
+  const hasExtraLinks = visibleCustomLinks.length > 0
+  const logoMaxRem = clampWelcomeLogoMaxRem(config.welcomeLogoMaxRem)
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
-      <div className="flex flex-col gap-10 lg:flex-row lg:items-stretch lg:gap-12">
-        <aside className="order-2 w-full shrink-0 lg:order-1 lg:w-80">
-          <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50 lg:hidden">
-            Modules
-          </p>
-          <ul className="flex flex-col gap-3">
-            {visibleModules.map((m) => (
-              <li key={m.id} className="flex">
-                <HomeLinkCard
-                  title={m.title}
-                  description={m.description}
-                  href={m.to}
-                  moduleIconId={m.id}
-                />
-              </li>
-            ))}
-          </ul>
-          {visibleCustomLinks.length > 0 && (
-            <>
-              <div className="my-3 flex items-center gap-2 sm:my-4" role="separator">
-                <div className="h-px min-w-0 flex-1 bg-border" aria-hidden />
-                <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-foreground/50">
-                  Links
-                </span>
-                <div className="h-px min-w-0 flex-1 bg-border" aria-hidden />
+      <div className="flex flex-col gap-10 lg:gap-12">
+        <section aria-label="Welcome" className="min-h-[3rem]">
+          {loading ? (
+            <p className="text-sm text-foreground/60">Loading…</p>
+          ) : (
+            <div
+              className={
+                config.showWelcomeLogo
+                  ? 'flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8 lg:gap-12'
+                  : ''
+              }
+            >
+              {config.showWelcomeLogo ? (
+                <div
+                  className="flex w-full shrink-0 justify-center sm:w-auto sm:justify-start"
+                  style={{ maxWidth: `${logoMaxRem}rem` }}
+                >
+                  <img
+                    src={publicAsset('logo.png')}
+                    alt="DC Automation"
+                    className="h-auto w-full rounded-xl object-contain shadow-sm"
+                    style={{ maxWidth: `${logoMaxRem}rem` }}
+                  />
+                </div>
+              ) : null}
+              <div
+                className={
+                  config.showWelcomeLogo ? 'min-w-0 flex-1 lg:border-l lg:border-border lg:pl-8 xl:pl-12' : ''
+                }
+              >
+                <HomeIntroMarkdown content={config.introMarkdown} />
               </div>
+            </div>
+          )}
+        </section>
+
+        <section
+          aria-label="Modules and links"
+          className={
+            hasExtraLinks
+              ? 'grid grid-cols-1 gap-10 md:grid-cols-2 md:items-stretch md:gap-12'
+              : 'flex justify-center'
+          }
+        >
+          <div className={hasExtraLinks ? 'flex min-h-0 min-w-0 flex-col' : 'w-full max-w-md'}>
+            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Modules</p>
+            <ul className="flex flex-col gap-3">
+              {visibleModules.map((m) => (
+                <li key={m.id} className="flex">
+                  <HomeLinkCard
+                    title={m.title}
+                    description={m.description}
+                    href={m.to}
+                    moduleIconId={m.id}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+          {hasExtraLinks ? (
+            <div className="flex min-h-0 min-w-0 flex-col md:border-l md:border-border md:pl-8 lg:pl-12">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Links</p>
               <ul className="flex flex-col gap-3">
                 {visibleCustomLinks.map((link) => (
                   <li key={link.id} className="flex">
@@ -125,24 +169,26 @@ export function HomePage() {
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-        </aside>
-
-        <div className="order-1 flex-1 lg:order-2 lg:min-h-[12rem] lg:border-l lg:border-border lg:pl-12">
-          {loading ? (
-            <p className="text-sm text-foreground/60">Loading…</p>
-          ) : (
-            <HomeIntroMarkdown content={config.introMarkdown} />
-          )}
-        </div>
+            </div>
+          ) : null}
+        </section>
       </div>
 
       {editOpen && (
         <HomePageEditModal
           initial={config}
           onClose={() => setEditOpen(false)}
-          onSaved={(next) => setConfig(next)}
+          onSaved={(next) =>
+            setConfig({
+              introMarkdown:
+                typeof next.introMarkdown === 'string' && next.introMarkdown.trim()
+                  ? next.introMarkdown
+                  : FALLBACK_HOME.introMarkdown,
+              customLinks: Array.isArray(next.customLinks) ? next.customLinks : [],
+              showWelcomeLogo: next.showWelcomeLogo === true,
+              welcomeLogoMaxRem: clampWelcomeLogoMaxRem(next.welcomeLogoMaxRem),
+            })
+          }
         />
       )}
     </div>

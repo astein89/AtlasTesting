@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
-import { getBasePath } from '@/lib/basePath'
-import { faviconUrlForHref } from '@/lib/linkFavicon'
+import { publicAsset } from '@/lib/basePath'
+import { externalFaviconCandidateUrls } from '@/lib/linkFavicon'
 import { randomUuid } from '@/lib/randomUuid'
 import type { HomeCustomLink } from '@/types/homePage'
 
@@ -16,6 +16,8 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
   const [title, setTitle] = useState(initial?.title ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [href, setHref] = useState(initial?.href ?? '')
+  /** Only used for external favicon preview — updated on blur so we do not hit the favicon service while typing. */
+  const [hrefCommittedForFavicon, setHrefCommittedForFavicon] = useState(initial?.href ?? '')
   const [allowedRoleSlugs, setAllowedRoleSlugs] = useState<string[]>(() =>
     initial?.allowedRoleSlugs?.length ? [...initial.allowedRoleSlugs] : []
   )
@@ -30,9 +32,11 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
   }, [onClose])
 
   useEffect(() => {
+    const h = initial?.href ?? ''
     setTitle(initial?.title ?? '')
     setDescription(initial?.description ?? '')
-    setHref(initial?.href ?? '')
+    setHref(h)
+    setHrefCommittedForFavicon(h)
     setAllowedRoleSlugs(initial?.allowedRoleSlugs?.length ? [...initial.allowedRoleSlugs] : [])
   }, [initial])
 
@@ -43,9 +47,16 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
       .catch(() => setRoleOptions([]))
   }, [])
 
-  const faviconPreview = useMemo(() => faviconUrlForHref(href.trim()), [href])
+  const faviconCandidates = useMemo(
+    () => externalFaviconCandidateUrls(hrefCommittedForFavicon.trim()),
+    [hrefCommittedForFavicon]
+  )
+  const [faviconPreviewIdx, setFaviconPreviewIdx] = useState(0)
+  useEffect(() => {
+    setFaviconPreviewIdx(0)
+  }, [hrefCommittedForFavicon])
   const isInAppPath = href.trim().startsWith('/') && !href.trim().startsWith('//')
-  const appIconPreview = `${getBasePath()}/icon.png`
+  const appIconPreview = publicAsset('icon.png')
 
   const toggleRole = (slug: string) => {
     setAllowedRoleSlugs((prev) => {
@@ -125,22 +136,29 @@ export function HomeCustomLinkEditModal({ initial, onSave, onClose }: HomeCustom
               id="link-href"
               value={href}
               onChange={(e) => setHref(e.target.value)}
+              onBlur={(e) => setHrefCommittedForFavicon(e.currentTarget.value)}
               placeholder="https://… or /testing"
               className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
               required
             />
-            {faviconPreview ? (
+            {faviconCandidates.length > 0 ? (
               <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed border-border/80 bg-background/50 px-2 py-2">
                 <img
-                  src={faviconPreview}
+                  key={`${faviconCandidates[faviconPreviewIdx]}-${faviconPreviewIdx}`}
+                  src={faviconCandidates[faviconPreviewIdx]}
                   alt=""
                   className="h-10 w-10 shrink-0 rounded border border-border bg-background object-contain"
                   loading="lazy"
                   decoding="async"
                   referrerPolicy="no-referrer"
+                  onError={() =>
+                    setFaviconPreviewIdx((idx) =>
+                      idx < faviconCandidates.length - 1 ? idx + 1 : idx
+                    )
+                  }
                 />
                 <p className="text-xs leading-snug text-foreground/65">
-                  Card shows this site&apos;s favicon (looked up from the URL host).
+                  Card shows this site&apos;s favicon (from the URL if available).
                 </p>
               </div>
             ) : isInAppPath ? (

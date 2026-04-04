@@ -1,7 +1,8 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import fs from 'node:fs'
 import path from 'path'
 import { homedir } from 'os'
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 const base = process.env.VITE_BASE_PATH ? `${process.env.VITE_BASE_PATH.replace(/\/$/, '')}/` : '/'
 
@@ -21,6 +22,7 @@ function viteCacheDir(): string {
 }
 
 const cacheDir = viteCacheDir()
+const iconPngFile = path.resolve(__dirname, 'public/icon.png')
 
 export default defineConfig({
   appType: 'spa',
@@ -28,14 +30,52 @@ export default defineConfig({
   cacheDir,
   plugins: [
     react(),
+    /**
+     * Browsers fetch `/favicon.ico` automatically; a broken or strict‑reject `.ico` leaves a blank tab
+     * even when `<link rel="icon" href="/icon.png">` is valid. Serve `public/icon.png` as PNG for that URL (same as production Express).
+     */
+    {
+      name: 'dev-favicon-png',
+      enforce: 'pre',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const url = req.url?.split('?')[0] ?? ''
+          if (url !== '/favicon.ico' && !url.endsWith('/favicon.ico')) return next()
+          fs.readFile(iconPngFile, (err, buf) => {
+            if (err) return next()
+            res.setHeader('Content-Type', 'image/png')
+            res.setHeader('Cache-Control', 'no-store, must-revalidate')
+            res.end(buf)
+          })
+        })
+      },
+    },
+    /** Avoid stale icons in DevTools after overwriting `public/icon.*`. */
+    {
+      name: 'dev-no-store-icons',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const pathOnly = req.url?.split('?')[0] ?? ''
+          if (/\/(icon|logo)\.(png|svg)$/i.test(pathOnly)) {
+            res.setHeader('Cache-Control', 'no-store, must-revalidate')
+          }
+          next()
+        })
+      },
+    },
     // Fix favicon and apple-touch-icon paths when served under a base path (e.g. /dc-automation on Pi)
     {
       name: 'html-favicon-base',
       transformIndexHtml(html) {
-        const iconHref = base === '/' ? '/icon.png' : `${base}icon.png`
+        const svgHref = base === '/' ? '/icon.svg' : `${base}icon.svg`
+        const pngHref = base === '/' ? '/icon.png' : `${base}icon.png`
         return html
-          .replace(/(<link rel="icon"[^>]+href=")[^"]*(")/, `$1${iconHref}$2`)
-          .replace(/(<link rel="apple-touch-icon"[^>]+href=")[^"]*(")/, `$1${iconHref}$2`)
+          .replaceAll('href="/icon.png"', `href="${pngHref}"`)
+          .replaceAll('href="/icon.svg"', `href="${svgHref}"`)
+          .replace(
+            /<\/head>/i,
+            `    <link rel="shortcut icon" type="image/png" href="${pngHref}" />\n  </head>`
+          )
       },
     },
   ],

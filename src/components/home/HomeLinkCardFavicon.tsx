@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { getBasePath } from '@/lib/basePath'
-import { faviconUrlForHref } from '@/lib/linkFavicon'
+import { publicAsset } from '@/lib/basePath'
+import { externalFaviconCandidateUrls } from '@/lib/linkFavicon'
 
 function MailGlyph({ className }: { className?: string }) {
   return (
@@ -27,9 +27,10 @@ export function HomeLinkCardFavicon({ href }: { href: string }) {
 
   const candidates = useMemo(() => {
     if (h.startsWith('mailto:')) return [] as string[]
-    const ext = faviconUrlForHref(h)
-    if (ext) return [ext]
-    return [`${getBasePath()}/icon.png`]
+    const ext = externalFaviconCandidateUrls(h)
+    const fallback = publicAsset('icon.png')
+    if (ext.length > 0) return [...ext, fallback]
+    return [fallback]
   }, [h])
 
   const [index, setIndex] = useState(0)

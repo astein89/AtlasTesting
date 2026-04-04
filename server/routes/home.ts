@@ -30,10 +30,43 @@ export interface HomeCustomLink {
 export interface HomePagePayload {
   introMarkdown: string
   customLinks: HomeCustomLink[]
+  showWelcomeLogo?: boolean
+  welcomeLogoMaxRem?: number
 }
 
 const MAX_LINKS = 40
 const MAX_INTRO_MARKDOWN = 50_000
+
+/** Accept booleans and a few string/number forms (proxies, old clients, hand-edited JSON). */
+function coerceHomeBool(v: unknown): boolean {
+  if (v === true) return true
+  if (v === false || v == null) return false
+  if (typeof v === 'number') return v === 1
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    return s === 'true' || s === '1' || s === 'yes'
+  }
+  return false
+}
+
+const WELCOME_LOGO_MIN_REM = 8
+const WELCOME_LOGO_MAX_REM = 28
+const WELCOME_LOGO_DEFAULT_REM = 16
+
+/** Bounds must match `src/lib/welcomeLogoSize.ts`. */
+function coerceWelcomeLogoMaxRem(v: unknown): number {
+  let n: number
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    n = v
+  } else if (typeof v === 'string' && v.trim() !== '') {
+    const p = parseFloat(v)
+    n = Number.isFinite(p) ? p : WELCOME_LOGO_DEFAULT_REM
+  } else {
+    return WELCOME_LOGO_DEFAULT_REM
+  }
+  const stepped = Math.round(n * 2) / 2
+  return Math.min(WELCOME_LOGO_MAX_REM, Math.max(WELCOME_LOGO_MIN_REM, stepped))
+}
 
 function readDefaultIntroFromRepoFile(): string {
   const here = path.dirname(fileURLToPath(import.meta.url))
@@ -52,6 +85,7 @@ function readDefaultIntroFromRepoFile(): string {
 const DEFAULT_HOME: HomePagePayload = {
   introMarkdown: readDefaultIntroFromRepoFile(),
   customLinks: [],
+  showWelcomeLogo: false,
 }
 const MAX_LINK_TITLE = 120
 const MAX_LINK_DESC = 400
@@ -83,9 +117,13 @@ function parseStored(raw: string | undefined): HomePagePayload {
       introMarkdown = `# ${j.introTitle.trim()}\n\n${typeof j.introSubtitle === 'string' ? j.introSubtitle : ''}`.trim()
     }
     if (introMarkdown.trim() === '') introMarkdown = DEFAULT_HOME.introMarkdown
+    const showWelcomeLogo = coerceHomeBool(j.showWelcomeLogo)
+    const welcomeLogoMaxRem = coerceWelcomeLogoMaxRem(j.welcomeLogoMaxRem)
     return {
       introMarkdown,
       customLinks: Array.isArray(j.customLinks) ? j.customLinks : [],
+      showWelcomeLogo,
+      welcomeLogoMaxRem,
     }
   } catch {
     return { ...DEFAULT_HOME }
@@ -158,7 +196,9 @@ function normalizePayload(body: unknown): { ok: true; data: HomePagePayload } | 
       customLinks.push(base)
     }
   }
-  return { ok: true, data: { introMarkdown, customLinks } }
+  const showWelcomeLogo = coerceHomeBool(b.showWelcomeLogo)
+  const welcomeLogoMaxRem = coerceWelcomeLogoMaxRem(b.welcomeLogoMaxRem)
+  return { ok: true, data: { introMarkdown, customLinks, showWelcomeLogo, welcomeLogoMaxRem } }
 }
 
 /** Slug/label pairs for home link visibility (editors may not have users.manage). */
@@ -186,11 +226,17 @@ router.put('/', authMiddleware, requirePermission('home.edit'), (req: AuthReques
   if (!normalized.ok) {
     return res.status(400).json({ error: normalized.error })
   }
+  const toStore: HomePagePayload = {
+    introMarkdown: normalized.data.introMarkdown,
+    customLinks: normalized.data.customLinks,
+    showWelcomeLogo: normalized.data.showWelcomeLogo === true,
+    welcomeLogoMaxRem: normalized.data.welcomeLogoMaxRem,
+  }
   db.prepare('INSERT OR REPLACE INTO app_kv (key, value) VALUES (?, ?)').run(
     HOME_KEY,
-    JSON.stringify(normalized.data)
+    JSON.stringify(toStore)
   )
-  res.json(normalized.data)
+  res.json(toStore)
 })
 
 export { router as homeRouter }

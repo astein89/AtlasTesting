@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -19,14 +19,32 @@ import { CSS } from '@dnd-kit/utilities'
 import { api } from '@/api/client'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { HomeCustomLinkEditModal } from '@/components/home/HomeCustomLinkEditModal'
-import { getBasePath } from '@/lib/basePath'
-import { faviconUrlForHref } from '@/lib/linkFavicon'
+import { publicAsset } from '@/lib/basePath'
+import { externalFaviconCandidateUrls } from '@/lib/linkFavicon'
+import {
+  WELCOME_LOGO_DEFAULT_REM,
+  WELCOME_LOGO_MAX_REM,
+  WELCOME_LOGO_MIN_REM,
+  clampWelcomeLogoMaxRem,
+} from '@/lib/welcomeLogoSize'
 import type { HomeCustomLink, HomePageConfig } from '@/types/homePage'
 
 type LinkDialogState = null | 'add' | { edit: number }
 
 function LinkRowFavicon({ href }: { href: string }) {
   const h = href.trim()
+  const candidates = useMemo(() => {
+    if (h.startsWith('mailto:')) return [] as string[]
+    const ext = externalFaviconCandidateUrls(h)
+    const fallback = publicAsset('icon.png')
+    if (ext.length > 0) return [...ext, fallback]
+    return [fallback]
+  }, [h])
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    setI(0)
+  }, [h])
+
   if (h.startsWith('mailto:')) {
     return (
       <span
@@ -37,16 +55,18 @@ function LinkRowFavicon({ href }: { href: string }) {
       </span>
     )
   }
-  const ext = faviconUrlForHref(h)
-  const src = ext ?? `${getBasePath()}/icon.png`
+
+  const src = candidates[Math.min(i, candidates.length - 1)] ?? publicAsset('icon.png')
   return (
     <img
+      key={`${src}-${i}`}
       src={src}
       alt=""
       className="h-8 w-8 shrink-0 rounded border border-border object-contain"
       loading="lazy"
       decoding="async"
       referrerPolicy="no-referrer"
+      onError={() => setI((idx) => (idx < candidates.length - 1 ? idx + 1 : idx))}
     />
   )
 }
@@ -124,6 +144,10 @@ function SortableLinkRow({
 export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditModalProps) {
   const { showAlert } = useAlertConfirm()
   const [introMarkdown, setIntroMarkdown] = useState(initial.introMarkdown)
+  const [showWelcomeLogo, setShowWelcomeLogo] = useState(initial.showWelcomeLogo === true)
+  const [welcomeLogoMaxRem, setWelcomeLogoMaxRem] = useState(() =>
+    clampWelcomeLogoMaxRem(initial.welcomeLogoMaxRem ?? WELCOME_LOGO_DEFAULT_REM)
+  )
   const [links, setLinks] = useState<HomeCustomLink[]>(() =>
     initial.customLinks.length ? [...initial.customLinks] : []
   )
@@ -141,13 +165,11 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
       if (linkDialog != null) {
         e.preventDefault()
         setLinkDialog(null)
-        return
       }
-      onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [linkDialog, onClose])
+  }, [linkDialog])
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -185,6 +207,8 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
       const { data } = await api.put<HomePageConfig>('/home', {
         introMarkdown,
         customLinks: links.filter((l) => l.title.trim() && l.href.trim()),
+        showWelcomeLogo: Boolean(showWelcomeLogo),
+        welcomeLogoMaxRem: clampWelcomeLogoMaxRem(welcomeLogoMaxRem),
       })
       onSaved(data)
       onClose()
@@ -205,28 +229,64 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
         : null
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-      role="presentation"
-    >
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
       <div
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-card shadow-lg"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="home-edit-title"
-        onClick={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-border px-5 py-4">
+        <div className="shrink-0 border-b border-border px-5 py-4">
           <h2 id="home-edit-title" className="text-lg font-semibold text-foreground">
             Edit home page
           </h2>
           <p className="mt-1 text-sm text-foreground/70">
             Edit the welcome content (Markdown), then manage extra links: reorder by dragging, or use Edit for
-            full details.
+            full details. Close with Cancel or Save (backdrop clicks do not dismiss).
           </p>
         </div>
 
-        <div className="space-y-4 px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background/40 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={showWelcomeLogo}
+              onChange={(e) => setShowWelcomeLogo(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-primary"
+            />
+            <span>
+              <span className="block text-sm font-medium text-foreground">Logo beside welcome</span>
+              <span className="mt-0.5 block text-xs text-foreground/65">
+                Shows <code className="rounded bg-background px-1">public/logo.png</code> to the left of the welcome
+                text on medium+ screens (stacked on small screens).
+              </span>
+            </span>
+          </label>
+
+          {showWelcomeLogo ? (
+            <div className="rounded-lg border border-border bg-background/40 px-3 py-2.5">
+              <label className="mb-2 block text-sm font-medium text-foreground" htmlFor="logo-size">
+                Logo size (max width)
+              </label>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  id="logo-size"
+                  type="range"
+                  min={WELCOME_LOGO_MIN_REM}
+                  max={WELCOME_LOGO_MAX_REM}
+                  step="0.5"
+                  value={welcomeLogoMaxRem}
+                  onChange={(e) => setWelcomeLogoMaxRem(clampWelcomeLogoMaxRem(parseFloat(e.target.value)))}
+                  className="h-2 min-w-[8rem] flex-1 cursor-pointer accent-primary"
+                />
+                <span className="tabular-nums text-sm text-foreground/80">{welcomeLogoMaxRem}rem</span>
+              </div>
+              <p className="mt-1 text-xs text-foreground/60">
+                Between {WELCOME_LOGO_MIN_REM} and {WELCOME_LOGO_MAX_REM} rem. Applies on the home page only.
+              </p>
+            </div>
+          ) : null}
+
           <div>
             <label className="mb-1 block text-sm font-medium text-foreground" htmlFor="intro-md">
               Welcome content (Markdown)
@@ -278,7 +338,7 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-card px-5 py-4">
           <button
             type="button"
             onClick={onClose}

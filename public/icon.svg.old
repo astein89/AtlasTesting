@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="dc-bg" x1="2" y1="2" x2="30" y2="30">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1e3a8a" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#dc-bg)" />
+  <!-- Large D (hollow): solid stem + bowl; inner path cuts the counter -->
+  <path
+    fill="#ffffff"
+    fill-rule="evenodd"
+    d="M 2.75 4.55 L 5.5 4.55 L 10.55 4.55 C 17 4.55 21.35 9.2 21.35 16 C 21.35 22.8 17 27.45 10.55 27.45 L 5.5 27.45 L 2.75 27.45 Z M 5.5 7.3 L 10.3 7.3 C 15.15 7.3 18.35 11.05 18.35 16 C 18.35 20.95 15.15 24.7 10.3 24.7 L 5.5 24.7 L 5.5 7.3 Z"
+  />
+  <!-- C as gear: teeth along a curve with an opening to the right (letter C) -->
+  <g transform="translate(24,16)">
+    <circle r="2.35" fill="#172554" opacity="0.85" />
+    <g fill="none" stroke="#fcd34d" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Inner curved backbone of the C -->
+      <path d="M 0.15 -3.45 A 3.45 3.45 0 0 1 0.15 3.45" />
+      <!-- Teeth pointing outward from the curve (gold gear) -->
+      <line transform="rotate(102)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+      <line transform="rotate(126)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+      <line transform="rotate(150)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+      <line transform="rotate(174)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+      <line transform="rotate(198)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+      <line transform="rotate(222)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+      <line transform="rotate(246)" x1="0" y1="-3.35" x2="0" y2="-6.15" />
+    </g>
+  </g>
+</svg>

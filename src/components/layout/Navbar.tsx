@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useHomePageEditStore } from '../../store/homePageEditStore'
 import { useLoginModalStore } from '../../store/loginModalStore'
-import { getBasePath } from '../../lib/basePath'
+import { publicAsset } from '../../lib/basePath'
 import { ThemeToggle } from './ThemeToggle'
 
 interface NavbarProps {
@@ -41,7 +41,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
             </button>
           )}
           <Link to="/" className="flex min-w-0 items-center gap-2 truncate text-base font-semibold text-foreground sm:text-lg">
-            <img src={`${getBasePath()}/icon.png`} alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
+            <img src={publicAsset('icon.png')} alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
             <span className="truncate">DC Automation</span>
           </Link>
         </div>

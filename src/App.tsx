@@ -7,7 +7,7 @@ import { Layout } from './components/layout/Layout'
 import { HomePage } from './routes/HomePage'
 import { AdminIndexRedirect } from './routes/AdminIndexRedirect'
 import { useAuthStore } from './store/authStore'
-import { api } from './api/client'
+import { api, ensureAccessToken } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
 import { DateTimeConfigProvider } from './contexts/DateTimeConfigContext'
 import { ConditionalFormatPresetsProvider } from './contexts/ConditionalFormatPresetsContext'
@@ -96,7 +96,6 @@ function LegacyBookmarkToTesting() {
 
 function AuthInit() {
   const setAuth = useAuthStore((s) => s.setAuth)
-  const setAccessToken = useAuthStore((s) => s.setAccessToken)
   const setInitializing = useAuthStore((s) => s.setInitializing)
   const refreshToken = useAuthStore((s) => s.refreshToken)
   const user = useAuthStore((s) => s.user)
@@ -143,10 +142,9 @@ function AuthInit() {
       useAuthStore.getState().setInitializing(false)
     }, 15000)
 
-    api
-      .post<{ accessToken: string }>('/auth/refresh', { refreshToken: currentRefresh })
-      .then((r) => {
-        setAccessToken(r.data.accessToken)
+    void ensureAccessToken()
+      .then((ok) => {
+        if (!ok) throw new Error('refresh failed')
         return api.get<{
           id: string
           username: string
@@ -182,7 +180,7 @@ function AuthInit() {
       })
 
     return () => clearTimeout(timeout)
-  }, [hydrationDone, refreshToken, user, setAuth, setAccessToken, setInitializing])
+  }, [hydrationDone, refreshToken, user, setAuth, setInitializing])
 
   return null
 }

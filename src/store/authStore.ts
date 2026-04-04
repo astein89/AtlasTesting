@@ -111,7 +111,9 @@ export const useAuthStore = create<AuthState>()(
       rememberMe: false,
       initializing: true,
       setAuth: (user, accessToken, refreshToken, rememberMe) => {
-        clearPreferencesCache()
+        if (get().user?.id !== user.id) {
+          clearPreferencesCache()
+        }
         set({
           user,
           accessToken,
