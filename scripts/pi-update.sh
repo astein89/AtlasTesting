@@ -40,10 +40,15 @@ git pull origin main
 # Step 4: Install dependencies
 npm install
 
-# Step 5: Build with base path for reverse proxy at /dc-automation (override with .env if needed)
+# Step 5: Build — default is site root (http://<host>/) per docs/RASPBERRY_PI_SETUP.md. For a subpath
+# (e.g. /dc-automation), set VITE_BASE_PATH in .env or export it before running this script.
 [ -f .env ] && set -a && . ./.env && set +a
-export VITE_BASE_PATH="${VITE_BASE_PATH:-/dc-automation}"
-echo "Building with VITE_BASE_PATH=$VITE_BASE_PATH"
+export VITE_BASE_PATH="${VITE_BASE_PATH:-}"
+if [ -n "$VITE_BASE_PATH" ]; then
+  echo "Building with VITE_BASE_PATH=$VITE_BASE_PATH (subpath URL — match reverse proxy)"
+else
+  echo "Building for site root (VITE_BASE_PATH unset — e.g. http://<pi-ip>/)"
+fi
 npm run build
 
 # Step 6: Start the app

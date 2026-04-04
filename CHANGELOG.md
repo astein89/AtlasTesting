@@ -11,6 +11,10 @@
 - **SPA routes:** Testing workflows moved under **`/testing/*`**; hub at **`/`**; Locations remain **`/locations/*`**. Old paths (e.g. `/test-plans`) receive **302 redirects** to `/testing/...` in production.
 - **Docs/examples:** Example base path **`/dc-automation`** (replace with your own `VITE_BASE_PATH` / proxy path as needed).
 
+### Fixed
+
+- **`scripts/pi-update.sh`** default build matches **site root** (`VITE_BASE_PATH` unset), aligned with Caddy/nginx on port 80 with no URL prefix. It previously defaulted to **`/dc-automation`**, which broke assets at **`/`** (blank white page). Subpath installs set **`VITE_BASE_PATH`** in **`.env`**.
+
 ### Added
 
 - Module registry (`src/config/modules.ts`) and authenticated **home** page with links into Testing and Locations.

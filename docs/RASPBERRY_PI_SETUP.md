@@ -582,6 +582,17 @@ sudo systemctl status caddy
 
 **5. Logs:** `sudo journalctl -u caddy -e --no-pager`
 
+### Blank / white page in the browser (app shell loads but screen stays empty)
+
+Usually a **mismatch between the URL you use and how the app was built:**
+
+| You open | Build must use |
+| --- | --- |
+| **http://\<pi-ip\>/** (site **root**) | **`npm run build` with `VITE_BASE_PATH` unset** (default). `ecosystem.config.cjs` should **not** set `BASE_PATH`. |
+| **http://\<pi-ip\>/dc-automation/** (or another **subpath**) | **`VITE_BASE_PATH=/dc-automation`** (or your path) when building, **and** proxy + env aligned — see [Optional: path-based URL](#optional-path-based-url-or-multiple-apps). |
+
+If the build used a **subpath** but you browse **/**, the HTML loads but **JS/CSS requests go to the wrong paths** (often **404** in DevTools → **Network**). Fix: rebuild with the right `VITE_BASE_PATH` (empty for root). On the Pi, **[scripts/pi-update.sh](../scripts/pi-update.sh)** sources **`.env`** if present — for site root, **remove** `VITE_BASE_PATH` from `.env` or leave it empty, then run **`./scripts/pi-update.sh`** or **`dca update --force --yes`**.
+
 ### Out of memory
 
 Reduce Node memory or add swap:

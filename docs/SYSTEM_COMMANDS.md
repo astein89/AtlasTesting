@@ -81,6 +81,27 @@ The script changes into the repo directory before running PM2 or the update scri
 
 The default install serves at **http://\<pi-ip\>/** (Caddy 2 or nginx on port 80 → Node). If you use a **subpath** (e.g. http://\<pi-ip\>/dc-automation), set `BASE_PATH` and `VITE_BASE_PATH` as in [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md).
 
+## Troubleshooting
+
+### `-bash: /usr/local/bin/dca: Permission denied`
+
+The symlink is not what must be executable — the **file it points to** (`.../scripts/ctl.sh`) needs **`+x`**. After a fresh `git clone`, the bit is often missing.
+
+**Fix** (use your real repo path, or resolve the symlink target):
+
+```bash
+chmod +x ~/dc-automation/scripts/ctl.sh ~/dc-automation/scripts/pi-update.sh
+```
+
+Or from the symlink alone:
+
+```bash
+CTL="$(readlink -f /usr/local/bin/dca)"
+chmod +x "$CTL" "$(dirname "$CTL")/pi-update.sh"
+```
+
+Then run `dca update` again. If `git status` shows only mode changes on those files, use **`git config core.fileMode false`** in the repo ([section above](#add-a-system-wide-command-optional)).
+
 ## See also
 
 - [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md)
