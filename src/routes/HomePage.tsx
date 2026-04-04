@@ -109,14 +109,13 @@ export function HomePage() {
             >
               {config.showWelcomeLogo ? (
                 <div
-                  className="flex w-full shrink-0 justify-center sm:w-auto sm:justify-start"
+                  className="mx-auto w-full min-w-0 shrink-0 sm:mx-0 sm:w-auto"
                   style={{ maxWidth: `${logoMaxRem}rem` }}
                 >
                   <img
                     src={publicAsset('logo.png')}
                     alt="DC Automation"
-                    className="h-auto w-full rounded-xl object-contain shadow-sm"
-                    style={{ maxWidth: `${logoMaxRem}rem` }}
+                    className="block h-auto w-full rounded-xl object-contain shadow-sm"
                   />
                 </div>
               ) : null}
