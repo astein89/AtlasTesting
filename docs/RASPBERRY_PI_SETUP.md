@@ -6,7 +6,7 @@ After login, open **Home** (`/`) to choose **Testing** or **Locations**; the API
 
 **Production URL:** This guide assumes you want the app at **http://\<raspberry-pi-ip\>/** (site root on port 80). The Node process listens on **port 3000**; **Caddy 2** on port 80 reverse-proxies to it (nginx is optional). For a subpath (e.g. `/dc-automation`) or multiple apps on one Pi, see [Optional: path-based URL or multiple apps](#optional-path-based-url-or-multiple-apps).
 
-**Already installed?** See **[Upgrade Instructions](UPGRADE.md)** to update to a newer version.
+**Already installed?** To update to a newer version, see **[Upgrades](MIGRATION_DC_AUTOMATION.md#upgrades-after-you-use-dc-automation)** in the migration guide (or **[UPGRADE.md](UPGRADE.md)**).
 
 ## Prerequisites
 
@@ -74,7 +74,7 @@ cd dc-automation
 On your development machine:
 
 ```bash
-rsync -avz --exclude node_modules --exclude dc_automation.db ./dc-automation/ pi@<pi-ip>:~/dc-automation/
+rsync -avz --exclude node_modules --exclude 'dc-automation.db' --exclude 'dc_automation.db' ./dc-automation/ pi@<pi-ip>:~/dc-automation/
 ```
 
 Or use SCP, USB drive, or another transfer method.
@@ -214,7 +214,9 @@ If port 80 is already used (e.g. by nginx), stop the other service before contin
 
 **4. Configure the Caddyfile**
 
-Edit **`/etc/caddy/Caddyfile`**. For access **only by IP** over HTTP (no TLS), use the **`http://`** scheme so Caddy does **not** try to obtain certificates for a bare IP:
+Edit **`/etc/caddy/Caddyfile`**. The **`apt` package often installs a long default file** (comments, `localhost`, `file_server`, or `import` lines). For **DC Automation at site root** when you open **http://\<pi-ip\>/**, it is simplest to **replace the entire file** with the minimal block below — otherwise an extra `file_server` or host-only block can leave you with a welcome/landing page at **`/`** while Caddy still “works.”
+
+For access **only by IP** over HTTP (no TLS), use the **`http://`** scheme so Caddy does **not** try to obtain certificates for a bare IP:
 
 ```caddyfile
 http://:80 {
@@ -273,6 +275,86 @@ server {
 ```
 
 Then: `sudo nginx -t && sudo systemctl reload nginx`.
+
+---
+
+## Migrating from nginx to Caddy 2
+
+Use this when DC Automation (or another app) is **already reverse-proxied by nginx** on port **80** to Node on **127.0.0.1:3000**, and you want to **replace nginx with Caddy 2** only. Your PM2 app and `npm run build` output do **not** need to change unless you also change URL path or `VITE_BASE_PATH`.
+
+### Before you start
+
+1. **Know your current URL shape**
+   - **Site root:** nginx has `location / { proxy_pass http://127.0.0.1:3000; ... }` and users open **http://\<pi-ip\>/**.
+   - **Subpath:** nginx has `location /something/` with rewrites to strip the prefix (see [optional subpath](#optional-path-based-url-or-multiple-apps)). Your build may use `VITE_BASE_PATH=/something`.
+
+2. **Back up nginx** (so you can roll back):
+
+   ```bash
+   sudo cp -a /etc/nginx/sites-available/default ~/nginx-default.backup
+   # If you use other vhosts:
+   sudo cp -a /etc/nginx/sites-available/ ~/nginx-sites-available-backup
+   ```
+
+3. **Only one listener on port 80** — Caddy and nginx cannot both bind to port 80. You will **stop and disable nginx** before Caddy can take over.
+
+### Switch-over steps
+
+1. **Install Caddy 2** (if it is not installed yet) — same steps as in [Serve at http://\<pi-ip\>/ on port 80](#serve-at-httppi-ip-on-port-80-recommended) (**Install Caddy 2**).
+
+2. **Write `/etc/caddy/Caddyfile`** to match what nginx did:
+   - **Same as current doc — site root, HTTP by IP:** use the **`http://:80 { reverse_proxy 127.0.0.1:3000 }`** block from [step 4](#serve-at-httppi-ip-on-port-80-recommended) above.
+   - **Subpath** (e.g. `/dc-automation`): use the **`handle_path`** example in [Caddy 2: strip path](#caddy-2-strip-path-recommended-for-caddy-users) — it replaces nginx `rewrite` + `proxy_pass`.
+
+3. **Validate the config** (does not start the server yet):
+
+   ```bash
+   sudo caddy validate --config /etc/caddy/Caddyfile
+   ```
+
+4. **Free port 80** — stop nginx and prevent it from starting on boot:
+
+   ```bash
+   sudo systemctl stop nginx
+   sudo systemctl disable nginx
+   ```
+
+5. **Start Caddy** and enable it on boot:
+
+   ```bash
+   sudo systemctl enable --now caddy
+   ```
+
+   If Caddy was already installed but not used, use `sudo systemctl restart caddy`.
+
+6. **Verify:** open **http://\<pi-ip\>/** (or your subpath) in a browser; run `sudo systemctl status caddy` and `sudo journalctl -u caddy -e` if something fails.
+
+7. **Optional — remove nginx** after you are satisfied (frees disk space; not required):
+
+   ```bash
+   sudo apt remove nginx
+   ```
+
+### Rollback (restore nginx)
+
+If you need nginx again:
+
+```bash
+sudo systemctl stop caddy
+sudo systemctl disable caddy
+sudo cp ~/nginx-default.backup /etc/nginx/sites-available/default   # adjust if you used another path
+sudo nginx -t && sudo systemctl enable --now nginx
+```
+
+Restore any other backed-up site files the same way.
+
+### nginx → Caddy quick mapping
+
+| nginx idea | Caddy 2 |
+|------------|--------|
+| `listen 80` + `proxy_pass` to Node | `http://:80 { reverse_proxy 127.0.0.1:3000 }` |
+| `rewrite` + `proxy_pass` for a subpath | `handle_path /prefix/* { reverse_proxy ... }` (see [above](#caddy-2-strip-path-recommended-for-caddy-users)) |
+| `proxy_set_header X-Forwarded-*` | Caddy sets sensible defaults; add [`header_up`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) only if something upstream requires it |
 
 ---
 
@@ -374,6 +456,8 @@ location /dc-automation {
 }
 ```
 
+<a id="landing-page-at-root-subpath"></a>
+
 ### Landing page at / with app under a subpath
 
 If **http://\<pi-ip\>/** must show a static landing page and DC Automation stays under **/dc-automation/**:
@@ -416,13 +500,13 @@ http://:80 {
 The SQLite database is stored at:
 
 ```
-~/dc-automation/dc_automation.db
+~/dc-automation/dc-automation.db
 ```
 
 Back it up regularly:
 
 ```bash
-cp ~/dc-automation/dc_automation.db ~/dc-automation/dc_automation.db.backup
+cp ~/dc-automation/dc-automation.db ~/dc-automation/dc-automation.db.backup
 ```
 
 ---
@@ -461,6 +545,42 @@ sudo lsof -i :3000
 When using Caddy or nginx, the app still listens on port 3000; the proxy listens on 80.
 
 **Port 80 busy:** Only one service can bind to port 80. If Caddy fails to start, check `sudo journalctl -u caddy -e` and whether nginx (or another web server) is already using 80 — e.g. `sudo systemctl disable --now nginx` if you switched to Caddy.
+
+### Root URL shows a landing page, “Welcome to nginx”, or not the DC Automation app
+
+**1. Confirm what listens on port 80** (on the Pi):
+
+```bash
+sudo ss -tlnp | grep ':80 '
+```
+
+- If you see **nginx** or **apache2** instead of **caddy**, that process is what browsers hit at **http://\<pi-ip\>/**. Either **configure that server** to `proxy_pass` to `127.0.0.1:3000`, or **stop it** and use only Caddy: `sudo systemctl disable --now nginx` (only if you intend to use Caddy for port 80).
+
+**2. If you use Caddy**, the file **`/etc/caddy/Caddyfile`** must match how you deploy:
+
+- **Stock package file:** If the file is long (many lines) or contains **`localhost`**, **`file_server`**, **`import`**, or **`respond`**, replace **the whole file** with the minimal block below. A **`localhost { ... }`** block does **not** apply to requests whose `Host` is your Pi’s **IP address**, and leftover **`file_server`** directives can still show a default/welcome page at **`/`**.
+
+- **App at site root** (**http://\<pi-ip\>/** → DC Automation): use **only** the minimal block from [step 4](#serve-at-httppi-ip-on-port-80-recommended) — nothing with `file_server`, `root`, or a separate “landing” `handle` at `/`:
+
+```caddyfile
+http://:80 {
+	reverse_proxy 127.0.0.1:3000
+}
+```
+
+If you copied [Landing page at / with app under a subpath](#landing-page-at-root-subpath), **`/` is intentionally a static page**; the app is under **`/dc-automation/`**. For the app at **`/`**, remove the `handle { root * ... file_server }` block and the `handle_path` block unless you really want a subpath deploy.
+
+**3. Reload Caddy after edits:**
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+sudo systemctl status caddy
+```
+
+**4. Confirm Node is up** on **3000** (PM2): `pm2 status`, `curl -sI http://127.0.0.1:3000/`. If `:3000` works but **:80** does not, the problem is the reverse proxy or whatever still owns port 80.
+
+**5. Logs:** `sudo journalctl -u caddy -e --no-pager`
 
 ### Out of memory
 

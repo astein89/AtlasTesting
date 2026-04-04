@@ -1,11 +1,22 @@
 import Database from 'better-sqlite3'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { initSchema, type DbWrapper } from './schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const levelsUp = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
-const dbPath = process.env.DB_PATH || path.join(__dirname, ...Array(levelsUp).fill('..'), 'dc_automation.db')
+const projectRoot = path.resolve(__dirname, ...Array(levelsUp).fill('..'))
+const defaultDbPath = path.join(projectRoot, 'dc-automation.db')
+const legacyUnderscoreDbPath = path.join(projectRoot, 'dc_automation.db')
+
+function resolveDefaultDbPath(): string {
+  if (fs.existsSync(defaultDbPath)) return defaultDbPath
+  if (fs.existsSync(legacyUnderscoreDbPath)) return legacyUnderscoreDbPath
+  return defaultDbPath
+}
+
+const dbPath = process.env.DB_PATH || resolveDefaultDbPath()
 
 function createDbWrapper(sqlite: Database.Database): DbWrapper {
   return {
@@ -40,7 +51,7 @@ function createDbWrapper(sqlite: Database.Database): DbWrapper {
 
 const resolvedDb = path.resolve(dbPath)
 // eslint-disable-next-line no-console
-console.log(`[db] dc_automation.db path: ${resolvedDb}`)
+console.log(`[db] SQLite: ${resolvedDb}`)
 
 let sqlite: Database.Database
 try {

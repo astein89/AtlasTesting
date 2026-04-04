@@ -53,14 +53,14 @@ chmod +x scripts/ctl.sh
 2. Create the symlink (use your actual repo path instead of `/path/to/dc-automation`):
 
 ```bash
-sudo ln -s /path/to/dc-automation/scripts/ctl.sh /usr/local/bin/autotest
+sudo ln -s /path/to/dc-automation/scripts/ctl.sh /usr/local/bin/dca
 ```
 
 3. Run from anywhere:
 
 ```bash
-autotest status
-autotest update
+dca status
+dca update
 ```
 
 The script changes into the repo directory before running PM2 or the update script, so the symlink can live anywhere.
@@ -68,11 +68,11 @@ The script changes into the repo directory before running PM2 or the update scri
 ## Prerequisites
 
 - **PM2** — Install with `npm install -g pm2`. Used for start, stop, status, restart.
-- **Update command** — Requires git, npm, and the project’s [scripts/pi-update.sh](../scripts/pi-update.sh). The app is expected to be managed by PM2 (see [Raspberry Pi Setup](RASPBERRY_PI_SETUP.md) and [Upgrade Instructions](UPGRADE.md)).
+- **Update command** — Requires git, npm, and the project’s [scripts/pi-update.sh](../scripts/pi-update.sh). The app is expected to be managed by PM2 (see [Raspberry Pi Setup](RASPBERRY_PI_SETUP.md) and [Upgrades](MIGRATION_DC_AUTOMATION.md#upgrades-after-you-use-dc-automation) in the migration guide).
 
 The default install serves at **http://\<pi-ip\>/** (Caddy 2 or nginx on port 80 → Node). If you use a **subpath** (e.g. http://\<pi-ip\>/dc-automation), set `BASE_PATH` and `VITE_BASE_PATH` as in [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md).
 
 ## See also
 
 - [Raspberry Pi Install & Setup](RASPBERRY_PI_SETUP.md)
-- [Upgrade Instructions](UPGRADE.md)
+- [Migration & upgrades](MIGRATION_DC_AUTOMATION.md)

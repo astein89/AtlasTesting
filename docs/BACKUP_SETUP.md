@@ -1,6 +1,6 @@
 # SQLite → Dropbox backup setup
 
-This guide configures the Bash script [`scripts/sqlite-dropbox-backup.sh`](../scripts/sqlite-dropbox-backup.sh) to back up the app’s SQLite database (`dc_automation.db` by default) to **Dropbox** using **rclone**, with safe online backups (`sqlite3 .backup`), change detection, retention, and optional alerts.
+This guide configures the Bash script [`scripts/sqlite-dropbox-backup.sh`](../scripts/sqlite-dropbox-backup.sh) to back up the app’s SQLite database (`dc-automation.db` by default) to **Dropbox** using **rclone**, with safe online backups (`sqlite3 .backup`), change detection, retention, and optional alerts.
 
 **Target environment:** Linux (including **Raspberry Pi**). The script is not intended to run under Windows; use the same machine where the app runs in production, or a host that can read the database file over a reliable path.
 
@@ -71,7 +71,7 @@ Configure an MTA (e.g. `msmtp`, Postfix, or your provider’s relay) so `mail` c
 1. Copy the example next to the script (or anywhere you prefer):
 
    ```bash
-   cd /path/to/AutomationTesting/scripts
+   cd /path/to/dc-automation/scripts
    cp backup.conf.example backup.conf
    nano backup.conf   # or your editor
    ```
@@ -80,7 +80,7 @@ Configure an MTA (e.g. `msmtp`, Postfix, or your provider’s relay) so `mail` c
 
    | Variable | Meaning |
    |----------|--------|
-   | `DB_PATH` | Absolute path to the **live** `dc_automation.db` (same file the Node app uses; match `DB_PATH` env if you set it in PM2/systemd). |
+   | `DB_PATH` | Absolute path to the **live** `dc-automation.db` (same file the Node app uses; match `DB_PATH` env if you set it in PM2/systemd). |
    | `STAGING_ROOT` | Local directory for staging, logs, state, and lock (e.g. `/var/lib/dc-automation-backup`). Must be writable by the user that runs the script. |
    | `RCLONE_REMOTE` | e.g. `dropbox:Backups/dc-automation/sqlite` |
 
@@ -113,7 +113,7 @@ Example (adjust users/paths):
 ```bash
 sudo mkdir -p /var/lib/dc-automation-backup
 sudo chown -R deploy:deploy /var/lib/dc-automation-backup
-chmod +x /path/to/AutomationTesting/scripts/sqlite-dropbox-backup.sh
+chmod +x /path/to/dc-automation/scripts/sqlite-dropbox-backup.sh
 ```
 
 ---
@@ -124,7 +124,7 @@ Run once manually (as the same user cron will use):
 
 ```bash
 export BACKUP_CONF=/path/to/scripts/backup.conf   # if not beside the script
-/path/to/AutomationTesting/scripts/sqlite-dropbox-backup.sh
+/path/to/dc-automation/scripts/sqlite-dropbox-backup.sh
 ```
 
 Check:
@@ -148,7 +148,7 @@ crontab -e
 Example: run every hour on the hour, with an **extra** flock on a system path (optional double lock):
 
 ```cron
-0 * * * * /usr/bin/flock -n /var/run/dc-automation-backup.lock -c '/path/to/AutomationTesting/scripts/sqlite-dropbox-backup.sh'
+0 * * * * /usr/bin/flock -n /var/run/dc-automation-backup.lock -c '/path/to/dc-automation/scripts/sqlite-dropbox-backup.sh'
 ```
 
 If `BACKUP_CONF` is not beside the script, set it inside the cron line:

@@ -25,7 +25,7 @@ npm run dev
 
 See **[Raspberry Pi Install & Setup Guide](docs/RASPBERRY_PI_SETUP.md)** for detailed instructions.
 
-**Upgrading?** See **[Upgrade Instructions](docs/UPGRADE.md)** and **[Migrating to DC Automation](docs/MIGRATION_DC_AUTOMATION.md)** (breaking changes: URLs, DB filename, PM2 name).
+**Migrating from Automation Testing or upgrading?** See **[MIGRATION_DC_AUTOMATION.md](docs/MIGRATION_DC_AUTOMATION.md)** — **[Start here](docs/MIGRATION_DC_AUTOMATION.md#start-here)** picks the right section. **[UPGRADE.md](docs/UPGRADE.md)** is a short link to the same doc.
 
 **SQLite backups to Dropbox (cron, rclone)?** See **[Backup setup guide](docs/BACKUP_SETUP.md)**.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update DC Automation on the Pi — follows docs/UPGRADE.md (Quick Upgrade).
+# Update DC Automation on the Pi — follows docs/MIGRATION_DC_AUTOMATION.md (Upgrades).
 # Usage: ./scripts/pi-update.sh [path-to-repo]
 # Default repo path: parent of scripts/ (repo root).
 
@@ -11,14 +11,18 @@ cd "$REPO_DIR"
 echo "Upgrading in $REPO_DIR"
 
 # Step 1: Back up the database
-if [ -f dc_automation.db ]; then
+if [ -f dc-automation.db ]; then
+  mkdir -p db_backup
+  cp dc-automation.db "db_backup/dc-automation.db.backup.$(date +%Y%m%d-%H%M%S)"
+  echo "Backed up dc-automation.db to db_backup/"
+elif [ -f dc_automation.db ]; then
   mkdir -p db_backup
   cp dc_automation.db "db_backup/dc_automation.db.backup.$(date +%Y%m%d-%H%M%S)"
-  echo "Backed up dc_automation.db to db_backup/"
+  echo "Backed up dc_automation.db to db_backup/ (rename to dc-automation.db when convenient; see docs/MIGRATION_DC_AUTOMATION.md)"
 elif [ -f atlas.db ]; then
   mkdir -p db_backup
   cp atlas.db "db_backup/atlas.db.backup.$(date +%Y%m%d-%H%M%S)"
-  echo "Backed up atlas.db to db_backup/ (rename to dc_automation.db per docs/MIGRATION_DC_AUTOMATION.md)"
+  echo "Backed up atlas.db to db_backup/ (rename to dc-automation.db per docs/MIGRATION_DC_AUTOMATION.md)"
 fi
 
 # Step 2: Stop the app
