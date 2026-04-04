@@ -1,11 +1,11 @@
 import { Router } from 'express'
 import { db } from '../db/index.js'
-import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
+import { authMiddleware, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 
+/** Any signed-in user may read/write their own rows (not limited to Testing module). */
 router.use(authMiddleware)
-router.use(requirePermission('module.testing'))
 
 router.get('/', (req: AuthRequest, res) => {
   const userId = req.user!.id

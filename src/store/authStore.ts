@@ -110,14 +110,16 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       rememberMe: false,
       initializing: true,
-      setAuth: (user, accessToken, refreshToken, rememberMe) =>
+      setAuth: (user, accessToken, refreshToken, rememberMe) => {
+        clearPreferencesCache()
         set({
           user,
           accessToken,
           refreshToken,
           rememberMe: rememberMe !== undefined ? rememberMe : get().rememberMe,
           initializing: false,
-        }),
+        })
+      },
       setAccessToken: (accessToken) => set({ accessToken }),
       setInitializing: (initializing) => set({ initializing }),
       logout: () => {

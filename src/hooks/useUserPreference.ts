@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import {
   getPrefsCache,
   setPrefsCache,
@@ -11,6 +12,13 @@ import {
 export { clearPreferencesCache }
 
 async function fetchPrefs(): Promise<Record<string, string>> {
+  const { accessToken, refreshToken } = useAuthStore.getState()
+  if (!accessToken && !refreshToken) {
+    const empty: Record<string, string> = {}
+    setPrefsCache(empty)
+    return empty
+  }
+
   const cached = getPrefsCache()
   if (cached) return cached
   const existing = getPrefsPromise()
@@ -53,6 +61,8 @@ export function useUserPreference<T>(
   serialize: (v: T) => string = JSON.stringify,
   deserialize: (s: string) => T = JSON.parse
 ): [T, (v: T | ((prev: T) => T)) => void] {
+  const authedUserId = useAuthStore((s) => s.user?.id ?? '')
+
   const [state, setState] = useState<T>(() => {
     const local = getLocalFallback(key)
     if (local != null) {
@@ -84,7 +94,7 @@ export function useUserPreference<T>(
     return () => {
       cancelled = true
     }
-  }, [key])
+  }, [key, authedUserId])
 
   useEffect(() => {
     if (!loaded) return
