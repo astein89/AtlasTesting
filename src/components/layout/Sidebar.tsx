@@ -20,9 +20,11 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-50 flex w-72 min-h-0 min-w-0 max-w-72 flex-col overflow-x-hidden border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:self-stretch md:pt-4 md:translate-x-0 ${
-        isOpen ? 'translate-x-0' : '-translate-x-full'
-      }`}
+      className={`fixed inset-y-0 left-0 z-50 flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:w-72 md:max-w-72 md:self-stretch md:pt-4 md:translate-x-0 ${
+        inWiki
+          ? 'w-[min(22rem,calc(100vw-1rem))] max-w-[min(22rem,calc(100vw-1rem))]'
+          : 'w-72 max-w-72'
+      } ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
     >
       <nav className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
         {(inTesting || inLocations || inWiki) && (

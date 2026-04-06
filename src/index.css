@@ -46,7 +46,20 @@ input, select, textarea, button {
   }
 }
 
-/* Wiki / ```md embeds: nested list markers (Tailwind preflight clears list-style on ul/ol). */
+/*
+ * Lists: one gutter for ul/ol (don’t use Tailwind pl-* on lists — it fought custom dash markers).
+ * Native markers + dash ::before share the same inset so bullets, numbers, and hyphens line up.
+ */
+.wiki-md-body {
+  --wiki-list-gutter: 1.5rem;
+}
+.wiki-md-body ul,
+.wiki-md-body ol {
+  margin-inline: 0;
+  padding-inline-start: var(--wiki-list-gutter);
+  padding-inline-end: 0;
+  list-style-position: outside;
+}
 .wiki-md-body ul {
   list-style-type: disc;
 }
@@ -54,6 +67,46 @@ input, select, textarea, button {
   list-style-type: circle;
 }
 .wiki-md-body ul ul ul {
+  list-style-type: square;
+}
+.wiki-md-body ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+
+/* `-` lists: fake marker in the same gutter column as native list markers */
+.wiki-md-body ul.wiki-ul-marker-dash,
+.wiki-md-body ul.wiki-ul-marker-dash ul,
+.wiki-md-body ul.wiki-ul-marker-dash ul ul {
+  list-style: none;
+}
+.wiki-md-body ul.wiki-ul-marker-dash > li {
+  position: relative;
+}
+.wiki-md-body ul.wiki-ul-marker-dash > li::before {
+  content: '-';
+  position: absolute;
+  left: calc(-1 * var(--wiki-list-gutter));
+  width: var(--wiki-list-gutter);
+  box-sizing: border-box;
+  text-align: center;
+  color: inherit;
+}
+.wiki-md-body ul.wiki-ul-marker-star {
+  list-style-type: disc;
+}
+.wiki-md-body ul.wiki-ul-marker-star ul {
+  list-style-type: circle;
+}
+.wiki-md-body ul.wiki-ul-marker-star ul ul {
+  list-style-type: square;
+}
+.wiki-md-body ul.wiki-ul-marker-plus {
+  list-style-type: disc;
+}
+.wiki-md-body ul.wiki-ul-marker-plus ul {
+  list-style-type: circle;
+}
+.wiki-md-body ul.wiki-ul-marker-plus ul ul {
   list-style-type: square;
 }
 .wiki-md-body ol {

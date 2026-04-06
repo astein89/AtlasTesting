@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
 function MenuDotsIcon() {
@@ -15,7 +15,7 @@ function MenuDotsIcon() {
 }
 
 function menuBtnClass(open: boolean): string {
-  return `flex h-8 w-7 shrink-0 items-center justify-center rounded border border-transparent text-foreground/50 transition-colors duration-150 sm:w-8 ${
+  return `flex h-11 w-9 shrink-0 items-center justify-center rounded border border-transparent text-foreground/50 transition-colors duration-150 sm:h-8 sm:w-8 ${
     open
       ? 'border-border bg-[var(--dropdown-list)] text-foreground'
       : 'cursor-pointer opacity-100 hover:border-border hover:bg-[var(--dropdown-list)] hover:text-foreground sm:opacity-0 sm:group-hover/wiki-row:opacity-100 sm:group-focus-within/wiki-row:opacity-100'
@@ -35,8 +35,6 @@ type WikiSidebarPageMenuProps = {
 
 function MenuPanel({
   pagePath,
-  top,
-  left,
   onClose,
   onAddPage,
   onAddSection,
@@ -47,12 +45,64 @@ function MenuPanel({
   onDelete,
   triggerRef,
 }: WikiSidebarPageMenuProps & {
-  top: number
-  left: number
   onClose: () => void
   triggerRef: RefObject<HTMLButtonElement | null>
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const [placement, setPlacement] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current
+    const panel = ref.current
+    if (!trigger || !panel) return
+
+    panel.style.maxHeight = ''
+    panel.style.overflowY = ''
+
+    const r = trigger.getBoundingClientRect()
+    const margin = 8
+    const gap = 6
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const maxH = vh - 2 * margin
+
+    let left = Math.max(margin, r.right - panel.offsetWidth)
+    if (left + panel.offsetWidth > vw - margin) {
+      left = Math.max(margin, vw - margin - panel.offsetWidth)
+    }
+
+    let ph = panel.offsetHeight
+    if (ph > maxH) {
+      panel.style.maxHeight = `${maxH}px`
+      panel.style.overflowY = 'auto'
+      ph = panel.offsetHeight
+    }
+
+    const belowStart = r.bottom + gap
+    const fitsBelow = ph <= vh - margin - belowStart
+    const fitsAbove = ph <= r.top - gap - margin
+
+    let top: number
+    if (fitsBelow) {
+      top = belowStart
+    } else if (fitsAbove) {
+      top = r.top - gap - ph
+    } else {
+      panel.style.maxHeight = `${maxH}px`
+      panel.style.overflowY = 'auto'
+      ph = panel.offsetHeight
+      top = Math.max(margin, Math.min(belowStart, vh - margin - ph))
+    }
+
+    if (top + ph > vh - margin) {
+      top = Math.max(margin, vh - margin - ph)
+    }
+    if (top < margin) {
+      top = margin
+    }
+
+    setPlacement({ top, left })
+  }, [triggerRef])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -72,6 +122,17 @@ function MenuPanel({
     return () => window.removeEventListener('mousedown', onDown)
   }, [onClose, triggerRef])
 
+  /** Close when sidebar or window scrolls so the menu does not float away from the trigger. */
+  useEffect(() => {
+    const onScrollOrResize = () => onClose()
+    window.addEventListener('scroll', onScrollOrResize, true)
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true)
+      window.removeEventListener('resize', onScrollOrResize)
+    }
+  }, [onClose])
+
   const itemBase =
     'block w-full cursor-pointer px-2.5 py-2 text-left text-[13px] font-medium leading-snug transition-colors duration-150'
   /** Use `--dropdown-list` so hover is visible (primary ≈ foreground in light theme; /opacity on hex vars is weak). */
@@ -84,7 +145,7 @@ function MenuPanel({
       role="menu"
       aria-label={`Actions for ${pagePath}`}
       className="fixed z-[200] w-[min(12.5rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg shadow-black/10 dark:shadow-black/40"
-      style={{ top, left: Math.max(8, left) }}
+      style={{ top: placement.top, left: placement.left }}
     >
       <div className="border-b border-border px-2.5 py-1.5">
         <p className="truncate font-mono text-[11px] leading-tight text-foreground/55" title={pagePath}>
@@ -137,22 +198,10 @@ function MenuPanel({
 export function WikiSidebarPageMenu(props: WikiSidebarPageMenuProps) {
   const { pagePath } = props
   const [open, setOpen] = useState(false)
-  const [coords, setCoords] = useState({ top: 0, left: 0 })
   const btnRef = useRef<HTMLButtonElement>(null)
 
   const toggle = useCallback(() => {
-    setOpen((prev) => {
-      const next = !prev
-      if (next && btnRef.current) {
-        const r = btnRef.current.getBoundingClientRect()
-        const menuWidthPx = 200
-        setCoords({
-          top: r.bottom + 6,
-          left: r.right - menuWidthPx,
-        })
-      }
-      return next
-    })
+    setOpen((prev) => !prev)
   }, [])
 
   const close = useCallback(() => setOpen(false), [])
@@ -176,7 +225,7 @@ export function WikiSidebarPageMenu(props: WikiSidebarPageMenuProps) {
         <MenuDotsIcon />
       </button>
       {open ? (
-        <MenuPanel {...props} top={coords.top} left={coords.left} onClose={close} triggerRef={btnRef} />
+        <MenuPanel {...props} onClose={close} triggerRef={btnRef} />
       ) : null}
     </>
   )

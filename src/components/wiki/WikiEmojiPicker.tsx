@@ -1,5 +1,16 @@
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
-import { get, search as emojiSearch } from 'node-emoji'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
+import { createPortal } from 'react-dom'
+import emojilib from 'emojilib'
+import { get } from 'node-emoji'
 
 const POPULAR_NAMES = [
   '+1',
@@ -46,11 +57,24 @@ function safeEmojiSearch(query: string): { name: string; emoji: string }[] {
     return POPULAR_NAMES.map((name) => ({ name, emoji: get(name) ?? '' })).filter((x) => x.emoji)
   }
   const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let re: RegExp
   try {
-    return emojiSearch(new RegExp(escaped, 'i')).slice(0, 120)
+    re = new RegExp(escaped, 'i')
   } catch {
     return []
   }
+  /**
+   * `node-emoji` search() rebuilds RegExp from `.source` and drops flags, so case-insensitive
+   * queries never matched. We filter `emojilib` keys directly (same data source as node-emoji).
+   */
+  const out: { name: string; emoji: string }[] = []
+  for (const name of Object.keys(emojilib.lib)) {
+    if (!re.test(name)) continue
+    const char = emojilib.lib[name as keyof typeof emojilib.lib]?.char
+    if (char) out.push({ name, emoji: char })
+    if (out.length >= 120) break
+  }
+  return out
 }
 
 export type WikiEmojiPickerProps = {
@@ -65,9 +89,75 @@ export function WikiEmojiPicker({ open, onClose, onPick, anchorRef }: WikiEmojiP
   const panelRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
+  const [placement, setPlacement] = useState({ top: 0, left: 0 })
   const searchId = useId()
 
   const results = useMemo(() => safeEmojiSearch(query), [query])
+
+  const updatePlacement = useCallback(() => {
+    const anchor = anchorRef?.current
+    const panel = panelRef.current
+    if (!open || !anchor || !panel) return
+
+    panel.style.maxHeight = ''
+    panel.style.overflowY = ''
+
+    const r = anchor.getBoundingClientRect()
+    const margin = 8
+    const gap = 6
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+
+    let left = r.left
+    const pw = panel.offsetWidth
+    if (left + pw > vw - margin) {
+      left = vw - margin - pw
+    }
+    if (left < margin) {
+      left = margin
+    }
+
+    let top = r.bottom + gap
+    const ph = panel.offsetHeight
+    if (top + ph > vh - margin) {
+      const above = r.top - ph - gap
+      if (above >= margin) {
+        top = above
+      } else {
+        top = margin
+        const maxH = vh - 2 * margin
+        if (ph > maxH) {
+          panel.style.maxHeight = `${maxH}px`
+          panel.style.overflowY = 'auto'
+        }
+      }
+    }
+
+    if (top + panel.offsetHeight > vh - margin) {
+      top = Math.max(margin, vh - margin - panel.offsetHeight)
+    }
+    if (top < margin) {
+      top = margin
+    }
+
+    setPlacement({ top, left })
+  }, [open, anchorRef])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    updatePlacement()
+  }, [open, updatePlacement, query, results.length])
+
+  useEffect(() => {
+    if (!open) return
+    const onMove = () => updatePlacement()
+    window.addEventListener('resize', onMove)
+    window.addEventListener('scroll', onMove, true)
+    return () => {
+      window.removeEventListener('resize', onMove)
+      window.removeEventListener('scroll', onMove, true)
+    }
+  }, [open, updatePlacement])
 
   useEffect(() => {
     if (!open) {
@@ -92,13 +182,14 @@ export function WikiEmojiPicker({ open, onClose, onPick, anchorRef }: WikiEmojiP
 
   if (!open) return null
 
-  return (
+  const panel = (
     <div
       ref={panelRef}
       role="dialog"
       aria-label="Insert emoji"
       aria-modal="true"
-      className="absolute left-0 top-full z-50 mt-1 w-[min(20rem,calc(100vw-2rem))] rounded-lg border border-border bg-card py-2 shadow-lg dark:bg-card"
+      className="fixed z-[200] w-[min(20rem,calc(100vw-1rem))] rounded-lg border border-border bg-card py-2 shadow-lg dark:bg-card"
+      style={{ top: placement.top, left: placement.left }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -147,9 +238,8 @@ export function WikiEmojiPicker({ open, onClose, onPick, anchorRef }: WikiEmojiP
           </ul>
         )}
       </div>
-      <p className="border-t border-border px-3 py-1.5 text-[10px] text-foreground/50">
-        Inserts GitHub-style shortcodes (rendered as emoji in preview).
-      </p>
     </div>
   )
+
+  return typeof document !== 'undefined' ? createPortal(panel, document.body) : null
 }

@@ -10,6 +10,7 @@ import {
 } from '@/api/wiki'
 import { humanizePathForTitle, WikiBreadcrumbs } from '@/components/wiki/WikiBreadcrumbs'
 import { WikiDuplicatePageModal } from '@/components/wiki/WikiDuplicatePageModal'
+import { WikiSidebarPageSettingsModal } from '@/components/wiki/WikiSidebarPageSettingsModal'
 import { WikiMarkdown } from '@/components/wiki/WikiMarkdown'
 import { wikiEditUrl, wikiPageUrl } from '@/lib/appPaths'
 import { parseWikiHeadings } from '@/lib/wikiHeadings'
@@ -42,7 +43,7 @@ function WikiSubtreeNav({
             <div className="flex flex-wrap items-baseline gap-x-2">
               <Link
                 to={wikiPageUrl(child.path)}
-                className="font-medium text-primary underline-offset-2 hover:underline"
+                className="inline-flex min-h-[44px] items-center font-medium text-primary underline-offset-2 hover:underline md:min-h-0"
               >
                 {label}
               </Link>
@@ -84,6 +85,7 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
   const [wikiPageList, setWikiPageList] = useState<WikiPageListItem[]>([])
   const [wikiPageKind, setWikiPageKind] = useState<WikiPageKind>('page')
   const [showSectionPages, setShowSectionPages] = useState(true)
+  const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
   const loadGenRef = useRef(0)
 
   const load = useCallback(async () => {
@@ -230,12 +232,13 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
   }, [])
 
   const handleDuplicateConfirm = useCallback(
-    async (newPath: string) => {
+    async (newPath: string, pageTitle: string) => {
       if (markdown === null) {
         throw new Error('Page content is not loaded.')
       }
       const dupOpts: Parameters<typeof saveWikiPage>[2] = {
         viewRoleSlugs: viewRoleSlugs?.length ? viewRoleSlugs : null,
+        pageTitle: pageTitle.trim() || null,
       }
       if (wikiPageKind === 'section') {
         dupOpts.showSectionPages = showSectionPages
@@ -323,9 +326,9 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
                   />
                 </svg>
               </Link>
-              <Link
-                to={wikiEditUrl(pagePath)}
-                state={{ wikiOpenMeta: true }}
+              <button
+                type="button"
+                onClick={() => setPageSettingsOpen(true)}
                 className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground hover:bg-background/80"
                 aria-label={wikiPageKind === 'section' ? 'Section settings' : 'Page settings'}
                 title={wikiPageKind === 'section' ? 'Section settings' : 'Page settings'}
@@ -350,7 +353,7 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
                     d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                   />
                 </svg>
-              </Link>
+              </button>
             </>
           ) : null}
           </div>
@@ -396,6 +399,17 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
           />
         ) : null}
       </div>
+
+      <WikiSidebarPageSettingsModal
+        pagePath={pageSettingsOpen ? (resolvedPagePath ?? pagePath) : null}
+        onClose={() => setPageSettingsOpen(false)}
+        onSaved={(fromPath, toPath) => {
+          void load()
+          if (toPath !== fromPath) {
+            navigate(wikiPageUrl(toPath))
+          }
+        }}
+      />
 
       {!loading && !folderNav && !error && markdown != null ? (
         <div className="mx-auto max-w-3xl text-foreground print:mx-0 print:max-w-none">

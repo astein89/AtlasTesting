@@ -18,6 +18,7 @@ import { WikiPageMetaModal, normalizeWikiPathSlugInput } from '@/components/wiki
 import { WikiPathCreateModal, type WikiPathCreateKind } from '@/components/wiki/WikiPathCreateModal'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { WIKI_PREFIX, wikiEditUrl, wikiPageUrl } from '@/lib/appPaths'
+import { truncateMaxCodePoints } from '@/lib/unicodeTruncate'
 import {
   parseWikiPathSegment,
   slugifyWikiTitleToSegment,
@@ -29,7 +30,7 @@ interface WikiPageEditProps {
   pagePath: string
 }
 
-type WikiEditLocationState = { wikiNewTitle?: string; wikiOpenMeta?: boolean }
+type WikiEditLocationState = { wikiNewTitle?: string }
 
 function splitWikiPath(pagePathNorm: string): { parent: string; slug: string } {
   const t = pagePathNorm.replace(/^\/+|\/+$/g, '')
@@ -53,28 +54,14 @@ function composeWikiPath(pathParent: string, segmentInput: string): string | nul
 function firstHeadingFromMarkdown(md: string): string | undefined {
   const line = md.split(/\r?\n/).find((l) => l.trim().startsWith('#'))
   if (!line) return undefined
-  const title = line.replace(/^#+\s*/, '').trim().slice(0, 200)
+  const title = truncateMaxCodePoints(line.replace(/^#+\s*/, '').trim(), 200)
   return title || undefined
-}
-
-/** Keeps heading level; adds `# Title` at top if missing. */
-function replaceFirstHeading(md: string, newTitle: string): string {
-  const title = newTitle.trim() || 'Page'
-  const lines = md.split(/\r?\n/)
-  const idx = lines.findIndex((l) => l.trim().startsWith('#'))
-  if (idx === -1) {
-    return `# ${title}\n\n${md}`
-  }
-  const line = lines[idx]!
-  const levelMatch = /^#+/.exec(line.trim())
-  const level = levelMatch ? Math.min(levelMatch[0].length, 6) : 1
-  const hashes = '#'.repeat(level)
-  lines[idx] = `${hashes} ${title}`
-  return lines.join('\n')
 }
 
 type WikiEditBaseline = {
   markdownNorm: string
+  /** Page name field snapshot (sidebar title); independent of markdown # heading. */
+  displayTitle: string
   pathParent: string
   pathSlug: string
   rolesKey: string
@@ -226,8 +213,9 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
   /** When true, the next in-app navigation skips the unsaved-changes dialog (e.g. after archive). */
   const allowLeaveWithoutSaveRef = useRef(false)
   const loadGenRef = useRef(0)
+  /** Bumps when `pagePath` changes or markdown is replaced from the server/import/meta cancel/save — resets wiki editor undo. */
+  const [editorHistoryKey, setEditorHistoryKey] = useState(0)
   const [metaModalOpen, setMetaModalOpen] = useState(false)
-  const metaWasOpenRef = useRef(false)
   const [wikiPageKind, setWikiPageKind] = useState<WikiPageKind>('page')
   const [baseline, setBaseline] = useState<WikiEditBaseline | null>(null)
 
@@ -236,6 +224,10 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     () => mergeNestParentOptions(wikiPageList, pathParent),
     [wikiPageList, pathParent]
   )
+
+  useEffect(() => {
+    setEditorHistoryKey((k) => k + 1)
+  }, [pagePath])
 
   const load = useCallback(async () => {
     const gen = ++loadGenRef.current
@@ -258,12 +250,15 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       const pages = await pagesP.catch(() => [] as WikiPageListItem[])
       setWikiPageList(Array.isArray(pages) ? pages : [])
       setMarkdown(data.markdown)
+      setEditorHistoryKey((k) => k + 1)
       setWikiPageKind(data.pageKind === 'section' ? 'section' : 'page')
       const split = splitWikiPath(data.path)
       setPathParent(split.parent)
       setPathSlug(split.slug)
       const heading = firstHeadingFromMarkdown(data.markdown)
-      setPageDisplayName(heading ?? humanizePathForTitle(split.slug))
+      const storedTitle = data.pageTitle?.trim()
+      const resolvedDisplay = storedTitle || heading || humanizePathForTitle(split.slug)
+      setPageDisplayName(resolvedDisplay)
       setViewRoleSlugs(
         Array.isArray(data.viewRoleSlugs) && data.viewRoleSlugs.length > 0
           ? [...data.viewRoleSlugs]
@@ -274,14 +269,13 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       slugTouchedRef.current = true
       setPageExistsOnServer(true)
       {
-        const titleForDoc = (heading ?? humanizePathForTitle(split.slug)).trim() || 'Page'
-        const mdNorm = replaceFirstHeading(data.markdown, titleForDoc)
         const rk =
           Array.isArray(data.viewRoleSlugs) && data.viewRoleSlugs.length > 0
             ? rolesKeyFromSlugs(data.viewRoleSlugs)
             : ''
         setBaseline({
-          markdownNorm: mdNorm,
+          markdownNorm: data.markdown,
+          displayTitle: resolvedDisplay,
           pathParent: split.parent,
           pathSlug: split.slug,
           rolesKey: rk,
@@ -303,14 +297,15 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
         const fallback = pagePath.split('/').pop() ?? 'Page'
         const display = fromNav || humanizePathForTitle(fallback)
         setMarkdown(`# ${display}\n\n`)
+        setEditorHistoryKey((k) => k + 1)
         setPageDisplayName(display)
         setWikiPageKind('page')
         setPageExistsOnServer(false)
         {
-          const titleForDoc = display.trim() || 'Page'
-          const mdNorm = replaceFirstHeading(`# ${display}\n\n`, titleForDoc)
+          const starterMd = `# ${display}\n\n`
           setBaseline({
-            markdownNorm: mdNorm,
+            markdownNorm: starterMd,
+            displayTitle: display,
             pathParent: split.parent,
             pathSlug: split.slug,
             rolesKey: '',
@@ -341,40 +336,14 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
   }, [pagePath])
 
   useEffect(() => {
-    if (loading) return
-    const st = location.state as WikiEditLocationState | null
-    if (!st?.wikiOpenMeta) return
-    setMetaModalOpen(true)
-    const { wikiOpenMeta: _omit, ...rest } = st
-    navigate(
-      { pathname: location.pathname, search: location.search, hash: location.hash },
-      { replace: true, state: Object.keys(rest).length > 0 ? rest : undefined }
-    )
-  }, [loading, location.pathname, location.search, location.hash, location.state, navigate])
-
-  useEffect(() => {
     void fetchWikiRoleOptions()
       .then(setRoleOptions)
       .catch(() => setRoleOptions([]))
   }, [])
 
   useEffect(() => {
-    if (metaModalOpen && !metaWasOpenRef.current) {
-      const h = firstHeadingFromMarkdown(markdown)
-      setPageDisplayName(h ?? humanizePathForTitle(pathSlug))
-    }
-    metaWasOpenRef.current = metaModalOpen
-  }, [metaModalOpen, markdown, pathSlug])
-
-  useEffect(() => {
-    if (metaModalOpen || loading) return
-    const h = firstHeadingFromMarkdown(markdown)
-    if (h !== undefined) setPageDisplayName(h)
-  }, [markdown, metaModalOpen, loading])
-
-  useEffect(() => {
     if (loading || pageExistsOnServer || slugTouchedRef.current) return
-    const title = firstHeadingFromMarkdown(markdown)?.trim()
+    const title = pageDisplayName.trim()
     if (!title) return
     const ac = new AbortController()
     const timer = window.setTimeout(() => {
@@ -392,17 +361,16 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       window.clearTimeout(timer)
       ac.abort()
     }
-  }, [markdown, pathParent, loading, pageExistsOnServer])
+  }, [pageDisplayName, pathParent, loading, pageExistsOnServer])
 
   const isDirty = useMemo(() => {
     if (loading || baseline === null) return false
-    const titleForDoc = pageDisplayName.trim() || humanizePathForTitle(pathSlug)
-    const mdNorm = replaceFirstHeading(markdown, titleForDoc || 'Page')
     const rk = rolesKeyFromSlugs(viewRoleSlugs)
     const sectionListDirty =
       wikiPageKind === 'section' && showSectionPages !== baseline.showSectionPages
     return (
-      mdNorm !== baseline.markdownNorm ||
+      markdown !== baseline.markdownNorm ||
+      pageDisplayName.trim() !== baseline.displayTitle.trim() ||
       pathParent !== baseline.pathParent ||
       pathSlug !== baseline.pathSlug ||
       rk !== baseline.rolesKey ||
@@ -453,7 +421,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     ) => {
       const heading = meta.displayTitle.trim() || path.split('/').pop() || path
       if (kind === 'section') {
-        await saveWikiPage(path, `# ${heading}\n\n`, { asIndex: true })
+        await saveWikiPage(path, `# ${heading}\n\n`, { asIndex: true, pageTitle: heading })
       }
       const pages = await fetchWikiPages().catch(() => [] as WikiPageListItem[])
       setWikiPageList(Array.isArray(pages) ? pages : [])
@@ -472,9 +440,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
         )
         return null
       }
-      const titleForDoc = pageDisplayName.trim() || humanizePathForTitle(pathSlug)
       const mdSource = markdownOverride ?? markdown
-      const mdToSave = replaceFirstHeading(mdSource, titleForDoc || 'Page')
       try {
         if (pageExistsOnServer && newPath !== pagePath) {
           await moveWikiPage(pagePath, newPath)
@@ -482,18 +448,22 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
         const sortedRoles = [...new Set(viewRoleSlugs)].sort()
         const saveOpts: Parameters<typeof saveWikiPage>[2] = {
           viewRoleSlugs: sortedRoles.length > 0 ? sortedRoles : null,
+          pageTitle: pageDisplayName.trim() || null,
         }
         if (wikiPageKind === 'section') {
           saveOpts.showSectionPages = showSectionPages
         }
-        const saved = await saveWikiPage(newPath, mdToSave, saveOpts)
-        setMarkdown(mdToSave)
+        const saved = await saveWikiPage(newPath, mdSource, saveOpts)
+        setMarkdown(mdSource)
+        setEditorHistoryKey((k) => k + 1)
         const split = splitWikiPath(newPath)
         const spAfter =
           wikiPageKind === 'section' ? saved.showSectionPages !== false : true
         setShowSectionPages(spAfter)
+        const displaySnap = pageDisplayName.trim()
         setBaseline({
-          markdownNorm: mdToSave,
+          markdownNorm: mdSource,
+          displayTitle: displaySnap,
           pathParent: split.parent,
           pathSlug: split.slug,
           rolesKey: rolesKeyFromSlugs(sortedRoles),
@@ -526,13 +496,13 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       setMetaModalOpen(false)
       return
     }
-    const h = firstHeadingFromMarkdown(baseline.markdownNorm)
-    setPageDisplayName(h ?? humanizePathForTitle(baseline.pathSlug))
+    setPageDisplayName(baseline.displayTitle)
     setPathParent(baseline.pathParent)
     setPathSlug(baseline.pathSlug)
     setViewRoleSlugs(viewSlugsFromBaselineRolesKey(baseline.rolesKey))
     setShowSectionPages(baseline.showSectionPages)
     setMarkdown(baseline.markdownNorm)
+    setEditorHistoryKey((k) => k + 1)
     slugTouchedRef.current = true
     setMetaModalOpen(false)
   }, [baseline])
@@ -542,13 +512,12 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       setMetaModalOpen(false)
       return
     }
-    const t = pageDisplayName.trim() || humanizePathForTitle(pathSlug)
-    const mdToSave = replaceFirstHeading(markdown, t || 'Page')
     const rk = rolesKeyFromSlugs(viewRoleSlugs)
     const sectionListDirty =
       wikiPageKind === 'section' && showSectionPages !== baseline.showSectionPages
     if (
-      mdToSave === baseline.markdownNorm &&
+      markdown === baseline.markdownNorm &&
+      pageDisplayName.trim() === baseline.displayTitle.trim() &&
       pathParent === baseline.pathParent &&
       pathSlug === baseline.pathSlug &&
       rk === baseline.rolesKey &&
@@ -559,7 +528,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     }
     setSaving(true)
     try {
-      const result = await saveWikiToServer(mdToSave)
+      const result = await saveWikiToServer()
       if (result) {
         setMetaModalOpen(false)
         if (result.newPath !== pagePath) {
@@ -619,6 +588,29 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       setSaving(false)
     }
   }, [blocker, saveWikiToServer])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || (e.key !== 's' && e.key !== 'S')) return
+      if (e.altKey) return
+      if (e.isComposing) return
+      const saveDisabled = saving || loading || archiving || resolvedPath == null
+      e.preventDefault()
+      if (saveDisabled) return
+      if (blocker.state === 'blocked') void handleBlockedSave()
+      else void handleSave()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [
+    archiving,
+    blocker.state,
+    handleBlockedSave,
+    handleSave,
+    loading,
+    resolvedPath,
+    saving,
+  ])
 
   const handleArchive = async () => {
     const ok = await showConfirm(
@@ -791,6 +783,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
                   return
                 }
                 setMarkdown(text)
+                setEditorHistoryKey((k) => k + 1)
               }
               reader.onerror = () => {
                 void showAlert('Could not read that file.')
@@ -802,10 +795,24 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
             type="button"
             disabled={saving || loading || archiving}
             onClick={() => importMdInputRef.current?.click()}
-            className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-background disabled:opacity-50"
-            title="Replace editor content from a local markdown file"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-border bg-background text-foreground hover:bg-background/80 disabled:opacity-50"
+            aria-label="Import markdown file"
+            title="Import markdown file — replaces editor content"
           >
-            Import .md
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16"
+              />
+            </svg>
           </button>
           <button
             type="button"
@@ -819,6 +826,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
             type="button"
             disabled={saving || loading || archiving || resolvedPath == null}
             onClick={() => void handleSave()}
+            title="Save (Ctrl+S or ⌘S)"
             className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save'}
@@ -833,6 +841,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
           value={markdown}
           onChange={setMarkdown}
           disabled={saving || archiving}
+          historyResetKey={`${pagePath}:${editorHistoryKey}`}
         />
       )}
     </div>

@@ -34,7 +34,7 @@ export function WikiDuplicatePageModal({
   /** Distinct parent paths (include '' for wiki root), from `wikiNestParentPathOptions`. */
   nestParentOptions: string[]
   onClose: () => void
-  onConfirm: (newNormalizedPath: string) => Promise<void>
+  onConfirm: (newNormalizedPath: string, pageTitle: string) => Promise<void>
 }) {
   const titleId = useId()
   const selectId = useId()
@@ -148,7 +148,7 @@ export function WikiDuplicatePageModal({
     setFieldError(null)
     setBusy(true)
     try {
-      await onConfirm(newPath)
+      await onConfirm(newPath, title.trim())
       onClose()
     } catch (err: unknown) {
       const apiMsg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error

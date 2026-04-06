@@ -6,6 +6,7 @@ import remarkBreaks from 'remark-breaks'
 import remarkEmoji from 'remark-emoji'
 import remarkGfm from 'remark-gfm'
 import type { WikiHeading } from '@/lib/wikiHeadings'
+import { remarkUnorderedListMarkerClass } from '@/lib/remarkUnorderedListMarkerClass'
 import { MermaidBlock } from './MermaidBlock'
 
 /** Block quotes: high contrast bar + card background so they don’t blend into body text. */
@@ -27,8 +28,8 @@ const wikiInlineCodeCls =
 const markdownShell =
   'wiki-md-body max-w-none text-sm leading-relaxed text-foreground [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-1.5 [&_h3]:text-lg [&_h3]:font-medium [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_hr]:my-4 [&_hr]:border-border'
 
-/** GFM tables + breaks + `:shortcode:` emoji. */
-const remarkPlugins = [remarkGfm, remarkBreaks, remarkEmoji]
+/** GFM tables + breaks + `:shortcode:` emoji + list marker classes for `-` vs `*` styling. */
+const remarkPlugins = [remarkGfm, remarkBreaks, remarkEmoji, remarkUnorderedListMarkerClass]
 
 /** True while rendering `<code>` that is a child of our `<pre>` (fenced / indented blocks). */
 const WikiCodeInPreContext = createContext(false)
@@ -326,10 +327,14 @@ function createWikiMarkdownComponents(consumeHeadingId: () => string | undefined
     li({ children }: { children?: ReactNode }) {
       return <WikiMarkdownLi className="my-0 ps-0 leading-snug">{children}</WikiMarkdownLi>
     },
-    ul({ children }: { children?: ReactNode }) {
+    ul({ children, className }: { children?: ReactNode; className?: string }) {
       const inner = stripIgnorableWhitespaceNodes(flattenPreChildren(children))
       return (
-        <ul className="mb-3 list-outside py-0 pl-4 text-sm leading-snug last:mb-0 marker:text-foreground/80">
+        <ul
+          className={['mb-3 list-outside py-0 text-sm leading-snug last:mb-0 marker:text-foreground/80', className]
+            .filter(Boolean)
+            .join(' ')}
+        >
           {inner.length > 0 ? inner : children}
         </ul>
       )
@@ -337,7 +342,7 @@ function createWikiMarkdownComponents(consumeHeadingId: () => string | undefined
     ol({ children }: { children?: ReactNode }) {
       const inner = stripIgnorableWhitespaceNodes(flattenPreChildren(children))
       return (
-        <ol className="mb-3 list-outside py-0 pl-4 text-sm leading-snug last:mb-0 marker:text-foreground/80">
+        <ol className="mb-3 list-outside py-0 text-sm leading-snug last:mb-0 marker:text-foreground/80">
           {inner.length > 0 ? inner : children}
         </ol>
       )
@@ -411,10 +416,17 @@ function createMarkdownEmbedInnerComponents() {
     p(props: { children?: ReactNode; node?: unknown }) {
       return <WikiMarkdownP {...props} variant="embed" />
     },
-    ul({ children }: { children?: ReactNode }) {
+    ul({ children, className }: { children?: ReactNode; className?: string }) {
       const inner = stripIgnorableWhitespaceNodes(flattenPreChildren(children))
       return (
-        <ul className="!m-0 !mb-1 list-outside py-0 pl-4 text-sm !leading-snug last:!mb-0 marker:text-foreground/80">
+        <ul
+          className={[
+            '!m-0 !mb-1 list-outside py-0 text-sm !leading-snug last:!mb-0 marker:text-foreground/80',
+            className,
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
           {inner.length > 0 ? inner : children}
         </ul>
       )
@@ -422,7 +434,7 @@ function createMarkdownEmbedInnerComponents() {
     ol({ children }: { children?: ReactNode }) {
       const inner = stripIgnorableWhitespaceNodes(flattenPreChildren(children))
       return (
-        <ol className="!m-0 !mb-1 list-outside py-0 pl-4 text-sm !leading-snug last:!mb-0 marker:text-foreground/80">
+        <ol className="!m-0 !mb-1 list-outside py-0 text-sm !leading-snug last:!mb-0 marker:text-foreground/80">
           {inner.length > 0 ? inner : children}
         </ol>
       )

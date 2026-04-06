@@ -194,8 +194,8 @@ export function WikiPathCreateModal({
           </h2>
           <p className="mt-1 text-sm text-foreground/65">
             {nestedUnder
-              ? `Path will be ${nestedUnder} plus the slug below. The title starts the page heading.`
-              : 'Title and path are independent: the path becomes the URL; the title starts the page heading.'}
+              ? `Path will be ${nestedUnder} plus the slug below. The title is the page name in the wiki (stored separately from the file; a starter heading is added to the new page).`
+              : 'Title and path are independent: the path is the URL; the title is the page name in the wiki. A starter # heading is added to the new file — you can edit or remove it in the editor.'}
           </p>
         </div>
         <form onSubmit={handleFormSubmit} className="px-4 py-4">

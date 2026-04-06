@@ -12,6 +12,7 @@ import { humanizePathForTitle } from '@/components/wiki/WikiBreadcrumbs'
 import { WikiPageMetaModal, normalizeWikiPathSlugInput } from '@/components/wiki/WikiPageMetaModal'
 import { WikiPathCreateModal, type WikiPathCreateKind } from '@/components/wiki/WikiPathCreateModal'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
+import { truncateMaxCodePoints } from '@/lib/unicodeTruncate'
 import {
   parseWikiPathSegment,
   validateWikiFullPath,
@@ -20,6 +21,7 @@ import {
 
 type Baseline = {
   markdownNorm: string
+  displayTitle: string
   pathParent: string
   pathSlug: string
   rolesKey: string
@@ -48,23 +50,8 @@ function composeWikiPath(pathParent: string, segmentInput: string): string | nul
 function firstHeadingFromMarkdown(md: string): string | undefined {
   const line = md.split(/\r?\n/).find((l) => l.trim().startsWith('#'))
   if (!line) return undefined
-  const title = line.replace(/^#+\s*/, '').trim().slice(0, 200)
+  const title = truncateMaxCodePoints(line.replace(/^#+\s*/, '').trim(), 200)
   return title || undefined
-}
-
-function replaceFirstHeading(md: string, newTitle: string): string {
-  const title = newTitle.trim() || 'Page'
-  const lines = md.split(/\r?\n/)
-  const idx = lines.findIndex((l) => l.trim().startsWith('#'))
-  if (idx === -1) {
-    return `# ${title}\n\n${md}`
-  }
-  const line = lines[idx]!
-  const levelMatch = /^#+/.exec(line.trim())
-  const level = levelMatch ? Math.min(levelMatch[0].length, 6) : 1
-  const hashes = '#'.repeat(level)
-  lines[idx] = `${hashes} ${title}`
-  return lines.join('\n')
 }
 
 function rolesKeyFromSlugs(slugs: string[]): string {
@@ -153,7 +140,9 @@ export function WikiSidebarPageSettingsModal({
         setPathParent(split.parent)
         setPathSlug(split.slug)
         const heading = firstHeadingFromMarkdown(data.markdown)
-        setPageDisplayName(heading ?? humanizePathForTitle(split.slug))
+        const storedTitle = data.pageTitle?.trim()
+        const resolvedDisplay = storedTitle || heading || humanizePathForTitle(split.slug)
+        setPageDisplayName(resolvedDisplay)
         setViewRoleSlugs(
           Array.isArray(data.viewRoleSlugs) && data.viewRoleSlugs.length > 0
             ? [...data.viewRoleSlugs]
@@ -162,14 +151,13 @@ export function WikiSidebarPageSettingsModal({
         const sp = data.pageKind === 'section' ? data.showSectionPages !== false : true
         setShowSectionPages(sp)
         setPageExistsOnServer(true)
-        const titleForDoc = (heading ?? humanizePathForTitle(split.slug)).trim() || 'Page'
-        const mdNorm = replaceFirstHeading(data.markdown, titleForDoc)
         const rk =
           Array.isArray(data.viewRoleSlugs) && data.viewRoleSlugs.length > 0
             ? rolesKeyFromSlugs(data.viewRoleSlugs)
             : ''
         setBaseline({
-          markdownNorm: mdNorm,
+          markdownNorm: data.markdown,
+          displayTitle: resolvedDisplay,
           pathParent: split.parent,
           pathSlug: split.slug,
           rolesKey: rk,
@@ -195,7 +183,7 @@ export function WikiSidebarPageSettingsModal({
     ) => {
       const heading = meta.displayTitle.trim() || path.split('/').pop() || path
       if (kind === 'section') {
-        await saveWikiPage(path, `# ${heading}\n\n`, { asIndex: true })
+        await saveWikiPage(path, `# ${heading}\n\n`, { asIndex: true, pageTitle: heading })
       }
       const pages = await fetchWikiPages().catch(() => [] as WikiPageListItem[])
       setWikiPageList(Array.isArray(pages) ? pages : [])
@@ -210,8 +198,7 @@ export function WikiSidebarPageSettingsModal({
       onClose()
       return
     }
-    const h = firstHeadingFromMarkdown(baseline.markdownNorm)
-    setPageDisplayName(h ?? humanizePathForTitle(baseline.pathSlug))
+    setPageDisplayName(baseline.displayTitle)
     setPathParent(baseline.pathParent)
     setPathSlug(baseline.pathSlug)
     setViewRoleSlugs(viewSlugsFromBaselineRolesKey(baseline.rolesKey))
@@ -226,13 +213,12 @@ export function WikiSidebarPageSettingsModal({
       onClose()
       return
     }
-    const t = pageDisplayName.trim() || humanizePathForTitle(pathSlug)
-    const mdToSave = replaceFirstHeading(markdown, t || 'Page')
     const rk = rolesKeyFromSlugs(viewRoleSlugs)
     const sectionListDirty =
       wikiPageKind === 'section' && showSectionPages !== baseline.showSectionPages
     if (
-      mdToSave === baseline.markdownNorm &&
+      markdown === baseline.markdownNorm &&
+      pageDisplayName.trim() === baseline.displayTitle.trim() &&
       pathParent === baseline.pathParent &&
       pathSlug === baseline.pathSlug &&
       rk === baseline.rolesKey &&
@@ -256,11 +242,12 @@ export function WikiSidebarPageSettingsModal({
       const sortedRoles = [...new Set(viewRoleSlugs)].sort()
       const saveOpts: Parameters<typeof saveWikiPage>[2] = {
         viewRoleSlugs: sortedRoles.length > 0 ? sortedRoles : null,
+        pageTitle: pageDisplayName.trim() || null,
       }
       if (wikiPageKind === 'section') {
         saveOpts.showSectionPages = showSectionPages
       }
-      await saveWikiPage(newPath, mdToSave, saveOpts)
+      await saveWikiPage(newPath, markdown, saveOpts)
       onSaved(pagePath, newPath)
       onClose()
     } catch (e: unknown) {

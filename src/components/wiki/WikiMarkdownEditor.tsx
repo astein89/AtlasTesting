@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -12,6 +13,7 @@ import { WikiEditorHelpModal } from '@/components/wiki/WikiEditorHelpModal'
 import { parseWikiHeadings } from '@/lib/wikiHeadings'
 
 const PREVIEW_STORAGE_KEY = 'wiki.editor.showPreview'
+const MAX_EDITOR_HISTORY = 80
 
 function readInitialPreview(): boolean {
   if (typeof window === 'undefined') return true
@@ -309,6 +311,7 @@ function ToolBtn({ label, title, onClick, disabled }: ToolBtnProps) {
       title={title}
       aria-label={title}
       disabled={disabled}
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className="min-h-8 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
     >
@@ -317,26 +320,142 @@ function ToolBtn({ label, title, onClick, disabled }: ToolBtnProps) {
   )
 }
 
+function UndoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11"
+      />
+    </svg>
+  )
+}
+
+function RedoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 000 11H13"
+      />
+    </svg>
+  )
+}
+
 export function WikiMarkdownEditor({
   value,
   onChange,
   disabled,
+  /** When this value changes (e.g. wiki page path), undo/redo stacks are cleared. */
+  historyResetKey,
 }: {
   value: string
   onChange: (next: string) => void
   disabled?: boolean
+  historyResetKey?: string
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const pastRef = useRef<string[]>([])
+  const futureRef = useRef<string[]>([])
   const emojiToolbarBtnRef = useRef<HTMLButtonElement>(null)
+  const codeFenceMenuRef = useRef<HTMLDivElement>(null)
+  const listMenuRef = useRef<HTMLDivElement>(null)
   const [showPreview, setShowPreview] = useState(readInitialPreview)
   const [helpOpen, setHelpOpen] = useState(false)
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
+  const [codeFenceMenuOpen, setCodeFenceMenuOpen] = useState(false)
+  const [listMenuOpen, setListMenuOpen] = useState(false)
+  const [, bumpHistoryUi] = useReducer((x: number) => x + 1, 0)
 
   const headings = useMemo(() => parseWikiHeadings(value), [value])
+
+  const commitChange = useCallback(
+    (next: string, opts?: { skipHistory?: boolean }) => {
+      if (next === value) return
+      if (opts?.skipHistory) {
+        onChange(next)
+        bumpHistoryUi()
+        return
+      }
+      pastRef.current.push(value)
+      if (pastRef.current.length > MAX_EDITOR_HISTORY) pastRef.current.shift()
+      futureRef.current = []
+      onChange(next)
+      bumpHistoryUi()
+    },
+    [value, onChange, bumpHistoryUi]
+  )
+
+  const undo = useCallback(() => {
+    if (pastRef.current.length === 0) return
+    const prev = pastRef.current.pop()!
+    futureRef.current.push(value)
+    commitChange(prev, { skipHistory: true })
+  }, [value, commitChange])
+
+  const redo = useCallback(() => {
+    if (futureRef.current.length === 0) return
+    const next = futureRef.current.pop()!
+    pastRef.current.push(value)
+    commitChange(next, { skipHistory: true })
+  }, [value, commitChange])
+
+  useEffect(() => {
+    pastRef.current = []
+    futureRef.current = []
+    bumpHistoryUi()
+  }, [historyResetKey])
+
+  const canUndo = pastRef.current.length > 0
+  const canRedo = futureRef.current.length > 0
 
   useEffect(() => {
     if (disabled) setEmojiPickerOpen(false)
   }, [disabled])
+
+  useEffect(() => {
+    if (disabled) setCodeFenceMenuOpen(false)
+  }, [disabled])
+
+  useEffect(() => {
+    if (disabled) setListMenuOpen(false)
+  }, [disabled])
+
+  useEffect(() => {
+    if (!codeFenceMenuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      const el = codeFenceMenuRef.current
+      if (el && !el.contains(e.target as Node)) setCodeFenceMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCodeFenceMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [codeFenceMenuOpen])
+
+  useEffect(() => {
+    if (!listMenuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      const el = listMenuRef.current
+      if (el && !el.contains(e.target as Node)) setListMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setListMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [listMenuOpen])
 
   const focusAndSelect = (start: number, end: number) => {
     const ta = taRef.current
@@ -353,10 +472,10 @@ export function WikiMarkdownEditor({
       const s = ta?.selectionStart ?? value.length
       const e = ta?.selectionEnd ?? value.length
       const { next, selStart, selEnd } = editor(value, s, e)
-      onChange(next)
+      commitChange(next)
       focusAndSelect(selStart, selEnd)
     },
-    [value, onChange]
+    [value, commitChange]
   )
 
   const wrapSelection = (before: string, after: string) => {
@@ -387,6 +506,19 @@ export function WikiMarkdownEditor({
       if (disabled) return
       if (e.nativeEvent.isComposing) return
 
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && e.key === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (mod && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault()
+        redo()
+        return
+      }
+
       if (e.key === 'Tab') {
         e.preventDefault()
         const ta = e.currentTarget
@@ -398,7 +530,7 @@ export function WikiMarkdownEditor({
           start === end ? lineBounds(value, start).end : selectionLineBlock(value, start, end).blockEnd
         const listResult = tryIndentListQuoteBlock(value, blockStart, blockEnd, e.shiftKey, start, end)
         if (listResult) {
-          onChange(listResult.next)
+          commitChange(listResult.next)
           requestAnimationFrame(() => {
             ta.focus()
             ta.setSelectionRange(listResult.selStart, listResult.selEnd)
@@ -407,7 +539,7 @@ export function WikiMarkdownEditor({
         }
         if (start !== end) {
           const result = indentLineBlock(value, blockStart, blockEnd, e.shiftKey)
-          onChange(result.next)
+          commitChange(result.next)
           requestAnimationFrame(() => {
             ta.focus()
             ta.setSelectionRange(result.selStart, result.selEnd)
@@ -425,7 +557,7 @@ export function WikiMarkdownEditor({
           if (cut === 0) return
           const from = start - cut
           const next = value.slice(0, from) + value.slice(start)
-          onChange(next)
+          commitChange(next)
           requestAnimationFrame(() => {
             ta.focus()
             ta.setSelectionRange(from, from)
@@ -433,7 +565,7 @@ export function WikiMarkdownEditor({
           return
         }
         const next = value.slice(0, start) + '\t' + value.slice(end)
-        onChange(next)
+        commitChange(next)
         requestAnimationFrame(() => {
           ta.focus()
           const pos = start + 1
@@ -448,13 +580,13 @@ export function WikiMarkdownEditor({
       const result = listOrQuoteEnter(value, ta.selectionStart)
       if (!result) return
       e.preventDefault()
-      onChange(result.next)
+      commitChange(result.next)
       requestAnimationFrame(() => {
         ta.focus()
         ta.setSelectionRange(result.selStart, result.selEnd)
       })
     },
-    [disabled, onChange, value]
+    [disabled, commitChange, value, undo, redo]
   )
 
   return (
@@ -483,6 +615,12 @@ export function WikiMarkdownEditor({
           <ToolBtn label="Bold" title="Bold" disabled={disabled} onClick={() => wrapSelection('**', '**')} />
           <ToolBtn label="Italic" title="Italic" disabled={disabled} onClick={() => wrapSelection('*', '*')} />
           <ToolBtn
+            label="Strike"
+            title="Strikethrough"
+            disabled={disabled}
+            onClick={() => wrapSelection('~~', '~~')}
+          />
+          <ToolBtn
             label="Code"
             title="Inline code"
             disabled={disabled}
@@ -501,40 +639,6 @@ export function WikiMarkdownEditor({
             }
           />
           <span className="mx-0.5 w-px self-stretch bg-border" aria-hidden />
-          <ToolBtn
-            label="• List"
-            title="Bullet list"
-            disabled={disabled}
-            onClick={() => withValue((t, s, e) => toggleLinePrefix(t, s, e, '- '))}
-          />
-          <ToolBtn
-            label="1. List"
-            title="Numbered list"
-            disabled={disabled}
-            onClick={() =>
-              withValue((t, s, e) => {
-                const { blockStart, blockEnd } = selectionLineBlock(t, s, e)
-                const block = t.slice(blockStart, blockEnd)
-                const lines = block.split(/\r?\n/)
-                const nonEmpty = lines.filter((ln) => ln !== '')
-                const allNumbered =
-                  nonEmpty.length > 0 && nonEmpty.every((ln) => /^\d+\.\s/.test(ln))
-                const mapped = lines
-                  .map((ln) => {
-                    if (allNumbered) {
-                      if (ln === '') return ln
-                      return ln.replace(/^\d+\.\s+/, '')
-                    }
-                    if (ln === '') return '1. '
-                    const stripped = ln.replace(/^[-*]\s+/, '')
-                    return `1. ${stripped}`
-                  })
-                  .join('\n')
-                const next = t.slice(0, blockStart) + mapped + t.slice(blockEnd)
-                return { next, selStart: blockStart + mapped.length, selEnd: blockStart + mapped.length }
-              })
-            }
-          />
           <ToolBtn
             label="Quote"
             title="Blockquote"
@@ -561,30 +665,170 @@ export function WikiMarkdownEditor({
               })
             }
           />
-          <ToolBtn
-            label="``` "
-            title="Code block"
-            disabled={disabled}
-            onClick={() => {
-              const sn = '\n```\n\n```\n'
-              insertSnippet(sn, '\n```\n\n'.length)
-            }}
-          />
-          <ToolBtn
-            label="md"
-            title="Markdown embed (```md … ```, rendered in preview)"
-            disabled={disabled}
-            onClick={() => {
-              const sn = '\n```md\n\n```\n'
-              insertSnippet(sn, '\n```md\n\n'.length)
-            }}
-          />
+          <div ref={listMenuRef} className="relative inline-flex self-center">
+            <button
+              type="button"
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setCodeFenceMenuOpen(false)
+                setListMenuOpen((o) => !o)
+              }}
+              className="flex min-h-8 items-center gap-0.5 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
+              title="List"
+              aria-label="List"
+              aria-expanded={listMenuOpen}
+              aria-haspopup="menu"
+            >
+              <span>List</span>
+              <span className="text-[10px] text-foreground/60" aria-hidden>
+                ▾
+              </span>
+            </button>
+            {listMenuOpen ? (
+              <div className="absolute left-0 top-full z-30 mt-1 min-w-[13rem] overflow-hidden rounded-md border border-border bg-card shadow-lg">
+                <p className="border-b border-border px-3 py-2 text-xs font-medium text-foreground/75">List</p>
+                <div role="menu" className="py-1">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-label="Bullet list (* item)"
+                    className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-foreground/[0.06]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      withValue((t, s, e) => toggleLinePrefix(t, s, e, '* '))
+                      setListMenuOpen(false)
+                    }}
+                  >
+                    <span className="block font-medium">Bullet</span>
+                    <span className="mt-0.5 block font-mono text-[10px] leading-tight text-foreground/55">* item</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-label="Dash list (- item)"
+                    className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-foreground/[0.06]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      withValue((t, s, e) => toggleLinePrefix(t, s, e, '- '))
+                      setListMenuOpen(false)
+                    }}
+                  >
+                    <span className="block font-medium">Dash</span>
+                    <span className="mt-0.5 block font-mono text-[10px] leading-tight text-foreground/55">- item</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-label="Numbered list (1. item)"
+                    className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-foreground/[0.06]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      withValue((t, s, e) => {
+                        const { blockStart, blockEnd } = selectionLineBlock(t, s, e)
+                        const block = t.slice(blockStart, blockEnd)
+                        const lines = block.split(/\r?\n/)
+                        const nonEmpty = lines.filter((ln) => ln !== '')
+                        const allNumbered =
+                          nonEmpty.length > 0 && nonEmpty.every((ln) => /^\d+\.\s/.test(ln))
+                        const mapped = lines
+                          .map((ln) => {
+                            if (allNumbered) {
+                              if (ln === '') return ln
+                              return ln.replace(/^\d+\.\s+/, '')
+                            }
+                            if (ln === '') return '1. '
+                            const stripped = ln.replace(/^[-*+]\s+/, '')
+                            return `1. ${stripped}`
+                          })
+                          .join('\n')
+                        const next = t.slice(0, blockStart) + mapped + t.slice(blockEnd)
+                        return { next, selStart: blockStart + mapped.length, selEnd: blockStart + mapped.length }
+                      })
+                      setListMenuOpen(false)
+                    }}
+                  >
+                    <span className="block font-medium">Numbered</span>
+                    <span className="mt-0.5 block font-mono text-[10px] leading-tight text-foreground/55">1. item</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div ref={codeFenceMenuRef} className="relative inline-flex self-center">
+            <button
+              type="button"
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setListMenuOpen(false)
+                setCodeFenceMenuOpen((o) => !o)
+              }}
+              className="flex min-h-8 items-center gap-0.5 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
+              title="Fenced code block"
+              aria-label="Fenced code block"
+              aria-expanded={codeFenceMenuOpen}
+              aria-haspopup="menu"
+            >
+              <span>```</span>
+              <span className="text-[10px] text-foreground/60" aria-hidden>
+                ▾
+              </span>
+            </button>
+            {codeFenceMenuOpen ? (
+              <div className="absolute left-0 top-full z-30 mt-1 min-w-[11rem] overflow-hidden rounded-md border border-border bg-card shadow-lg">
+                <p className="border-b border-border px-3 py-2 text-xs font-medium text-foreground/75">Code block</p>
+                <div role="menu" className="py-1">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-foreground/[0.06]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const sn = '\n```\n\n```\n'
+                      insertSnippet(sn, '\n```\n\n'.length)
+                      setCodeFenceMenuOpen(false)
+                    }}
+                  >
+                    Plain
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-foreground/[0.06]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const sn = '\n```md\n\n```\n'
+                      insertSnippet(sn, '\n```md\n\n'.length)
+                      setCodeFenceMenuOpen(false)
+                    }}
+                  >
+                    Markdown
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-foreground/[0.06]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const sn = '\n```mermaid\n\n```\n'
+                      insertSnippet(sn, '\n```mermaid\n\n'.length)
+                      setCodeFenceMenuOpen(false)
+                    }}
+                  >
+                    Mermaid
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <span className="mx-0.5 w-px self-stretch bg-border" aria-hidden />
           <div className="relative inline-flex self-center">
             <button
               ref={emojiToolbarBtnRef}
               type="button"
               disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setEmojiPickerOpen((o) => !o)}
               className="min-h-8 rounded-md border border-border bg-background px-2 py-1 text-base leading-none hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
               title="Insert emoji (:shortcode:)"
@@ -605,7 +849,30 @@ export function WikiMarkdownEditor({
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
+            disabled={disabled || !canUndo}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={undo}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-background text-foreground hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
+            title="Undo (Ctrl+Z or ⌘Z)"
+            aria-label="Undo"
+          >
+            <UndoIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={disabled || !canRedo}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={redo}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-background text-foreground hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
+            title="Redo (Ctrl+Y, Ctrl+Shift+Z, or ⌘⇧Z)"
+            aria-label="Redo"
+          >
+            <RedoIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
             disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => setHelpOpen(true)}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-background text-sm font-semibold text-foreground hover:bg-foreground/[0.04] disabled:opacity-45 dark:hover:bg-foreground/[0.07]"
             title="Editor help (Markdown & Mermaid)"
@@ -616,6 +883,7 @@ export function WikiMarkdownEditor({
           <button
             type="button"
             disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => setPreview(!showPreview)}
             className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium ${
               showPreview
@@ -640,7 +908,7 @@ export function WikiMarkdownEditor({
           <textarea
             ref={taRef}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => commitChange(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={disabled}
             rows={showPreview ? 22 : 28}

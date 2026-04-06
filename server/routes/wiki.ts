@@ -7,6 +7,7 @@ import {
   requirePermission,
   type AuthRequest,
 } from '../middleware/auth.js'
+import { truncateMaxCodePoints } from '../lib/unicodeTruncate.js'
 import { suggestAvailableWikiSlugSegment } from '../lib/wikiSlug.js'
 import { roleHasPermission } from '../lib/permissionsCatalog.js'
 import { db } from '../db/index.js'
@@ -24,7 +25,12 @@ const PAGE_META_FILENAME = '.wiki-page-meta.json'
 const MAX_VIEW_ROLE_SLUGS = 32
 
 /** Visibility filter: users with any of these roles may view the page (when not empty). */
-type PageMetaEntry = { viewRoleSlugs?: string[]; showSectionPages?: boolean }
+type PageMetaEntry = {
+  viewRoleSlugs?: string[]
+  showSectionPages?: boolean
+  /** Display name in sidebar/nav; independent of markdown body. */
+  title?: string
+}
 type PageMetaFile = Record<string, PageMetaEntry>
 
 function prunePageMetaEntry(entry: PageMetaEntry): PageMetaEntry | null {
@@ -34,6 +40,9 @@ function prunePageMetaEntry(entry: PageMetaEntry): PageMetaEntry | null {
   }
   if (entry.showSectionPages === false) {
     out.showSectionPages = false
+  }
+  if (entry.title && entry.title.trim()) {
+    out.title = truncateMaxCodePoints(entry.title.trim(), 200)
   }
   return Object.keys(out).length > 0 ? out : null
 }
@@ -72,6 +81,11 @@ function readPageMeta(wikiRoot: string): PageMetaFile {
       }
       if (ent.showSectionPages === false) {
         entry.showSectionPages = false
+      }
+      const rawTitle = ent.title
+      if (typeof rawTitle === 'string') {
+        const t = truncateMaxCodePoints(rawTitle.trim(), 200)
+        if (t) entry.title = t
       }
       const pruned = prunePageMetaEntry(entry)
       if (pruned) {
@@ -281,7 +295,7 @@ function validateOrderParentKey(k: string): boolean {
 function firstHeadingTitle(md: string): string | undefined {
   const line = md.split(/\r?\n/).find((l) => l.trim().startsWith('#'))
   if (!line) return undefined
-  return line.replace(/^#+\s*/, '').trim().slice(0, 200) || undefined
+  return truncateMaxCodePoints(line.replace(/^#+\s*/, '').trim(), 200) || undefined
 }
 
 function collectMarkdownPaths(dir: string, wikiRoot: string, out: string[]): void {
@@ -396,7 +410,9 @@ router.get('/pages', authMiddleware, requirePermission('module.wiki'), (req: Aut
           return { path: p, title }
         }
         const md = fs.readFileSync(abs, 'utf8')
-        title = firstHeadingTitle(md)
+        const fromMeta = meta[p]?.title
+        const fromHeading = firstHeadingTitle(md)
+        title = (fromMeta && fromMeta.trim() ? fromMeta : undefined) ?? fromHeading
       } catch {
         /* skip title */
       }
@@ -480,10 +496,14 @@ router.get('/page', authMiddleware, requirePermission('module.wiki'), (req: Auth
     const pageKind = resolvedPathIsSectionIndex(wikiRoot, normalized, abs) ? 'section' : 'page'
     const showSectionPages =
       pageKind === 'section' ? meta[normalized]?.showSectionPages !== false : true
+    const pageTitle = meta[normalized]?.title?.trim()
+      ? meta[normalized]!.title
+      : null
     return res.json({
       path: normalized,
       markdown,
       pageKind,
+      pageTitle,
       viewRoleSlugs: required.length > 0 ? [...required] : null,
       showSectionPages,
     })
@@ -526,7 +546,12 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRe
       return res.status(400).json({ error: 'Invalid path' })
     }
   }
-  const body = req.body as { markdown?: unknown; viewRoleSlugs?: unknown; showSectionPages?: unknown }
+  const body = req.body as {
+    markdown?: unknown
+    viewRoleSlugs?: unknown
+    showSectionPages?: unknown
+    pageTitle?: unknown
+  }
   if (typeof body?.markdown !== 'string') {
     return res.status(400).json({ error: 'markdown must be a string' })
   }
@@ -569,13 +594,28 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRe
     showSectionPagesToStore = sp === false ? false : true
   }
 
+  let shouldUpdatePageTitle = false
+  let pageTitleToStore: string | null = null
+  if ('pageTitle' in body) {
+    shouldUpdatePageTitle = true
+    const pt = body.pageTitle
+    if (pt === null || pt === undefined) {
+      pageTitleToStore = null
+    } else if (typeof pt === 'string') {
+      const t = truncateMaxCodePoints(pt.trim(), 200)
+      pageTitleToStore = t || null
+    } else {
+      return res.status(400).json({ error: 'pageTitle must be a string or null' })
+    }
+  }
+
   try {
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, markdown, 'utf8')
     const normalized = validateAndNormalizePath(raw)!
     const pageKindAfter = resolvedPathIsSectionIndex(wikiRoot, normalized, abs) ? 'section' : 'page'
 
-    if (shouldUpdateViewRoles || shouldUpdateShowSectionPages) {
+    if (shouldUpdateViewRoles || shouldUpdateShowSectionPages || shouldUpdatePageTitle) {
       const meta = readPageMeta(wikiRoot)
       const prev = meta[normalized] ?? {}
       const entry: PageMetaEntry = { ...prev }
@@ -596,6 +636,14 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRe
         }
       }
 
+      if (shouldUpdatePageTitle) {
+        if (pageTitleToStore) {
+          entry.title = pageTitleToStore
+        } else {
+          delete entry.title
+        }
+      }
+
       const pruned = prunePageMetaEntry(entry)
       if (!pruned) {
         delete meta[normalized]
@@ -609,8 +657,12 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRe
     const slugsOut = getPageViewRoleSlugs(metaAfter, normalized)
     const showSectionPagesOut =
       pageKindAfter === 'section' ? metaAfter[normalized]?.showSectionPages !== false : true
+    const pageTitleOut = metaAfter[normalized]?.title?.trim()
+      ? metaAfter[normalized]!.title
+      : null
     return res.json({
       path: normalized,
+      pageTitle: pageTitleOut,
       viewRoleSlugs: slugsOut.length > 0 ? slugsOut : null,
       showSectionPages: showSectionPagesOut,
     })

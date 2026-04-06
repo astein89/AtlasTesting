@@ -108,8 +108,8 @@ export function WikiPageMetaModal({
           <label className="mb-3 block text-sm">
             <span className="text-foreground/70">{isSection ? 'Section name' : 'Page name'}</span>
             <p className="mb-1 text-xs text-foreground/55">
-              Shown as the main heading and in the wiki. Updates the first{' '}
-              <span className="font-mono">#</span> line when you save.
+              Shown in the wiki sidebar and navigation. Stored separately from the markdown file — editing the
+              document does not change this name unless you change it here.
             </p>
             <input
               type="text"

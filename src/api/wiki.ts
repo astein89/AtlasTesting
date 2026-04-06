@@ -36,6 +36,8 @@ export async function fetchWikiPage(path: string): Promise<{
   path: string
   markdown: string
   pageKind?: WikiPageKind
+  /** Stored display name; null = use first markdown heading for sidebar until set. */
+  pageTitle: string | null
   viewRoleSlugs?: string[] | null
   /** Section index only: when false, “Pages in this section” is hidden on the wiki view. */
   showSectionPages?: boolean
@@ -44,12 +46,16 @@ export async function fetchWikiPage(path: string): Promise<{
     path: string
     markdown: string
     pageKind?: WikiPageKind
+    pageTitle?: string | null
     viewRoleSlugs?: string[] | null
     showSectionPages?: boolean
   }>('/wiki/page', {
     params: { path },
   })
-  return data
+  return {
+    ...data,
+    pageTitle: data.pageTitle ?? null,
+  }
 }
 
 export type WikiSidebarOrderMap = Record<string, string[]>
@@ -77,14 +83,22 @@ export async function saveWikiPage(
     viewRoleSlugs?: string[] | null
     /** Section index only; omitted = do not change stored preference. */
     showSectionPages?: boolean
+    /** Omitted = leave stored title unchanged; null = clear (sidebar falls back to first # heading). */
+    pageTitle?: string | null
   }
-): Promise<{ path: string; viewRoleSlugs?: string[] | null; showSectionPages?: boolean }> {
+): Promise<{
+  path: string
+  pageTitle?: string | null
+  viewRoleSlugs?: string[] | null
+  showSectionPages?: boolean
+}> {
   const params: Record<string, string> = { path }
   if (opts?.asIndex) params.as = 'index'
   const body: {
     markdown: string
     viewRoleSlugs?: string[] | null
     showSectionPages?: boolean
+    pageTitle?: string | null
   } = { markdown }
   if (opts && 'viewRoleSlugs' in opts) {
     body.viewRoleSlugs = opts.viewRoleSlugs?.length ? opts.viewRoleSlugs : null
@@ -92,8 +106,17 @@ export async function saveWikiPage(
   if (opts && 'showSectionPages' in opts && opts.showSectionPages !== undefined) {
     body.showSectionPages = opts.showSectionPages
   }
+  if (opts && 'pageTitle' in opts) {
+    const v = opts.pageTitle
+    if (v === null || v === undefined) {
+      body.pageTitle = null
+    } else {
+      body.pageTitle = v.trim() || null
+    }
+  }
   const { data } = await api.put<{
     path: string
+    pageTitle?: string | null
     viewRoleSlugs?: string[] | null
     showSectionPages?: boolean
   }>('/wiki/page', body, {

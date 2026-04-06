@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMatchMedia } from '@/hooks/useMatchMedia'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   archiveWikiPage,
@@ -165,7 +166,7 @@ function WikiExplorerToolbar({
             onClick={onExpandAll}
             aria-label="Expand all folders"
             title="Expand all folders"
-            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
           >
             <ExpandAllIcon />
           </button>
@@ -174,7 +175,7 @@ function WikiExplorerToolbar({
             onClick={onCollapseAll}
             aria-label="Collapse all folders"
             title="Collapse all folders"
-            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
           >
             <CollapseAllIcon />
           </button>
@@ -282,6 +283,8 @@ function WikiTreeBranch({
   onMovePage: (path: string) => void
   onDeletePage: (path: string) => void
 }) {
+  /** Align with Tailwind `md` (768px): narrow viewports require expanding a folder before following its page link. */
+  const mobileWikiTree = useMatchMedia('(max-width: 767px)')
   const rows = sortedTreeChildren(parent, sidebarOrder[parent.path] ?? null)
 
   return (
@@ -303,21 +306,28 @@ function WikiTreeBranch({
                   aria-expanded={isOpen}
                   aria-label={isOpen ? 'Collapse folder' : 'Expand folder'}
                   onClick={() => toggleExpanded(child.path)}
-                  className="flex h-8 w-6 shrink-0 items-center justify-center text-foreground/45 transition-colors hover:text-foreground/70"
+                  className="flex h-11 w-9 shrink-0 items-center justify-center text-foreground/45 transition-colors hover:text-foreground/70 md:h-8 md:w-6"
                 >
                   <TreeChevron open={isOpen} />
                 </button>
               ) : (
-                <span className="w-6 shrink-0" aria-hidden />
+                <span className="w-9 shrink-0 md:w-6" aria-hidden />
               )}
               <div className="group/wiki-row flex min-w-0 flex-1 items-stretch">
                 <NavLink
                   to={wikiPageUrl(child.path)}
                   end
-                  onClick={onNavigate}
+                  onClick={(e) => {
+                    if (mobileWikiTree && hasKids && !isOpen) {
+                      e.preventDefault()
+                      toggleExpanded(child.path)
+                      return
+                    }
+                    onNavigate?.()
+                  }}
                   title={child.title ? `${child.path} — ${child.title}` : child.path}
                   className={({ isActive }) =>
-                    `relative flex min-h-8 min-w-0 flex-1 items-center overflow-hidden py-0.5 pl-0 pr-0.5 text-sm transition-colors ${
+                    `relative flex min-h-11 min-w-0 flex-1 items-center py-1 pl-0 pr-0.5 text-sm transition-colors md:min-h-8 md:py-0.5 ${
                       isActive ? treeRowActive : treeRowInactive
                     }`
                   }
@@ -330,7 +340,7 @@ function WikiTreeBranch({
                           aria-hidden
                         />
                       ) : null}
-                      <span className="min-w-0 flex-1 truncate pl-1.5">{label}</span>
+                      <span className="min-w-0 flex-1 truncate pl-1.5 leading-normal">{label}</span>
                     </>
                   )}
                 </NavLink>
@@ -375,7 +385,7 @@ function WikiTreeBranch({
 }
 
 const tabStripBtn =
-  'flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card'
+  'flex min-h-[44px] flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card md:min-h-0'
 
 export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
   const location = useLocation()
@@ -537,9 +547,9 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     ) => {
       const heading = meta.displayTitle.trim() || path.split('/').pop() || path
       if (kind === 'section') {
-        await saveWikiPage(path, `# ${heading}\n\n`, { asIndex: true })
+        await saveWikiPage(path, `# ${heading}\n\n`, { asIndex: true, pageTitle: heading })
       } else {
-        await saveWikiPage(path, `# ${heading}\n\n`)
+        await saveWikiPage(path, `# ${heading}\n\n`, { pageTitle: heading })
       }
       await load()
       navigate(meta.createAndEdit ? wikiEditUrl(path) : wikiPageUrl(path))
@@ -633,7 +643,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
           onClick={() => setUploadMdModal({})}
           aria-label="Upload markdown file"
           title="Upload markdown file"
-          className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
         >
           <UploadMdIcon />
         </button>
@@ -645,7 +655,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
             onClick={() => setNewPathModal({ kind: 'section' })}
             aria-label="New section"
             title="New section (folder with index page)"
-            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
           >
             <SectionIcon />
           </button>
@@ -654,7 +664,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
             onClick={() => setNewPathModal({ kind: 'page' })}
             aria-label="New page"
             title="New page"
-            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
           >
             <PageIcon />
           </button>
@@ -664,7 +674,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
               onClick={() => setSortModalOpen(true)}
               aria-label="Sort pages"
               title="Sort pages under a parent"
-              className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
             >
               <SortIcon />
             </button>
@@ -835,7 +845,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
               onChange={(e) => setFilterQuery(e.target.value)}
               placeholder="Filter by path or title…"
               autoComplete="off"
-              className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-foreground/40 outline-none ring-primary focus:ring-1"
+              className="min-h-[44px] w-full rounded-md border border-border bg-background px-2.5 py-2 text-base text-foreground placeholder:text-foreground/40 outline-none ring-primary focus:ring-1 md:min-h-0 md:py-1.5 md:text-sm"
             />
           </div>
           {showExpandCollapse ? (
