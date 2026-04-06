@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
-import App from './App'
+import { RouterProvider } from 'react-router-dom'
+import { createAppBrowserRouter } from './App'
 import { publicAsset } from './lib/basePath'
 import './index.css'
 
@@ -55,13 +55,10 @@ if (import.meta.env.DEV) {
   document.title = 'DC Automation — dev'
 }
 
+const router = createAppBrowserRouter(basePath)
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter
-      basename={basePath}
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
-      <App />
-    </BrowserRouter>
+    <RouterProvider router={router} />
   </React.StrictMode>,
 )

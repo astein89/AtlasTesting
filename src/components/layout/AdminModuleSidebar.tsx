@@ -15,11 +15,11 @@ export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSideba
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-50 w-56 border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:pt-4 md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-50 w-72 min-w-0 max-w-72 overflow-x-hidden border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:pt-4 md:translate-x-0 ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
     >
-      <nav className="flex flex-col gap-1">
+      <nav className="flex min-w-0 flex-col gap-1 overflow-x-hidden">
         <NavLink
           to="/"
           end

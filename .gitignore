@@ -5,6 +5,8 @@ dist
 *.db*
 db_backup
 uploads
+# Wiki markdown and metadata — per-environment; do not merge from dev/main
+content/wiki/
 .env
 *.log
 .DS_Store

@@ -88,7 +88,7 @@ export function LoginModal() {
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4 print:hidden"
       role="dialog"
       aria-modal
       aria-labelledby="login-modal-title"

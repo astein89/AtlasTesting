@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom'
-import { firstAccessibleAdminPath, testingPath } from '@/lib/appPaths'
+import { firstAccessibleAdminPath, testingPath, WIKI_PREFIX } from '@/lib/appPaths'
 import { useAuthStore } from '@/store/authStore'
 
 type Props = {
@@ -22,6 +22,9 @@ export function PermissionGuard({ permission, children }: Props) {
   }
   if (hasPermission('module.locations')) {
     return <Navigate to="/locations" replace state={{ forbidden: true, from }} />
+  }
+  if (hasPermission('module.wiki')) {
+    return <Navigate to={WIKI_PREFIX} replace state={{ forbidden: true, from }} />
   }
   if (hasPermission('module.admin')) {
     const adminTarget = firstAccessibleAdminPath(hasPermission) ?? '/'

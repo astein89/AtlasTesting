@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { LoginModal } from '../auth/LoginModal'
 import { Navbar } from './Navbar'
@@ -72,7 +72,15 @@ export function Layout({ showSidebar = true }: LayoutProps) {
           </>
         )}
         <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
-          <Outlet />
+          <Suspense
+            fallback={
+              <div className="flex min-h-[12rem] items-center justify-center text-foreground/60">
+                <span className="text-sm">Loading this page…</span>
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
       <LoginModal />

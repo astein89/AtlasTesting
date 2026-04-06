@@ -11,7 +11,7 @@ type ApiResponse = {
 }
 
 function defaultNewRolePermissions(): Set<string> {
-  return new Set(['module.home', 'module.testing'])
+  return new Set(['module.home', 'module.testing', 'module.wiki'])
 }
 
 /** Other roles (excluding `slug`) that already have full access. */

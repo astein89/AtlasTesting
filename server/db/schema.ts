@@ -619,9 +619,19 @@ function migrateRoles(db: DbWrapper) {
       [
         'user',
         'User',
-        JSON.stringify(['module.home', 'module.testing', 'testing.data.write']),
+        JSON.stringify([
+          'module.home',
+          'module.testing',
+          'module.wiki',
+          'wiki.edit',
+          'testing.data.write',
+        ]),
       ],
-      ['viewer', 'Viewer', JSON.stringify(['module.home', 'module.testing'])],
+      [
+        'viewer',
+        'Viewer',
+        JSON.stringify(['module.home', 'module.testing', 'module.wiki']),
+      ],
     ]
     const ins = db.prepare('INSERT INTO roles (slug, label, permissions) VALUES (?, ?, ?)')
     for (const row of seed) {

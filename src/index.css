@@ -46,6 +46,26 @@ input, select, textarea, button {
   }
 }
 
+/* Wiki / ```md embeds: nested list markers (Tailwind preflight clears list-style on ul/ol). */
+.wiki-md-body ul {
+  list-style-type: disc;
+}
+.wiki-md-body ul ul {
+  list-style-type: circle;
+}
+.wiki-md-body ul ul ul {
+  list-style-type: square;
+}
+.wiki-md-body ol {
+  list-style-type: decimal;
+}
+.wiki-md-body ol ol {
+  list-style-type: lower-alpha;
+}
+.wiki-md-body ol ol ol {
+  list-style-type: lower-roman;
+}
+
 /* Smooth touch scrolling on iOS */
 .overflow-x-auto,
 .overflow-y-auto {
@@ -60,4 +80,81 @@ input, select, textarea, button {
 .overflow-y-auto {
   overscroll-behavior-x: auto;
   overscroll-behavior-y: contain;
+}
+
+/* Wiki: print only markdown body (.wiki-print-article); strip shell and skip chrome (.wiki-print-skip) */
+@media print {
+  body:has(.wiki-print-article) .wiki-print-skip {
+    display: none !important;
+  }
+
+  body:has(.wiki-print-article) > div.flex.min-h-screen,
+  body:has(.wiki-print-article) > div.flex.h-screen {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  body:has(.wiki-print-article) > div.flex.h-screen > div.flex.min-h-0 {
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
+  body:has(.wiki-print-article) > div > nav:first-of-type {
+    display: none !important;
+  }
+
+  body:has(.wiki-print-article) aside {
+    display: none !important;
+  }
+
+  body:has(.wiki-print-article) div.fixed.inset-0.z-40 {
+    display: none !important;
+  }
+
+  body:has(.wiki-print-article) main {
+    display: block !important;
+    flex: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  body:has(.wiki-print-article) .wiki-print-article {
+    max-width: none !important;
+    --background: #ffffff;
+    --foreground: #0a0a0a;
+    --card: #fafafa;
+    --card-foreground: #0a0a0a;
+    --border: #e5e5e5;
+    --primary: #171717;
+    --primary-foreground: #fafafa;
+    background: var(--background) !important;
+    color: var(--foreground) !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  body:has(.wiki-print-article) .wiki-print-article a {
+    text-decoration: underline;
+  }
+
+  body:has(.wiki-print-article) .wiki-print-article a[href^='/'],
+  body:has(.wiki-print-article) .wiki-print-article a[href^='#'] {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  body:has(.wiki-print-article) .wiki-print-article pre {
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-inside: avoid;
+  }
+
+  body:has(.wiki-print-article) .wiki-print-article h1,
+  body:has(.wiki-print-article) .wiki-print-article h2,
+  body:has(.wiki-print-article) .wiki-print-article h3 {
+    page-break-after: avoid;
+  }
 }

@@ -16,8 +16,8 @@ interface User {
 /** When persisted user has no permissions yet (pre-refresh), match server defaults. */
 function legacyPermissionsForRole(role: string | undefined): string[] {
   if (role === 'admin') return ['*']
-  if (role === 'viewer') return ['module.home', 'module.testing']
-  return ['module.home', 'module.testing', 'testing.data.write']
+  if (role === 'viewer') return ['module.home', 'module.testing', 'module.wiki']
+  return ['module.home', 'module.testing', 'module.wiki', 'wiki.edit', 'testing.data.write']
 }
 
 function effectivePermissions(user: User | null | undefined): string[] {
@@ -126,7 +126,7 @@ export const useAuthStore = create<AuthState>()(
       setInitializing: (initializing) => set({ initializing }),
       logout: () => {
         clearPreferencesCache()
-        set({ user: null, accessToken: null, refreshToken: null })
+        set({ user: null, accessToken: null, refreshToken: null, initializing: false })
       },
       hasPermission: (key: string) => {
         return roleHasPermission(effectivePermissions(get().user), key)

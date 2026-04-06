@@ -1,7 +1,7 @@
-import { ADMIN_PREFIX, TESTING_PREFIX, LOCATIONS_PREFIX } from '@/lib/appPaths'
+import { ADMIN_PREFIX, TESTING_PREFIX, LOCATIONS_PREFIX, WIKI_PREFIX } from '@/lib/appPaths'
 
 export interface AppModule {
-  /** Used for home module cards; artwork is mapped in `HomeModuleCardIcon` for `testing` | `locations` | `admin`. */
+  /** Used for home module cards; artwork is mapped in `HomeModuleCardIcon` for `testing` | `locations` | `wiki` | `admin`. */
   id: string
   /** First URL segment, e.g. "testing" -> /testing */
   path: string
@@ -35,6 +35,14 @@ export const appModules: AppModule[] = [
     description: 'Location schemas, zones, and location management.',
     requiredPermission: 'module.locations',
     to: LOCATIONS_PREFIX,
+  },
+  {
+    id: 'wiki',
+    path: 'wiki',
+    title: 'Wiki',
+    description: 'Documentation and guides (Markdown).',
+    requiredPermission: 'module.wiki',
+    to: WIKI_PREFIX,
   },
   {
     id: 'admin',

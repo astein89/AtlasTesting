@@ -14,6 +14,7 @@ import { preferencesRouter } from './routes/preferences.js'
 import { uploadsRouter } from './routes/uploads.js'
 import { locationsRouter } from './routes/locations.js'
 import { homeRouter } from './routes/home.js'
+import { wikiRouter } from './routes/wiki.js'
 import { rolesRouter } from './routes/roles.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
 
@@ -41,6 +42,7 @@ apiRouter.use('/preferences', preferencesRouter)
 apiRouter.use('/upload', uploadsRouter)
 apiRouter.use('/locations', locationsRouter)
 apiRouter.use('/home', homeRouter)
+apiRouter.use('/wiki', wikiRouter)
 apiRouter.use('/roles', rolesRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use(`${prefix}/api`, apiRouter)

@@ -1,5 +1,12 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { useEffect, useState, lazy } from 'react'
+import {
+  Outlet,
+  Route,
+  Navigate,
+  useLocation,
+  createBrowserRouter,
+  createRoutesFromElements,
+} from 'react-router-dom'
 import { AuthGuard } from './components/auth/AuthGuard'
 import { PermissionGuard } from './components/auth/PermissionGuard'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -38,6 +45,10 @@ const LocationZoneDetail = lazy(() =>
   import('./routes/LocationZoneDetail').then((m) => ({ default: m.LocationZoneDetail }))
 )
 const RolesEditor = lazy(() => import('./routes/RolesEditor').then((m) => ({ default: m.RolesEditor })))
+const WikiIndex = lazy(() => import('./routes/wiki/WikiIndex').then((m) => ({ default: m.WikiIndex })))
+const WikiCatchAll = lazy(() =>
+  import('./routes/wiki/WikiCatchAll').then((m) => ({ default: m.WikiCatchAll }))
+)
 
 const REHYDRATE_DELAY_MS = 300
 
@@ -56,6 +67,18 @@ const testingLayout = (
 const locationsLayout = (
   <AuthGuard>
     <PermissionGuard permission="module.locations">
+      <DateTimeConfigProvider>
+        <ConditionalFormatPresetsProvider>
+          <Layout />
+        </ConditionalFormatPresetsProvider>
+      </DateTimeConfigProvider>
+    </PermissionGuard>
+  </AuthGuard>
+)
+
+const wikiLayout = (
+  <AuthGuard>
+    <PermissionGuard permission="module.wiki">
       <DateTimeConfigProvider>
         <ConditionalFormatPresetsProvider>
           <Layout />
@@ -92,6 +115,15 @@ const tp = testingPath('test-plans')
 function LegacyBookmarkToTesting() {
   const { pathname, search } = useLocation()
   return <Navigate to={`/testing${pathname}${search}`} replace />
+}
+
+function RootShell() {
+  return (
+    <AlertConfirmProvider>
+      <AuthInit />
+      <Outlet />
+    </AlertConfirmProvider>
+  )
 }
 
 function AuthInit() {
@@ -185,18 +217,10 @@ function AuthInit() {
   return null
 }
 
-function App() {
-  return (
-    <AlertConfirmProvider>
-      <AuthInit />
-      <Suspense
-        fallback={
-          <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-            <span className="text-sm">Loading…</span>
-          </div>
-        }
-      >
-        <Routes>
+export function createAppBrowserRouter(basePath: string) {
+  return createBrowserRouter(
+    createRoutesFromElements(
+      <Route element={<RootShell />}>
           <Route path="/login" element={<Navigate to="/?login=1" replace />} />
           <Route path="/" element={publicHomeLayout}>
             <Route index element={<HomePage />} />
@@ -306,6 +330,10 @@ function App() {
               }
             />
           </Route>
+          <Route path="/wiki" element={wikiLayout}>
+            <Route index element={<WikiIndex />} />
+            <Route path="*" element={<WikiCatchAll />} />
+          </Route>
           <Route path="/locations" element={locationsLayout}>
             <Route
               index
@@ -363,10 +391,11 @@ function App() {
           <Route path="/settings" element={<Navigate to="/admin/settings" replace />} />
           <Route path="/settings/*" element={<Navigate to="/admin/settings" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </AlertConfirmProvider>
+      </Route>
+    ),
+    {
+      basename: basePath,
+      future: { v7_relativeSplatPath: true },
+    }
   )
 }
-
-export default App

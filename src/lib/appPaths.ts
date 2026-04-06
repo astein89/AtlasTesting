@@ -5,6 +5,7 @@
 
 export const TESTING_PREFIX = '/testing'
 export const LOCATIONS_PREFIX = '/locations'
+export const WIKI_PREFIX = '/wiki'
 export const ADMIN_PREFIX = '/admin'
 
 /** Path under the Testing module, e.g. testingPath('test-plans', planId, 'data') */
@@ -28,6 +29,30 @@ export function locationsPath(...segments: string[]): string {
 }
 
 /** Paths under the Admin module, e.g. adminPath('roles') -> /admin/roles */
+/** Path under Wiki, e.g. wikiPath('guides', 'start') -> /wiki/guides/start */
+export function wikiPath(...segments: string[]): string {
+  if (segments.length === 0) return WIKI_PREFIX
+  const tail = segments
+    .filter(Boolean)
+    .join('/')
+    .replace(/^\/+/, '')
+  return `${WIKI_PREFIX}/${tail}`
+}
+
+/** Root `content/wiki/index.md` is path `index`; URLs use `/wiki` and `/wiki/edit` (not `/wiki/index`). */
+export function wikiPageUrl(pagePath: string): string {
+  const t = pagePath.replace(/^\/+|\/+$/g, '')
+  if (!t || t === 'index') return WIKI_PREFIX
+  return `${WIKI_PREFIX}/${t}`
+}
+
+/** Edit URL for a wiki page path. */
+export function wikiEditUrl(pagePath: string): string {
+  const t = pagePath.replace(/^\/+|\/+$/g, '')
+  if (!t || t === 'index') return `${WIKI_PREFIX}/edit`
+  return `${WIKI_PREFIX}/${t}/edit`
+}
+
 export function adminPath(...segments: string[]): string {
   if (segments.length === 0) return ADMIN_PREFIX
   const tail = segments

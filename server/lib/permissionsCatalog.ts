@@ -4,6 +4,7 @@ export const MODULE_PERMISSION_KEYS = [
   'module.home',
   'module.testing',
   'module.locations',
+  'module.wiki',
   'module.admin',
 ] as const
 
@@ -22,6 +23,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'module.home', label: 'Home hub', group: 'Modules' },
   { id: 'module.testing', label: 'Testing', group: 'Modules' },
   { id: 'module.locations', label: 'Locations', group: 'Modules' },
+  { id: 'module.wiki', label: 'Wiki', group: 'Modules' },
   { id: 'module.admin', label: 'Administration', group: 'Modules' },
   {
     id: 'testing.data.write',
@@ -39,6 +41,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     group: 'Module writes',
   },
   { id: 'home.edit', label: 'Edit home page content', group: 'Home' },
+  { id: 'wiki.edit', label: 'Edit wiki pages (create / save Markdown files)', group: 'Wiki' },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },
   { id: 'admin.db', label: 'Database tables viewer', group: 'Administration' },

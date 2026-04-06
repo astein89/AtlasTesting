@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
+import { WikiSidebarNav } from '../wiki/WikiSidebarNav'
 import { useAuthStore } from '../../store/authStore'
 import { testingPath, locationsPath } from '../../lib/appPaths'
 
@@ -15,15 +16,16 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const location = useLocation()
   const inLocations = location.pathname.startsWith('/locations')
   const inTesting = location.pathname.startsWith('/testing')
+  const inWiki = location.pathname.startsWith('/wiki')
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-50 w-56 border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:pt-4 md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-50 flex w-72 min-h-0 min-w-0 max-w-72 flex-col overflow-x-hidden border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:self-stretch md:pt-4 md:translate-x-0 ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
     >
-      <nav className="flex flex-col gap-1">
-        {(inTesting || inLocations) && (
+      <nav className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
+        {(inTesting || inLocations || inWiki) && (
           <NavLink
             to="/"
             end
@@ -121,6 +123,12 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             >
               Schema
             </NavLink>
+          </>
+        )}
+        {hasPermission('module.wiki') && inWiki && (
+          <>
+            <div className="my-2 border-t border-border" aria-hidden />
+            <WikiSidebarNav onNavigate={onClose} />
           </>
         )}
       </nav>
