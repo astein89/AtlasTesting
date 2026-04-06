@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '@/api/client'
+import { api, isAbortLikeError } from '@/api/client'
+import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { appModules, getModuleRequiredPermission } from '@/config/modules'
 import { HomeIntroMarkdown } from '@/components/home/HomeIntroMarkdown'
 import { HomeLinkCard } from '@/components/home/HomeLinkCard'
@@ -49,10 +50,11 @@ export function HomePage() {
   const editOpen = useHomePageEditStore((s) => s.editorOpen)
   const setEditOpen = useHomePageEditStore((s) => s.setEditorOpen)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const { data } = await api.get<HomePageConfig & { introSubtitle?: string; introTitle?: string }>(
-        '/home'
+        '/home',
+        { signal }
       )
       let introMarkdown =
         typeof data.introMarkdown === 'string' && data.introMarkdown.trim()
@@ -66,16 +68,15 @@ export function HomePage() {
         showWelcomeLogo: data.showWelcomeLogo === true,
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(data.welcomeLogoMaxRem),
       })
-    } catch {
+    } catch (e) {
+      if (isAbortLikeError(e)) return
       setConfig(FALLBACK_HOME)
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  useAbortableEffect((signal) => load(signal), [load])
 
   useEffect(
     () => () => {

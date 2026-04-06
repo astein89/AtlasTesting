@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { isAbortLikeError } from '@/api/client'
+import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { useMatchMedia } from '@/hooks/useMatchMedia'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -449,19 +451,20 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     setExpanded(new Set())
   }, [])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     const gen = ++sidebarLoadGenRef.current
     setLoading(true)
     try {
       const [list, order] = await Promise.all([
-        fetchWikiPages(),
-        fetchWikiSidebarOrder().catch(() => ({} as Record<string, string[]>)),
+        fetchWikiPages(signal),
+        fetchWikiSidebarOrder(signal).catch(() => ({} as Record<string, string[]>)),
       ])
       if (gen !== sidebarLoadGenRef.current) return
       setPages(list)
       setSidebarOrder(order && typeof order === 'object' ? order : {})
-    } catch {
+    } catch (e) {
       if (gen !== sidebarLoadGenRef.current) return
+      if (isAbortLikeError(e)) return
       setPages([])
       setSidebarOrder({})
     } finally {
@@ -471,9 +474,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     }
   }, [])
 
-  useEffect(() => {
-    void load()
-  }, [load, location.pathname])
+  useAbortableEffect((signal) => load(signal), [load, location.pathname])
 
   const currentPagePath = useMemo(() => {
     const p = location.pathname

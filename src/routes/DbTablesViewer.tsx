@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api/client'
+import { useState } from 'react'
+import { api, isAbortLikeError } from '../api/client'
+import { useAbortableEffect } from '../hooks/useAbortableEffect'
 import { PopupSelect } from '../components/ui/PopupSelect'
 
 export function DbTablesViewer() {
@@ -8,25 +9,32 @@ export function DbTablesViewer() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    api
-      .get<string[]>('/admin/tables')
+  useAbortableEffect((signal) => {
+    void api
+      .get<string[]>('/admin/tables', { signal })
       .then((r) => {
         setTables(r.data)
         if (r.data.length && !selected) setSelected(r.data[0])
       })
-      .catch(() => setTables([]))
+      .catch((e) => {
+        if (!isAbortLikeError(e)) setTables([])
+      })
   }, [])
 
-  useEffect(() => {
-    if (!selected) return
-    setLoading(true)
-    api
-      .get<Record<string, unknown>[]>(`/admin/tables/${selected}`)
-      .then((r) => setRows(r.data))
-      .catch(() => setRows([]))
-      .finally(() => setLoading(false))
-  }, [selected])
+  useAbortableEffect(
+    (signal) => {
+      if (!selected) return
+      setLoading(true)
+      void api
+        .get<Record<string, unknown>[]>(`/admin/tables/${selected}`, { signal })
+        .then((r) => setRows(r.data))
+        .catch((e) => {
+          if (!isAbortLikeError(e)) setRows([])
+        })
+        .finally(() => setLoading(false))
+    },
+    [selected]
+  )
 
   const cols = rows.length > 0 ? Object.keys(rows[0]) : []
 

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { api } from '@/api/client'
+import { useCallback, useState } from 'react'
+import { api, isAbortLikeError } from '@/api/client'
+import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { ROLE_EDITOR_MODULE_NESTING, getPermissionLabel } from '@/lib/permissionsCatalog'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 
@@ -34,18 +35,23 @@ export function RolesEditor() {
   const [draftPerms, setDraftPerms] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
 
-  const load = useCallback(() => {
-    setLoading(true)
-    api
-      .get<ApiResponse>('/roles')
-      .then((r) => setRoles(r.data.roles))
-      .catch(() => showAlert('Failed to load roles'))
-      .finally(() => setLoading(false))
-  }, [showAlert])
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true)
+      try {
+        const r = await api.get<ApiResponse>('/roles', { signal })
+        setRoles(r.data.roles)
+      } catch (e) {
+        if (isAbortLikeError(e)) return
+        showAlert('Failed to load roles')
+      } finally {
+        setLoading(false)
+      }
+    },
+    [showAlert]
+  )
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  useAbortableEffect((signal) => load(signal), [load])
 
   const openCreate = () => {
     setModal({ type: 'create' })

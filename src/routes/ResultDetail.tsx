@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, isAbortLikeError } from '../api/client'
+import { useAbortableEffect } from '../hooks/useAbortableEffect'
 import { testingPath } from '../lib/appPaths'
 import { formatDateTime } from '../lib/dateTimeConfig'
 import { getBasePath } from '../lib/basePath'
@@ -48,53 +49,61 @@ export function ResultDetail() {
   const [fields, setFields] = useState<DataField[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!id) return
-    setLoading(true)
-    api
-      .get<Record>(`/records/${id}`)
-      .then((r) => {
-        setRecord(r.data)
-        return r.data
-      })
-      .catch(() => {
-        setRecord(null)
-        setPlan(null)
-        setFields([])
-      })
-      .finally(() => setLoading(false))
-  }, [id])
-
-  useEffect(() => {
-    if (!record?.testPlanId) return
-    api
-      .get<TestPlan>(`/test-plans/${record.testPlanId}`)
-      .then((r) => {
-        setPlan(r.data)
-        const fieldIds = r.data.fieldIds?.length ? r.data.fieldIds : []
-        if (fieldIds.length === 0) {
+  useAbortableEffect(
+    (signal) => {
+      if (!id) return
+      setLoading(true)
+      void api
+        .get<Record>(`/records/${id}`, { signal })
+        .then((r) => {
+          setRecord(r.data)
+          return r.data
+        })
+        .catch((e) => {
+          if (isAbortLikeError(e)) return
+          setRecord(null)
+          setPlan(null)
           setFields([])
-          return
-        }
-        return Promise.allSettled(
-          fieldIds.map((fid: string) =>
-            api.get<DataField>(`/fields/${fid}`).then((fr) => fr.data)
+        })
+        .finally(() => setLoading(false))
+    },
+    [id]
+  )
+
+  useAbortableEffect(
+    (signal) => {
+      if (!record?.testPlanId) return
+      void api
+        .get<TestPlan>(`/test-plans/${record.testPlanId}`, { signal })
+        .then((r) => {
+          setPlan(r.data)
+          const fieldIds = r.data.fieldIds?.length ? r.data.fieldIds : []
+          if (fieldIds.length === 0) {
+            setFields([])
+            return
+          }
+          return Promise.allSettled(
+            fieldIds.map((fid: string) =>
+              api.get<DataField>(`/fields/${fid}`, { signal }).then((fr) => fr.data)
+            )
           )
-        )
-      })
-      .then((settled) => {
-        if (settled) {
-          const f = settled
-            .filter((r): r is PromiseFulfilledResult<DataField> => r.status === 'fulfilled' && r.value != null)
-            .map((r) => r.value)
-          setFields(f)
-        }
-      })
-      .catch(() => {
-        setPlan(null)
-        setFields([])
-      })
-  }, [record?.testPlanId])
+        })
+        .then((settled) => {
+          if (settled) {
+            const f = settled
+              .filter((r): r is PromiseFulfilledResult<DataField> => r.status === 'fulfilled' && r.value != null)
+              .map((r) => r.value)
+            setFields(f)
+          }
+        })
+        .catch((e) => {
+          if (isAbortLikeError(e)) return
+          setPlan(null)
+          setFields([])
+        })
+    },
+    [record?.testPlanId]
+  )
 
   if (loading || !record) return <p className="text-foreground/60">Loading...</p>
 

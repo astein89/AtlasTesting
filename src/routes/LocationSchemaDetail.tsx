@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, isAbortLikeError } from '../api/client'
+import { useAbortableEffect } from '../hooks/useAbortableEffect'
 import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { LocationSchemaFieldsEditor } from '../components/locations/LocationSchemaFieldsEditor'
@@ -73,22 +74,18 @@ export function LocationSchemaDetail() {
   const [editSchemaDescription, setEditSchemaDescription] = useState('')
   const [savingSchema, setSavingSchema] = useState(false)
 
-  useEffect(() => {
-    if (!schemaId) return
-    void load(schemaId)
-  }, [schemaId])
-
-  async function load(id: string) {
+  async function load(id: string, signal?: AbortSignal) {
     setLoading(true)
     setError(null)
     try {
       const [schemasResp, compsResp] = await Promise.all([
-        api.get<LocationSchema[]>('/locations/schemas'),
-        api.get<SchemaComponent[]>(`/locations/schemas/${id}/components`),
+        api.get<LocationSchema[]>('/locations/schemas', { signal }),
+        api.get<SchemaComponent[]>(`/locations/schemas/${id}/components`, { signal }),
       ])
       setSchema(schemasResp.data.find((s) => s.id === id) || null)
       setComponents(compsResp.data.map(normalizeComponentRow))
-    } catch {
+    } catch (e) {
+      if (isAbortLikeError(e)) return
       setError('Failed to load schema')
       setSchema(null)
       setComponents([])
@@ -96,6 +93,14 @@ export function LocationSchemaDetail() {
       setLoading(false)
     }
   }
+
+  useAbortableEffect(
+    (signal) => {
+      if (!schemaId) return
+      void load(schemaId, signal)
+    },
+    [schemaId]
+  )
 
   async function handleAddComponent(e: React.FormEvent) {
     e.preventDefault()

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useBlocker, useLocation, useNavigate, type BlockerFunction } from 'react-router-dom'
+import { isAbortLikeError } from '@/api/client'
+import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import {
   archiveWikiPage,
   fetchWikiPage,
@@ -229,7 +231,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     setEditorHistoryKey((k) => k + 1)
   }, [pagePath])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     const gen = ++loadGenRef.current
 
     if (!pagePath.trim()) {
@@ -243,9 +245,9 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     const state = location.state as WikiEditLocationState | null
     const fromNav =
       typeof state?.wikiNewTitle === 'string' ? state.wikiNewTitle.trim() : ''
-    const pagesP = fetchWikiPages()
+    const pagesP = fetchWikiPages(signal)
     try {
-      const data = await fetchWikiPage(pagePath)
+      const data = await fetchWikiPage(pagePath, signal)
       if (gen !== loadGenRef.current) return
       const pages = await pagesP.catch(() => [] as WikiPageListItem[])
       setWikiPageList(Array.isArray(pages) ? pages : [])
@@ -284,6 +286,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       }
     } catch (e: unknown) {
       if (gen !== loadGenRef.current) return
+      if (isAbortLikeError(e)) return
       const status = (e as { response?: { status?: number } })?.response?.status
       if (status === 404) {
         const pages = await pagesP.catch(() => [] as WikiPageListItem[])
@@ -316,7 +319,8 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
         const pages = await pagesP.catch(() => [] as WikiPageListItem[])
         setWikiPageList(Array.isArray(pages) ? pages : [])
         setWikiPageKind('page')
-        showAlert('Could not load page for editing.')
+        const timedOut = (e as { code?: string })?.code === 'ECONNABORTED'
+        void showAlert(timedOut ? 'Request timed out. Try again.' : 'Could not load page for editing.')
         slugTouchedRef.current = true
         setPageExistsOnServer(false)
       }
@@ -327,9 +331,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     }
   }, [pagePath, showAlert, location.state])
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  useAbortableEffect((signal) => load(signal), [load])
 
   useEffect(() => {
     allowLeaveWithoutSaveRef.current = false

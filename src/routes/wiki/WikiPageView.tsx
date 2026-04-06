@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { isAbortLikeError } from '@/api/client'
+import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import {
   fetchWikiPage,
   fetchWikiPages,
@@ -88,7 +90,7 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
   const [pageSettingsOpen, setPageSettingsOpen] = useState(false)
   const loadGenRef = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     const gen = ++loadGenRef.current
 
     if (!pagePath.trim()) {
@@ -114,11 +116,11 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
     setResolvedPagePath(null)
     setShowSectionPages(true)
 
-    const pagesP = fetchWikiPages()
-    const orderP = fetchWikiSidebarOrder().catch(() => ({} as Record<string, string[]>))
+    const pagesP = fetchWikiPages(signal)
+    const orderP = fetchWikiSidebarOrder(signal).catch(() => ({} as Record<string, string[]>))
 
     try {
-      const data = await fetchWikiPage(pagePath)
+      const data = await fetchWikiPage(pagePath, signal)
       if (gen !== loadGenRef.current) return
       const [pages, order] = await Promise.all([pagesP, orderP])
       if (gen !== loadGenRef.current) return
@@ -137,6 +139,7 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
       setShowSectionPages(data.pageKind === 'section' ? data.showSectionPages !== false : true)
     } catch (e: unknown) {
       if (gen !== loadGenRef.current) return
+      if (isAbortLikeError(e)) return
       const status = (e as { response?: { status?: number } })?.response?.status
       if (status === 404) {
         try {
@@ -161,8 +164,9 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
             setWikiPageKind('page')
             setShowSectionPages(true)
           }
-        } catch {
+        } catch (inner: unknown) {
           if (gen !== loadGenRef.current) return
+          if (isAbortLikeError(inner)) return
           setError('This page does not exist yet.')
           setMarkdown('')
           setFolderNav(null)
@@ -187,7 +191,8 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
         const pages = await pagesP.catch(() => [] as WikiPageListItem[])
         if (gen !== loadGenRef.current) return
         setWikiPageList(Array.isArray(pages) ? pages : [])
-        setError('Could not load this page.')
+        const timedOut = (e as { code?: string })?.code === 'ECONNABORTED'
+        setError(timedOut ? 'Request timed out. Try again.' : 'Could not load this page.')
         setMarkdown(null)
         setResolvedPagePath(null)
         setWikiPageKind('page')
@@ -200,9 +205,7 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
     }
   }, [pagePath])
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  useAbortableEffect((signal) => load(signal), [load])
 
   const headings = useMemo(() => (markdown ? parseWikiHeadings(markdown) : []), [markdown])
 

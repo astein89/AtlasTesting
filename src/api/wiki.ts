@@ -8,8 +8,8 @@ export type WikiPageListItem = { path: string; title?: string }
 /** `section` = content lives in `path/index.md`; `page` = flat `path.md`. */
 export type WikiPageKind = 'page' | 'section'
 
-export async function fetchWikiPages(): Promise<WikiPageListItem[]> {
-  const { data } = await api.get<WikiPageListItem[]>('/wiki/pages')
+export async function fetchWikiPages(signal?: AbortSignal): Promise<WikiPageListItem[]> {
+  const { data } = await api.get<WikiPageListItem[]>('/wiki/pages', { signal })
   return Array.isArray(data) ? data : []
 }
 
@@ -32,7 +32,10 @@ export async function fetchWikiRoleOptions(): Promise<Array<{ slug: string; labe
   return Array.isArray(data) ? data : []
 }
 
-export async function fetchWikiPage(path: string): Promise<{
+export async function fetchWikiPage(
+  path: string,
+  signal?: AbortSignal
+): Promise<{
   path: string
   markdown: string
   pageKind?: WikiPageKind
@@ -51,6 +54,7 @@ export async function fetchWikiPage(path: string): Promise<{
     showSectionPages?: boolean
   }>('/wiki/page', {
     params: { path },
+    signal,
   })
   return {
     ...data,
@@ -60,8 +64,8 @@ export async function fetchWikiPage(path: string): Promise<{
 
 export type WikiSidebarOrderMap = Record<string, string[]>
 
-export async function fetchWikiSidebarOrder(): Promise<WikiSidebarOrderMap> {
-  const { data } = await api.get<WikiSidebarOrderMap>('/wiki/order')
+export async function fetchWikiSidebarOrder(signal?: AbortSignal): Promise<WikiSidebarOrderMap> {
+  const { data } = await api.get<WikiSidebarOrderMap>('/wiki/order', { signal })
   return data && typeof data === 'object' ? data : {}
 }
 

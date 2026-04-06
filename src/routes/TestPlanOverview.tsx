@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, isAbortLikeError } from '../api/client'
+import { useAbortableEffect } from '../hooks/useAbortableEffect'
 import { getTests, createTest, updateTest, deleteTest } from '../api/tests'
 import { useAuthStore } from '../store/authStore'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
@@ -80,40 +81,50 @@ export function TestPlanOverview() {
     }
   }
 
-  const loadPlan = () => {
+  const loadPlan = (signal?: AbortSignal) => {
     if (!planId) return
-    api
-      .get<TestPlan>(`/test-plans/${planId}`)
+    void api
+      .get<TestPlan>(`/test-plans/${planId}`, { signal })
       .then((r) => setPlan(r.data))
-      .catch(() => navigate(testingPath('test-plans')))
+      .catch((e) => {
+        if (!isAbortLikeError(e)) navigate(testingPath('test-plans'))
+      })
   }
 
-  const loadTests = () => {
+  const loadTests = (signal?: AbortSignal) => {
     if (!planId) return
-    getTests(planId)
+    getTests(planId, { signal })
       .then((data) => setTests(data.filter((t) => !t.archived)))
-      .catch(() => setTests([]))
-    getTests(planId, { archived: true })
+      .catch((e) => {
+        if (!isAbortLikeError(e)) setTests([])
+      })
+    getTests(planId, { archived: true, signal })
       .then((data) => setArchivedTests(data.filter((t) => t.archived)))
-      .catch(() => setArchivedTests([]))
+      .catch((e) => {
+        if (!isAbortLikeError(e)) setArchivedTests([])
+      })
   }
 
-  useEffect(() => {
-    if (!planId) return
-    setLoading(true)
-    loadPlan()
-    getTests(planId)
-      .then((data) => {
-        setTests(data.filter((t) => !t.archived))
-        return getTests(planId!, { archived: true })
-      })
-      .then((data) => setArchivedTests(data.filter((t) => t.archived)))
-      .catch(() => {
-        setTests([])
-        setArchivedTests([])
-      })
-      .finally(() => setLoading(false))
-  }, [planId])
+  useAbortableEffect(
+    (signal) => {
+      if (!planId) return
+      setLoading(true)
+      loadPlan(signal)
+      void getTests(planId, { signal })
+        .then((data) => {
+          setTests(data.filter((t) => !t.archived))
+          return getTests(planId, { archived: true, signal })
+        })
+        .then((data) => setArchivedTests(data.filter((t) => t.archived)))
+        .catch((e) => {
+          if (isAbortLikeError(e)) return
+          setTests([])
+          setArchivedTests([])
+        })
+        .finally(() => setLoading(false))
+    },
+    [planId]
+  )
 
   const handleAddTest = async () => {
     if (!planId || !addTestName.trim() || !addTestStart.trim()) return

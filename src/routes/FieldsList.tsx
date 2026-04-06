@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, isAbortLikeError } from '../api/client'
+import { useAbortableEffect } from '../hooks/useAbortableEffect'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import { getFieldsReferencingKey } from '../utils/formulaEvaluator'
 import { anyPlanConditionalStatusRulesTouchField } from '../utils/planConditionalStatus'
@@ -105,22 +106,26 @@ export function FieldsList() {
     return map
   }, [testPlans])
 
-  const loadFields = useCallback(() => {
+  const loadFields = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
-    Promise.all([
-      api.get<DataField[]>('/fields').then((r) => r.data).catch(() => [] as DataField[]),
-      api.get<TestPlan[]>('/test-plans').then((r) => r.data).catch(() => [] as TestPlan[]),
-    ])
-      .then(([fieldList, planList]) => {
-        setFields(fieldList)
-        setTestPlans(planList)
-      })
-      .finally(() => setLoading(false))
+    try {
+      const [fieldList, planList] = await Promise.all([
+        api.get<DataField[]>('/fields', { signal }).then((r) => r.data).catch(() => [] as DataField[]),
+        api.get<TestPlan[]>('/test-plans', { signal }).then((r) => r.data).catch(() => [] as TestPlan[]),
+      ])
+      setFields(fieldList)
+      setTestPlans(planList)
+    } catch (e) {
+      if (!isAbortLikeError(e)) {
+        setFields([])
+        setTestPlans([])
+      }
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  useEffect(() => {
-    loadFields()
-  }, [loadFields])
+  useAbortableEffect((signal) => loadFields(signal), [loadFields])
 
   const handleDelete = async (id: string, key: string) => {
     const usedBy = getFieldsReferencingKey(key, fields.filter((f) => f.id !== id))

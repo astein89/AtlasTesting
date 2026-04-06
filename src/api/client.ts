@@ -7,7 +7,15 @@ const basePath = getBasePath()
 const api = axios.create({
   baseURL: `${basePath}/api`,
   headers: { 'Content-Type': 'application/json' },
+  /** Avoid hung requests leaving spinners forever (wiki views, etc.). Large exports can override per-request. */
+  timeout: 90_000,
 })
+
+/** Navigation/unmount abort or axios cancel — do not treat as a failed load or show an error toast. */
+export function isAbortLikeError(e: unknown): boolean {
+  const x = e as { code?: string; name?: string }
+  return x?.code === 'ERR_CANCELED' || x?.name === 'CanceledError' || x?.name === 'AbortError'
+}
 
 function setAuthHeader(config: InternalAxiosRequestConfig, token: string) {
   const h = config.headers

@@ -1,9 +1,13 @@
 import { api } from './client'
 import type { Test } from '../types'
 
-export function getTests(planId: string, options?: { archived?: boolean }): Promise<Test[]> {
+export function getTests(
+  planId: string,
+  options?: { archived?: boolean; signal?: AbortSignal }
+): Promise<Test[]> {
   const params = options?.archived ? { archived: 'true' } : {}
-  return api.get<Test[]>(`/test-plans/${planId}/tests`, { params }).then((r) => r.data)
+  const signal = options?.signal
+  return api.get<Test[]>(`/test-plans/${planId}/tests`, { params, signal }).then((r) => r.data)
 }
 
 export function getTest(planId: string, testId: string): Promise<Test> {
