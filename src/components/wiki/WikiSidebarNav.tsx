@@ -474,7 +474,9 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     }
   }, [])
 
-  useAbortableEffect((signal) => load(signal), [load, location.pathname])
+  /** Omit `location.pathname`: refetching the page list on every in-wiki navigation aborted the
+   * request each time and was unnecessary; mount covers entering the wiki module. */
+  useAbortableEffect((signal) => load(signal), [load])
 
   const currentPagePath = useMemo(() => {
     const p = location.pathname

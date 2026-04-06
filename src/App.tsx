@@ -158,7 +158,10 @@ function AuthInit() {
     if (!hydrationDone) return
 
     const accessToken = useAuthStore.getState().accessToken
-    if (user && accessToken) return
+    if (user && accessToken) {
+      setInitializing(false)
+      return
+    }
     const currentRefresh = useAuthStore.getState().refreshToken
     if (!currentRefresh) {
       const t = setTimeout(() => {
