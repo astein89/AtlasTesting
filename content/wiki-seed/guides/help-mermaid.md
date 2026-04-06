@@ -18,9 +18,9 @@ flowchart LR
   A[Start] --> B[End]
 ```
 
-You can also show the fence in markdown as documentation:
+You can also show the fence in markdown as documentation (use a **`text`** fence so the inner fence is not executed):
 
-````markdown
+````text
 ```mermaid
 flowchart LR
   A[Start] --> B[End]

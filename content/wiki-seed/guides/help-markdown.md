@@ -6,11 +6,15 @@ The wiki stores pages as **Markdown** (`.md`). This editor has a **toolbar** for
 
 Use `#` through `######` at the start of a line. The first heading often doubles as the page title.
 
-```markdown
+**Example** (what you type):
+
+```text
 # Title
 ## Section
 ### Subsection
 ```
+
+Those lines render as real headings on the page (sizes differ by level).
 
 ## Emphasis and code
 
@@ -19,11 +23,15 @@ Use `#` through `######` at the start of a line. The first heading often doubles
 - Inline `` `code` ``
 - Fenced blocks with language tags:
 
-````markdown
+**Example:**
+
+````text
 ```js
 const x = 1
 ```
 ````
+
+The `js` label enables syntax highlighting in the wiki view (where supported).
 
 ## Links
 
@@ -46,14 +54,23 @@ A line with `---` on its own creates a divider.
 
 ## Embedding another markdown file
 
-Use a fenced block with language `md` or `markdown` to render nested markdown inside a page:
+Fences with language `md` or `markdown` are **rendered as markdown** inside the page (nested content), not shown as plain code. To document the **source** of a nested block without executing it, put that source in a **`text`** fence (or another non-markdown language). Show the **result** in a separate ` ```md ` fence.
 
-````markdown
+**Source** (what you type):
+
+````text
 ```md
 # Nested
 Some **bold** text.
 ```
 ````
+
+**Rendered:**
+
+```md
+# Nested
+Some **bold** text.
+```
 
 ## Printing
 
