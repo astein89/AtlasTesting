@@ -6,6 +6,7 @@ dist
 db_backup
 uploads
 # Wiki markdown and metadata — per-environment; do not merge from dev/main
+# Live wiki data (editable on disk); canonical defaults live in content/wiki-seed/
 content/wiki/
 .env
 *.log

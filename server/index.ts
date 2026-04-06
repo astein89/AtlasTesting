@@ -17,6 +17,7 @@ import { homeRouter } from './routes/home.js'
 import { wikiRouter } from './routes/wiki.js'
 import { rolesRouter } from './routes/roles.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
+import { seedWikiDefaults } from './lib/wikiSeed.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -162,6 +163,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 })
 
 runSeed()
+seedWikiDefaults()
 
 if (isProd && !basePath) {
   app.use(express.static(distPath))
