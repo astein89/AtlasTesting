@@ -85,12 +85,17 @@ export function HomePage() {
   )
 
   const visibleModules = appModules.filter((m) => hasPermission(getModuleRequiredPermission(m)))
+  const hasVisibleModules = visibleModules.length > 0
 
   const roleSlugs = userRoleSlugs(user)
   const visibleCustomLinks = config.customLinks.filter((link) =>
     customLinkVisible(link, hasPermission, roleSlugs)
   )
   const hasExtraLinks = visibleCustomLinks.length > 0
+  /** Only show the hub row when there is at least one module card or one link. */
+  const showModulesAndLinksSection = hasVisibleModules || hasExtraLinks
+  /** Two columns only when both columns have content. */
+  const twoColumnModulesAndLinks = hasVisibleModules && hasExtraLinks
   const logoMaxRem = clampWelcomeLogoMaxRem(config.welcomeLogoMaxRem)
 
   return (
@@ -130,47 +135,63 @@ export function HomePage() {
           )}
         </section>
 
-        <section
-          aria-label="Modules and links"
-          className={
-            hasExtraLinks
-              ? 'grid grid-cols-1 gap-10 md:grid-cols-2 md:items-stretch md:gap-12'
-              : 'flex justify-center'
-          }
-        >
-          <div className={hasExtraLinks ? 'flex min-h-0 min-w-0 flex-col' : 'w-full max-w-md'}>
-            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Modules</p>
-            <ul className="flex flex-col gap-3">
-              {visibleModules.map((m) => (
-                <li key={m.id} className="flex">
-                  <HomeLinkCard
-                    title={m.title}
-                    description={m.description}
-                    href={m.to}
-                    moduleIconId={m.id}
-                  />
-                </li>
-              ))}
-            </ul>
-          </div>
-          {hasExtraLinks ? (
-            <div className="flex min-h-0 min-w-0 flex-col md:border-l md:border-border md:pl-8 lg:pl-12">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Links</p>
-              <ul className="flex flex-col gap-3">
-                {visibleCustomLinks.map((link) => (
-                  <li key={link.id} className="flex">
-                    <HomeLinkCard
-                      title={link.title}
-                      description={link.description}
-                      href={link.href}
-                      showUrl
-                    />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </section>
+        {showModulesAndLinksSection ? (
+          <section
+            aria-label="Modules and links"
+            className={
+              twoColumnModulesAndLinks
+                ? 'grid grid-cols-1 gap-10 md:grid-cols-2 md:items-stretch md:gap-12'
+                : 'flex justify-center'
+            }
+          >
+            {hasVisibleModules ? (
+              <div
+                className={
+                  twoColumnModulesAndLinks ? 'flex min-h-0 min-w-0 flex-col' : 'w-full max-w-md'
+                }
+              >
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">
+                  Modules
+                </p>
+                <ul className="flex flex-col gap-3">
+                  {visibleModules.map((m) => (
+                    <li key={m.id} className="flex">
+                      <HomeLinkCard
+                        title={m.title}
+                        description={m.description}
+                        href={m.to}
+                        moduleIconId={m.id}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {hasExtraLinks ? (
+              <div
+                className={
+                  twoColumnModulesAndLinks
+                    ? 'flex min-h-0 min-w-0 flex-col md:border-l md:border-border md:pl-8 lg:pl-12'
+                    : 'w-full max-w-md'
+                }
+              >
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Links</p>
+                <ul className="flex flex-col gap-3">
+                  {visibleCustomLinks.map((link) => (
+                    <li key={link.id} className="flex">
+                      <HomeLinkCard
+                        title={link.title}
+                        description={link.description}
+                        href={link.href}
+                        showUrl
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
       </div>
 
       {editOpen && (
