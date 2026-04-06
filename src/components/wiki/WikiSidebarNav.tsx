@@ -424,8 +424,8 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     (sidebarTab === 'explorer' ||
       (sidebarTab === 'search' && hasSearchQuery && filteredPagesForSearch.length > 0))
 
-  const showEditToolbar =
-    canEdit && !loading && pages.length > 0 && sidebarTab === 'explorer'
+  /** New section/page must be available when the wiki is empty; Sort only makes sense once pages exist. */
+  const showEditToolbar = canEdit && !loading && sidebarTab === 'explorer'
 
   const showUploadMdToolbar = canEdit && !loading && sidebarTab === 'explorer'
 
@@ -658,15 +658,17 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
           >
             <PageIcon />
           </button>
-          <button
-            type="button"
-            onClick={() => setSortModalOpen(true)}
-            aria-label="Sort pages"
-            title="Sort pages under a parent"
-            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
-          >
-            <SortIcon />
-          </button>
+          {pages.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setSortModalOpen(true)}
+              aria-label="Sort pages"
+              title="Sort pages under a parent"
+              className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+            >
+              <SortIcon />
+            </button>
+          ) : null}
         </>
       ) : null}
     </>
