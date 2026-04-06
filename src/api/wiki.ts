@@ -1,5 +1,8 @@
 import { api } from './client'
 
+/** Must match `MAX_MARKDOWN_CHARS` in `server/routes/wiki.ts`. */
+export const WIKI_MAX_MARKDOWN_CHARS = 500_000
+
 export type WikiPageListItem = { path: string; title?: string }
 
 /** `section` = content lives in `path/index.md`; `page` = flat `path.md`. */

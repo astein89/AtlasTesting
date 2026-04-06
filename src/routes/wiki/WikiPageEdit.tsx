@@ -8,6 +8,7 @@ import {
   fetchWikiSlugSuggestion,
   moveWikiPage,
   saveWikiPage,
+  WIKI_MAX_MARKDOWN_CHARS,
   type WikiPageKind,
   type WikiPageListItem,
 } from '@/api/wiki'
@@ -221,6 +222,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
   const [pageDisplayName, setPageDisplayName] = useState('')
   const [newSectionModalOpen, setNewSectionModalOpen] = useState(false)
   const slugTouchedRef = useRef(false)
+  const importMdInputRef = useRef<HTMLInputElement>(null)
   /** When true, the next in-app navigation skips the unsaved-changes dialog (e.g. after archive). */
   const allowLeaveWithoutSaveRef = useRef(false)
   const loadGenRef = useRef(0)
@@ -764,6 +766,47 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
               </svg>
             </button>
           ) : null}
+          <input
+            ref={importMdInputRef}
+            type="file"
+            accept=".md,.markdown,text/markdown"
+            className="sr-only"
+            aria-hidden
+            tabIndex={-1}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (!f) return
+              if (!/\.(md|markdown)$/i.test(f.name)) {
+                void showAlert('Choose a .md or .markdown file.')
+                return
+              }
+              const reader = new FileReader()
+              reader.onload = () => {
+                const text = typeof reader.result === 'string' ? reader.result : ''
+                if (text.length > WIKI_MAX_MARKDOWN_CHARS) {
+                  void showAlert(
+                    `File is too large (max ${WIKI_MAX_MARKDOWN_CHARS.toLocaleString()} characters).`
+                  )
+                  return
+                }
+                setMarkdown(text)
+              }
+              reader.onerror = () => {
+                void showAlert('Could not read that file.')
+              }
+              reader.readAsText(f, 'UTF-8')
+            }}
+          />
+          <button
+            type="button"
+            disabled={saving || loading || archiving}
+            onClick={() => importMdInputRef.current?.click()}
+            className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-background disabled:opacity-50"
+            title="Replace editor content from a local markdown file"
+          >
+            Import .md
+          </button>
           <button
             type="button"
             disabled={archiving}

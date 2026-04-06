@@ -16,6 +16,7 @@ import { WikiPathCreateModal, type WikiPathCreateKind } from './WikiPathCreateMo
 import { WikiSidebarPageMenu } from './WikiSidebarPageMenu'
 import { WikiSidebarPageSettingsModal } from './WikiSidebarPageSettingsModal'
 import { WikiSortModal } from './WikiSortModal'
+import { WikiUploadMdModal } from './WikiUploadMdModal'
 
 /** All folder paths under `node` that have children (for expand-all). */
 function collectFolderPathsWithChildren(node: WikiTreeNode): string[] {
@@ -81,6 +82,14 @@ function PageIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
       <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M14 2v6h6M12 18v-6M9 15h6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function UploadMdIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
+      <path d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -209,6 +218,8 @@ type SidebarTab = 'explorer' | 'search'
 /** Dialog target: top-level section/page, or nested under a tree path. */
 type WikiNewPathTarget = null | { kind: WikiPathCreateKind; under?: string }
 
+type WikiUploadMdTarget = null | { under?: string }
+
 function pathAfterWikiMove(current: string | null, from: string, to: string): string | null {
   if (!current) return null
   if (current === from) return to
@@ -251,6 +262,7 @@ function WikiTreeBranch({
   canEdit,
   onNewPageUnder,
   onAddSectionUnder,
+  onUploadUnder,
   onEditPage,
   onPageSettings,
   onMovePage,
@@ -264,6 +276,7 @@ function WikiTreeBranch({
   canEdit: boolean
   onNewPageUnder: (parentPath: string) => void
   onAddSectionUnder: (parentPath: string) => void
+  onUploadUnder: (parentPath: string) => void
   onEditPage: (path: string) => void
   onPageSettings: (path: string) => void
   onMovePage: (path: string) => void
@@ -326,6 +339,7 @@ function WikiTreeBranch({
                     pagePath={child.path}
                     onAddPage={() => onNewPageUnder(child.path)}
                     onAddSection={() => onAddSectionUnder(child.path)}
+                    onUpload={() => onUploadUnder(child.path)}
                     onEdit={() => onEditPage(child.path)}
                     onSettings={() => onPageSettings(child.path)}
                     onMove={() => onMovePage(child.path)}
@@ -345,6 +359,7 @@ function WikiTreeBranch({
                   canEdit={canEdit}
                   onNewPageUnder={onNewPageUnder}
                   onAddSectionUnder={onAddSectionUnder}
+                  onUploadUnder={onUploadUnder}
                   onEditPage={onEditPage}
                   onPageSettings={onPageSettings}
                   onMovePage={onMovePage}
@@ -377,6 +392,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [sortModalOpen, setSortModalOpen] = useState(false)
   const [newPathModal, setNewPathModal] = useState<WikiNewPathTarget>(null)
+  const [uploadMdModal, setUploadMdModal] = useState<WikiUploadMdTarget>(null)
   const [moveFromPath, setMoveFromPath] = useState<string | null>(null)
   const [pageSettingsPath, setPageSettingsPath] = useState<string | null>(null)
 
@@ -411,7 +427,9 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
   const showEditToolbar =
     canEdit && !loading && pages.length > 0 && sidebarTab === 'explorer'
 
-  const showExplorerToolbar = showExpandCollapse || showEditToolbar
+  const showUploadMdToolbar = canEdit && !loading && sidebarTab === 'explorer'
+
+  const showExplorerToolbar = showExpandCollapse || showEditToolbar || showUploadMdToolbar
 
   const expandAllFolders = useCallback(() => {
     setExpanded(new Set(expandableFolderPaths))
@@ -530,6 +548,15 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     [load, navigate, onNavigate]
   )
 
+  const handleUploadMdComplete = useCallback(
+    async (path: string, meta: { openEdit: boolean }) => {
+      await load()
+      navigate(meta.openEdit ? wikiEditUrl(path) : wikiPageUrl(path))
+      onNavigate?.()
+    },
+    [load, navigate, onNavigate]
+  )
+
   const openNewPageUnder = useCallback((parentPath: string) => {
     setNewPathModal({ kind: 'page', under: parentPath })
   }, [])
@@ -598,37 +625,52 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
     [load, currentPagePath, navigate]
   )
 
-  const editToolbarButtons = showEditToolbar ? (
+  const editToolbarButtons = (
     <>
-      <button
-        type="button"
-        onClick={() => setNewPathModal({ kind: 'section' })}
-        aria-label="New section"
-        title="New section (folder with index page)"
-        className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
-      >
-        <SectionIcon />
-      </button>
-      <button
-        type="button"
-        onClick={() => setNewPathModal({ kind: 'page' })}
-        aria-label="New page"
-        title="New page"
-        className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
-      >
-        <PageIcon />
-      </button>
-      <button
-        type="button"
-        onClick={() => setSortModalOpen(true)}
-        aria-label="Sort pages"
-        title="Sort pages under a parent"
-        className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
-      >
-        <SortIcon />
-      </button>
+      {showUploadMdToolbar ? (
+        <button
+          type="button"
+          onClick={() => setUploadMdModal({})}
+          aria-label="Upload markdown file"
+          title="Upload markdown file"
+          className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+        >
+          <UploadMdIcon />
+        </button>
+      ) : null}
+      {showEditToolbar ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setNewPathModal({ kind: 'section' })}
+            aria-label="New section"
+            title="New section (folder with index page)"
+            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+          >
+            <SectionIcon />
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewPathModal({ kind: 'page' })}
+            aria-label="New page"
+            title="New page"
+            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+          >
+            <PageIcon />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSortModalOpen(true)}
+            aria-label="Sort pages"
+            title="Sort pages under a parent"
+            className="rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 dark:hover:bg-foreground/[0.07]"
+          >
+            <SortIcon />
+          </button>
+        </>
+      ) : null}
     </>
-  ) : null
+  )
 
   const renderTree = () => {
     if (loading) {
@@ -662,6 +704,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
         canEdit={canEdit}
         onNewPageUnder={openNewPageUnder}
         onAddSectionUnder={openNewSectionUnder}
+        onUploadUnder={(path) => setUploadMdModal({ under: path })}
         onEditPage={openEditPage}
         onPageSettings={openPageSettings}
         onMovePage={(path) => setMoveFromPath(path)}
@@ -683,6 +726,12 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
         parentPath={newPathModal?.under}
         onClose={() => setNewPathModal(null)}
         onConfirm={handlePathCreateConfirm}
+      />
+      <WikiUploadMdModal
+        open={uploadMdModal !== null}
+        parentPath={uploadMdModal?.under}
+        onClose={() => setUploadMdModal(null)}
+        onUploaded={handleUploadMdComplete}
       />
       <WikiMovePageModal
         open={moveFromPath !== null}

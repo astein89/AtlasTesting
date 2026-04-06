@@ -26,6 +26,7 @@ type WikiSidebarPageMenuProps = {
   pagePath: string
   onAddPage: () => void
   onAddSection: () => void
+  onUpload: () => void
   onEdit: () => void
   onSettings: () => void
   onMove: () => void
@@ -39,6 +40,7 @@ function MenuPanel({
   onClose,
   onAddPage,
   onAddSection,
+  onUpload,
   onEdit,
   onSettings,
   onMove,
@@ -95,6 +97,9 @@ function MenuPanel({
         </button>
         <button type="button" role="menuitem" className={itemNeutral} onClick={() => { onAddSection(); onClose() }}>
           New section
+        </button>
+        <button type="button" role="menuitem" className={itemNeutral} onClick={() => { onUpload(); onClose() }}>
+          Upload markdown…
         </button>
       </div>
       <div className="mx-2 h-px bg-border" role="separator" />
