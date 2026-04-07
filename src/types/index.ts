@@ -279,9 +279,16 @@ export interface DataRecord {
 export interface User {
   id: string
   username: string
+  /** Optional alternate sign-in identifier (unique when set). */
+  shortName?: string
   name?: string
   /** Primary slug for display / legacy (mirrors server `users.role`). */
   role: string
   /** All assigned role slugs; effective permissions are merged. */
   roles?: string[]
+  /**
+   * When true, the user must change password after sign-in (admin-set or policy mismatch).
+   * From `GET /users` / user detail for admins.
+   */
+  mustChangePassword?: boolean
 }

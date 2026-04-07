@@ -33,19 +33,6 @@ export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSideba
           Home
         </NavLink>
         <div className="my-2 border-t border-border" aria-hidden />
-        {hasPermission('roles.manage') && (
-          <NavLink
-            to={adminPath('roles')}
-            onClick={onClose}
-            className={({ isActive }) =>
-              `${baseLink} ${
-                isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'
-              }`
-            }
-          >
-            Roles
-          </NavLink>
-        )}
         {hasPermission('users.manage') && (
           <NavLink
             to={adminPath('users')}
@@ -57,6 +44,19 @@ export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSideba
             }
           >
             Users
+          </NavLink>
+        )}
+        {hasPermission('roles.manage') && (
+          <NavLink
+            to={adminPath('roles')}
+            onClick={onClose}
+            className={({ isActive }) =>
+              `${baseLink} ${
+                isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'
+              }`
+            }
+          >
+            Roles
           </NavLink>
         )}
         {hasPermission('settings.access') && (

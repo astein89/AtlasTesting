@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, isAbortLikeError } from '@/api/client'
 import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { appModules, getModuleRequiredPermission } from '@/config/modules'
+import { mergeHomeModuleOrder, sortHomeModules } from '@/lib/homeModuleOrder'
 import { HomeIntroMarkdown } from '@/components/home/HomeIntroMarkdown'
 import { HomeLinkCard } from '@/components/home/HomeLinkCard'
 import { HomePageEditModal } from '@/components/home/HomePageEditModal'
@@ -65,6 +66,9 @@ export function HomePage() {
       setConfig({
         introMarkdown,
         customLinks: Array.isArray(data.customLinks) ? data.customLinks : [],
+        moduleOrder: mergeHomeModuleOrder(
+          Array.isArray(data.moduleOrder) ? (data.moduleOrder as string[]) : undefined
+        ),
         showWelcomeLogo: data.showWelcomeLogo === true,
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(data.welcomeLogoMaxRem),
       })
@@ -85,7 +89,10 @@ export function HomePage() {
     [setEditOpen]
   )
 
-  const visibleModules = appModules.filter((m) => hasPermission(getModuleRequiredPermission(m)))
+  const visibleModules = sortHomeModules(
+    appModules.filter((m) => hasPermission(getModuleRequiredPermission(m))),
+    config.moduleOrder
+  )
   const hasVisibleModules = visibleModules.length > 0
 
   const roleSlugs = userRoleSlugs(user)
@@ -206,6 +213,9 @@ export function HomePage() {
                   ? next.introMarkdown
                   : FALLBACK_HOME.introMarkdown,
               customLinks: Array.isArray(next.customLinks) ? next.customLinks : [],
+              moduleOrder: mergeHomeModuleOrder(
+                Array.isArray(next.moduleOrder) ? next.moduleOrder : undefined
+              ),
               showWelcomeLogo: next.showWelcomeLogo === true,
               welcomeLogoMaxRem: clampWelcomeLogoMaxRem(next.welcomeLogoMaxRem),
             })

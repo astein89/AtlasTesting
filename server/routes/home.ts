@@ -30,6 +30,8 @@ export interface HomeCustomLink {
 export interface HomePagePayload {
   introMarkdown: string
   customLinks: HomeCustomLink[]
+  /** Display order for home module cards; full list of known module ids. */
+  moduleOrder: string[]
   showWelcomeLogo?: boolean
   welcomeLogoMaxRem?: number
 }
@@ -82,10 +84,40 @@ function readDefaultIntroFromRepoFile(): string {
   return 'Choose a module to continue.'
 }
 
-const DEFAULT_HOME: HomePagePayload = {
+/** Must stay aligned with `appModules` ids in `src/config/modules.ts`. */
+const HOME_MODULE_IDS: string[] = ['testing', 'locations', 'wiki', 'admin']
+const HOME_MODULE_ID_SET = new Set(HOME_MODULE_IDS)
+
+function normalizeModuleOrder(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [...HOME_MODULE_IDS]
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const x of raw) {
+    if (typeof x !== 'string') continue
+    const id = x.trim()
+    if (!HOME_MODULE_ID_SET.has(id) || seen.has(id)) continue
+    out.push(id)
+    seen.add(id)
+  }
+  for (const id of HOME_MODULE_IDS) {
+    if (!seen.has(id)) out.push(id)
+  }
+  return out
+}
+
+const DEFAULT_KV_HOME = {
   introMarkdown: readDefaultIntroFromRepoFile(),
-  customLinks: [],
   showWelcomeLogo: false,
+  welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
+  moduleOrder: [...HOME_MODULE_IDS],
+}
+
+const DEFAULT_HOME: HomePagePayload = {
+  introMarkdown: DEFAULT_KV_HOME.introMarkdown,
+  customLinks: [],
+  moduleOrder: [...HOME_MODULE_IDS],
+  showWelcomeLogo: DEFAULT_KV_HOME.showWelcomeLogo,
+  welcomeLogoMaxRem: DEFAULT_KV_HOME.welcomeLogoMaxRem,
 }
 const MAX_LINK_TITLE = 120
 const MAX_LINK_DESC = 400
@@ -101,8 +133,9 @@ function isValidHref(href: string): boolean {
   return false
 }
 
-function parseStored(raw: string | undefined): HomePagePayload {
-  if (!raw) return { ...DEFAULT_HOME }
+/** Home intro, logo, module order (custom links live in `home_links`). */
+function parseHomeKv(raw: string | undefined): Omit<HomePagePayload, 'customLinks'> {
+  if (!raw) return { ...DEFAULT_KV_HOME }
   try {
     const j = JSON.parse(raw) as Partial<HomePagePayload> & {
       introTitle?: string
@@ -116,21 +149,88 @@ function parseStored(raw: string | undefined): HomePagePayload {
     if (introMarkdown.trim() === '' && typeof j.introTitle === 'string' && j.introTitle.trim()) {
       introMarkdown = `# ${j.introTitle.trim()}\n\n${typeof j.introSubtitle === 'string' ? j.introSubtitle : ''}`.trim()
     }
-    if (introMarkdown.trim() === '') introMarkdown = DEFAULT_HOME.introMarkdown
+    if (introMarkdown.trim() === '') introMarkdown = DEFAULT_KV_HOME.introMarkdown
     const showWelcomeLogo = coerceHomeBool(j.showWelcomeLogo)
     const welcomeLogoMaxRem = coerceWelcomeLogoMaxRem(j.welcomeLogoMaxRem)
+    const moduleOrder = normalizeModuleOrder(j.moduleOrder)
     return {
       introMarkdown,
-      customLinks: Array.isArray(j.customLinks) ? j.customLinks : [],
       showWelcomeLogo,
       welcomeLogoMaxRem,
+      moduleOrder,
     }
   } catch {
-    return { ...DEFAULT_HOME }
+    return { ...DEFAULT_KV_HOME }
   }
 }
 
-function normalizePayload(body: unknown): { ok: true; data: HomePagePayload } | { ok: false; error: string } {
+function loadCustomLinksFromDb(): HomeCustomLink[] {
+  const rows = db
+    .prepare(
+      `SELECT id, title, description, href, allowed_role_slugs, required_permission, sort_order
+       FROM home_links ORDER BY sort_order ASC, id ASC`
+    )
+    .all() as Array<{
+    id: string
+    title: string
+    description: string
+    href: string
+    allowed_role_slugs: string | null
+    required_permission: string | null
+    sort_order: number
+  }>
+  const out: HomeCustomLink[] = []
+  for (const r of rows) {
+    const base: HomeCustomLink = {
+      id: r.id,
+      title: r.title,
+      description: r.description ?? '',
+      href: r.href,
+    }
+    if (r.allowed_role_slugs) {
+      try {
+        const arr = JSON.parse(r.allowed_role_slugs) as unknown
+        if (Array.isArray(arr)) {
+          const slugs = arr.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean)
+          if (slugs.length > 0) base.allowedRoleSlugs = [...new Set(slugs)]
+        }
+      } catch {
+        /* skip malformed */
+      }
+    }
+    if (typeof r.required_permission === 'string' && r.required_permission.trim()) {
+      base.requiredPermission = r.required_permission.trim()
+    }
+    out.push(base)
+  }
+  return out
+}
+
+function replaceLinksInDb(links: HomeCustomLink[]) {
+  db.prepare('DELETE FROM home_links').run()
+  const ins = db.prepare(`
+    INSERT INTO home_links (id, title, description, href, allowed_role_slugs, required_permission, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+  let sortOrder = 0
+  for (const link of links) {
+    ins.run(
+      link.id,
+      link.title,
+      link.description,
+      link.href,
+      link.allowedRoleSlugs?.length ? JSON.stringify(link.allowedRoleSlugs) : null,
+      link.requiredPermission ?? null,
+      sortOrder
+    )
+    sortOrder += 1
+  }
+}
+
+function normalizePayload(
+  body: unknown,
+  moduleOrderFallback: string[]
+): { ok: true; data: HomePagePayload } | { ok: false; error: string } {
   if (!body || typeof body !== 'object') return { ok: false, error: 'Invalid body' }
   const b = body as Record<string, unknown>
   let introMarkdown = ''
@@ -198,7 +298,18 @@ function normalizePayload(body: unknown): { ok: true; data: HomePagePayload } | 
   }
   const showWelcomeLogo = coerceHomeBool(b.showWelcomeLogo)
   const welcomeLogoMaxRem = coerceWelcomeLogoMaxRem(b.welcomeLogoMaxRem)
-  return { ok: true, data: { introMarkdown, customLinks, showWelcomeLogo, welcomeLogoMaxRem } }
+
+  let moduleOrder: string[]
+  if (b.moduleOrder !== undefined && b.moduleOrder !== null) {
+    if (!Array.isArray(b.moduleOrder)) {
+      return { ok: false, error: 'moduleOrder must be an array' }
+    }
+    moduleOrder = normalizeModuleOrder(b.moduleOrder)
+  } else {
+    moduleOrder = normalizeModuleOrder(moduleOrderFallback)
+  }
+
+  return { ok: true, data: { introMarkdown, customLinks, showWelcomeLogo, welcomeLogoMaxRem, moduleOrder } }
 }
 
 /** Slug/label pairs for home link visibility (editors may not have users.manage). */
@@ -217,26 +328,41 @@ router.get('/role-options', authMiddleware, requirePermission('home.edit'), (_re
 /** Public read: home hub is shown before login. Mutations remain `home.edit`. */
 router.get('/', (_req, res) => {
   const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY) as { value: string } | undefined
-  const parsed = parseStored(row?.value)
-  res.json(parsed)
+  const kv = parseHomeKv(row?.value)
+  res.json({
+    introMarkdown: kv.introMarkdown,
+    customLinks: loadCustomLinksFromDb(),
+    moduleOrder: kv.moduleOrder,
+    showWelcomeLogo: kv.showWelcomeLogo,
+    welcomeLogoMaxRem: kv.welcomeLogoMaxRem,
+  })
 })
 
 router.put('/', authMiddleware, requirePermission('home.edit'), (req: AuthRequest, res) => {
-  const normalized = normalizePayload(req.body)
+  const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY) as { value: string } | undefined
+  const prevOrder = parseHomeKv(row?.value).moduleOrder
+  const normalized = normalizePayload(req.body, prevOrder)
   if (!normalized.ok) {
     return res.status(400).json({ error: normalized.error })
   }
-  const toStore: HomePagePayload = {
+  const kvOnly = {
     introMarkdown: normalized.data.introMarkdown,
-    customLinks: normalized.data.customLinks,
     showWelcomeLogo: normalized.data.showWelcomeLogo === true,
     welcomeLogoMaxRem: normalized.data.welcomeLogoMaxRem,
+    moduleOrder: normalized.data.moduleOrder,
   }
   db.prepare('INSERT OR REPLACE INTO app_kv (key, value) VALUES (?, ?)').run(
     HOME_KEY,
-    JSON.stringify(toStore)
+    JSON.stringify(kvOnly)
   )
-  res.json(toStore)
+  replaceLinksInDb(normalized.data.customLinks)
+  res.json({
+    introMarkdown: kvOnly.introMarkdown,
+    customLinks: normalized.data.customLinks,
+    moduleOrder: kvOnly.moduleOrder,
+    showWelcomeLogo: kvOnly.showWelcomeLogo,
+    welcomeLogoMaxRem: kvOnly.welcomeLogoMaxRem,
+  })
 })
 
 export { router as homeRouter }

@@ -16,6 +16,7 @@ import { locationsRouter } from './routes/locations.js'
 import { homeRouter } from './routes/home.js'
 import { wikiRouter } from './routes/wiki.js'
 import { rolesRouter } from './routes/roles.js'
+import { settingsRouter } from './routes/settings.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
 import { seedWikiDefaults } from './lib/wikiSeed.js'
 
@@ -45,6 +46,7 @@ apiRouter.use('/locations', locationsRouter)
 apiRouter.use('/home', homeRouter)
 apiRouter.use('/wiki', wikiRouter)
 apiRouter.use('/roles', rolesRouter)
+apiRouter.use('/settings', settingsRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use(`${prefix}/api`, apiRouter)
 

@@ -16,6 +16,11 @@ export interface HomePageConfig {
   /** Markdown body shown on the home hub (welcome area). */
   introMarkdown: string
   customLinks: HomeCustomLink[]
+  /**
+   * Order of module card ids on the home hub (e.g. `testing`, `locations`, `wiki`, `admin`).
+   * Omitted or partial lists are merged with defaults on load.
+   */
+  moduleOrder?: string[]
   /** When true, show `public/logo.png` beside the welcome Markdown (left on wide viewports). */
   showWelcomeLogo?: boolean
   /** Max width of the welcome logo in `rem` (clamped server-side; default 16). */

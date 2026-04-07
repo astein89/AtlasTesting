@@ -1,4 +1,11 @@
+import { type ReactNode, useEffect, useState } from 'react'
+import { api } from '../api/client'
+import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { useUserPreference } from '../hooks/useUserPreference'
+import {
+  type PasswordPolicy,
+  describePasswordRequirements,
+} from '../lib/passwordPolicy'
 import { useDateTimeConfigContext } from '../contexts/DateTimeConfigContext'
 import {
   DATE_TIME_PRESETS,
@@ -11,6 +18,180 @@ import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPreset
 import type { CfColorPreset } from '../lib/conditionalFormatPresets'
 
 const EXAMPLE_DATE = new Date('2025-03-15T14:30:00')
+
+const PW_LEN_MIN = 4
+const PW_LEN_MAX = 24
+
+function SettingsCollapsible({
+  title,
+  subtitle,
+  defaultOpen = true,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  return (
+    <details
+      className="group mb-4 rounded-lg border border-border bg-card/50 [&_summary::-webkit-details-marker]:hidden"
+      defaultOpen={defaultOpen}
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-5 py-4 hover:bg-background/40">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-medium text-foreground">{title}</h2>
+          {subtitle ? <p className="mt-1 text-sm text-foreground/75">{subtitle}</p> : null}
+        </div>
+        <span
+          className="mt-1 shrink-0 text-sm text-foreground/40 transition-transform duration-200 group-open:rotate-180"
+          aria-hidden
+        >
+          ▼
+        </span>
+      </summary>
+      <div className="border-t border-border px-5 pb-5 pt-4">{children}</div>
+    </details>
+  )
+}
+
+const SAVE_NOTICE_MS = 2800
+
+function PasswordPolicySection() {
+  const { showAlert } = useAlertConfirm()
+  const [policy, setPolicy] = useState<PasswordPolicy | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveNotice, setSaveNotice] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<PasswordPolicy>('/settings/password-policy')
+      .then((r) => {
+        if (!cancelled) {
+          setPolicy(r.data)
+          setLoadError('')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPolicy(null)
+          setLoadError('Could not load password policy.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!saveNotice) return
+    const t = window.setTimeout(() => setSaveNotice(false), SAVE_NOTICE_MS)
+    return () => window.clearTimeout(t)
+  }, [saveNotice])
+
+  const save = async () => {
+    if (!policy) return
+    setSaving(true)
+    setSaveNotice(false)
+    try {
+      const { data } = await api.put<PasswordPolicy>('/settings/password-policy', policy)
+      setPolicy(data)
+      setSaveNotice(true)
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to save'
+      showAlert(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      {loadError ? (
+        <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
+      ) : loading || !policy ? (
+        <p className="text-sm text-foreground/60">Loading…</p>
+      ) : (
+        <>
+          <div className="mb-4 flex flex-wrap items-end gap-4">
+            <div>
+              <label htmlFor="pw-min-len" className="mb-1 block text-sm font-medium text-foreground">
+                Minimum length
+              </label>
+              <input
+                id="pw-min-len"
+                type="number"
+                min={PW_LEN_MIN}
+                max={PW_LEN_MAX}
+                value={policy.minLength}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10)
+                  const v = Number.isFinite(n)
+                    ? Math.min(PW_LEN_MAX, Math.max(PW_LEN_MIN, n))
+                    : PW_LEN_MIN
+                  setPolicy((p) => (p ? { ...p, minLength: v } : p))
+                }}
+                className="w-24 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </div>
+          </div>
+          <ul className="mb-4 space-y-2">
+            {(
+              [
+                ['requireUppercase', 'Require an uppercase letter'] as const,
+                ['requireLowercase', 'Require a lowercase letter'] as const,
+                ['requireDigit', 'Require a digit'] as const,
+                ['requireSpecial', 'Require a special character (not letter or digit)'] as const,
+              ] as const
+            ).map(([key, label]) => (
+              <li key={key}>
+                <label className="flex cursor-pointer items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={policy[key]}
+                    onChange={(e) => setPolicy((p) => (p ? { ...p, [key]: e.target.checked } : p))}
+                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm font-medium text-foreground">{label}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <p className="mb-4 rounded-lg border border-border/80 bg-background/60 px-3 py-2 text-sm text-foreground/75">
+            <span className="font-semibold text-foreground/90">Summary: </span>
+            {describePasswordRequirements(policy).join(' · ')}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save password policy'}
+            </button>
+            {saveNotice ? (
+              <span
+                className="text-sm font-medium text-emerald-600 dark:text-emerald-400"
+                role="status"
+                aria-live="polite"
+              >
+                Saved
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
+    </>
+  )
+}
 
 function CfPresetRowEditor({
   row,
@@ -85,11 +266,18 @@ export function Settings() {
   return (
     <div>
       <h1 className="mb-6 text-2xl font-semibold text-foreground">Settings</h1>
-      <section className="mb-8 rounded-lg border border-border bg-card/50 p-5">
-        <h2 className="mb-3 text-lg font-medium text-foreground">Date & time</h2>
-        <p className="mb-4 text-sm text-foreground/80">
-          Choose how dates and times are shown across the app (plan runs, recorded at, exports).
-        </p>
+
+      <SettingsCollapsible
+        title="Password requirements"
+        subtitle="Rules for new user passwords and admin resets. Length 4–24 characters; existing logins unchanged until a new password is set."
+      >
+        <PasswordPolicySection />
+      </SettingsCollapsible>
+
+      <SettingsCollapsible
+        title="Date & time"
+        subtitle="How dates and times are shown (plan runs, recorded at, exports)."
+      >
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
           <label htmlFor="date-time-preset" className="text-sm font-medium text-foreground/90">
             Preset
@@ -113,11 +301,14 @@ export function Settings() {
         <p className="mt-3 text-sm text-foreground/70">
           Date: {formatDateWithConfig(EXAMPLE_DATE, config)} · Time: {formatTimeWithConfig(EXAMPLE_DATE, config)} · Date and time: {formatDateTimeWithConfig(EXAMPLE_DATE, config)}
         </p>
-      </section>
-      <section className="mb-8 rounded-lg border border-border bg-card/50 p-5">
-        <h2 className="mb-3 text-lg font-medium text-foreground">Data</h2>
+      </SettingsCollapsible>
+
+      <SettingsCollapsible
+        title="Data"
+        subtitle="Behavior when working with test plan data rows and table filters."
+      >
         <p className="mb-4 text-sm text-foreground/80">
-          When enabled, clicking a data row opens it in view-only; use the Edit button in the modal to edit.
+          When view-only is enabled, clicking a data row opens it read-only; use Edit in the modal to change it.
         </p>
         <label className="flex cursor-pointer items-center gap-3">
           <input
@@ -140,14 +331,12 @@ export function Settings() {
         <p className="mt-1 text-sm text-foreground/70">
           When enabled, search and column filters are saved to your account and sync across devices.
         </p>
-      </section>
-      <section className="mb-8 rounded-lg border border-border bg-card/50 p-5">
-        <h2 className="mb-3 text-lg font-medium text-foreground">Conditional formatting</h2>
-        <p className="mb-4 text-sm text-foreground/80">
-          Quick-pick colors when editing data fields (conditional format rules). &quot;No fill&quot; and
-          &quot;Aa&quot; (default text) are always available; these lists are the extra swatches. Saved to your
-          account.
-        </p>
+      </SettingsCollapsible>
+
+      <SettingsCollapsible
+        title="Conditional formatting"
+        subtitle="Extra color swatches for conditional format rules on data fields. “No fill” and “Aa” stay always available. Saved to your account."
+      >
         <div className="mb-6 space-y-2">
           <h3 className="text-sm font-semibold text-foreground">Fill (background) swatches</h3>
           <div className="space-y-2">
@@ -227,7 +416,7 @@ export function Settings() {
         >
           Reset fill &amp; text lists to app defaults
         </button>
-      </section>
+      </SettingsCollapsible>
     </div>
   )
 }

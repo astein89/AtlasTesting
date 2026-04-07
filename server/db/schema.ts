@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 /** Prepared statement handle (better-sqlite3 style) used by schema migrations. */
 export interface PreparedStatement {
   run(...params: unknown[]): { changes: number }
@@ -27,6 +29,31 @@ function migrateEmailToUsername(db: DbWrapper) {
   }
 }
 
+/** Optional alternate login identifier; unique when set (SQLite allows multiple NULLs). */
+function migrateUsersShortName(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'users')
+    if (!cols.includes('short_name')) {
+      db.run('ALTER TABLE users ADD COLUMN short_name TEXT')
+    }
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_short_name ON users(short_name)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Force password update when the stored password no longer meets policy (set on login). */
+function migrateUserPasswordChangeRequired(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'users')
+    if (!cols.includes('password_change_required')) {
+      db.run('ALTER TABLE users ADD COLUMN password_change_required INTEGER NOT NULL DEFAULT 0')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 function migrateFieldsOwnerTestPlanId(db: DbWrapper) {
   try {
     if (tableColumnNames(db, 'fields').includes('owner_test_plan_id')) return
@@ -41,7 +68,9 @@ export function initSchema(db: DbWrapper) {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
+      short_name TEXT,
       password_hash TEXT NOT NULL,
+      password_change_required INTEGER NOT NULL DEFAULT 0,
       name TEXT,
       role TEXT NOT NULL DEFAULT 'user',
       created_at TEXT DEFAULT (datetime('now'))
@@ -159,6 +188,8 @@ export function initSchema(db: DbWrapper) {
     );
   `)
   migrateEmailToUsername(db)
+  migrateUsersShortName(db)
+  migrateUserPasswordChangeRequired(db)
   migrateFieldsOwnerTestPlanId(db)
   migrateTestsToPlans(db)
   migratePlanFieldIds(db)
@@ -190,6 +221,8 @@ export function initSchema(db: DbWrapper) {
   migrateDropLocationSchemaCodePattern(db)
   migrateTestPlansAndTestsUpdatedAt(db)
   migrateAppKv(db)
+  migrateHomeLinksTable(db)
+  migrateHomeLinksFromAppKv(db)
   migrateRoles(db)
   migrateRolesReplaceDataWrite(db)
   migrateUserRoles(db)
@@ -588,7 +621,7 @@ function migrateUserPreferences(db: DbWrapper) {
   }
 }
 
-/** Key-value store for app-wide config (e.g. home page JSON). */
+/** Key-value store for app-wide config (e.g. home page intro / logo JSON). */
 function migrateAppKv(db: DbWrapper) {
   try {
     db.run(`
@@ -597,6 +630,85 @@ function migrateAppKv(db: DbWrapper) {
         value TEXT NOT NULL
       )
     `)
+  } catch {
+    // Ignore
+  }
+}
+
+/** Home hub custom links (see `server/routes/home.ts`). Named `home_links` to avoid clashing with unrelated legacy `links` tables. */
+function migrateHomeLinksTable(db: DbWrapper) {
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS home_links (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        href TEXT NOT NULL,
+        allowed_role_slugs TEXT,
+        required_permission TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_home_links_sort_order ON home_links(sort_order)')
+  } catch {
+    // Ignore
+  }
+}
+
+const HOME_PAGE_KV_KEY = 'home_page'
+
+/** One-time: copy legacy `customLinks` from app_kv JSON into `home_links`, then strip them from KV. */
+function migrateHomeLinksFromAppKv(db: DbWrapper) {
+  try {
+    const cnt = db.prepare('SELECT COUNT(*) as c FROM home_links').get() as { c: number } | undefined
+    if (!cnt || cnt.c > 0) return
+    const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_PAGE_KV_KEY) as
+      | { value: string }
+      | undefined
+    if (!row?.value?.trim()) return
+    let j: Record<string, unknown>
+    try {
+      j = JSON.parse(row.value) as Record<string, unknown>
+    } catch {
+      return
+    }
+    const raw = j.customLinks
+    if (!Array.isArray(raw) || raw.length === 0) return
+    const ins = db.prepare(`
+      INSERT INTO home_links (id, title, description, href, allowed_role_slugs, required_permission, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    let order = 0
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue
+      const o = item as Record<string, unknown>
+      const id =
+        typeof o.id === 'string' && o.id.trim() ? o.id.trim().slice(0, 80) : randomUUID()
+      const title = typeof o.title === 'string' ? o.title : ''
+      const description = typeof o.description === 'string' ? o.description : ''
+      const href = typeof o.href === 'string' ? o.href : ''
+      if (!title.trim() || !href.trim()) continue
+      let allowedJson: string | null = null
+      if (Array.isArray(o.allowedRoleSlugs) && o.allowedRoleSlugs.length > 0) {
+        const slugs = o.allowedRoleSlugs
+          .filter((x): x is string => typeof x === 'string')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        if (slugs.length > 0) allowedJson = JSON.stringify([...new Set(slugs)])
+      }
+      let reqPerm: string | null = null
+      if (!allowedJson && typeof o.requiredPermission === 'string' && o.requiredPermission.trim()) {
+        reqPerm = o.requiredPermission.trim()
+      }
+      ins.run(id, title, description, href, allowedJson, reqPerm, order)
+      order += 1
+    }
+    if (order === 0) return
+    delete j.customLinks
+    db.prepare('INSERT OR REPLACE INTO app_kv (key, value) VALUES (?, ?)').run(
+      HOME_PAGE_KV_KEY,
+      JSON.stringify(j)
+    )
   } catch {
     // Ignore
   }

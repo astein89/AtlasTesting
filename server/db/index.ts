@@ -51,7 +51,9 @@ function createDbWrapper(sqlite: Database.Database): DbWrapper {
 
 const resolvedDb = path.resolve(dbPath)
 // eslint-disable-next-line no-console
-console.log(`[db] SQLite: ${resolvedDb}`)
+console.log(`[db] SQLite path: ${resolvedDb}`)
+// eslint-disable-next-line no-console
+console.log('[db] Opening database…')
 
 let sqlite: Database.Database
 try {
@@ -73,11 +75,17 @@ See README.md (Tech Stack / troubleshooting).
   }
   throw e
 }
+// Wait up to 10s when the DB is briefly locked (e.g. sync/another process) instead of failing immediately.
+sqlite.pragma('busy_timeout = 10000')
 sqlite.pragma('journal_mode = WAL')
 sqlite.pragma('synchronous = NORMAL')
 sqlite.pragma('foreign_keys = ON')
+// eslint-disable-next-line no-console
+console.log('[db] Connected; applying schema/migrations…')
 
 const dbWrapper = createDbWrapper(sqlite)
 initSchema(dbWrapper)
+// eslint-disable-next-line no-console
+console.log('[db] Ready')
 
 export const db = dbWrapper

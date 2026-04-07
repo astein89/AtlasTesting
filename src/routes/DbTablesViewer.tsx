@@ -8,18 +8,26 @@ export function DbTablesViewer() {
   const [selected, setSelected] = useState<string>('')
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(false)
+  /** Increment to reload table names and the current table’s rows. */
+  const [refreshSeq, setRefreshSeq] = useState(0)
+
+  const refresh = () => setRefreshSeq((n) => n + 1)
 
   useAbortableEffect((signal) => {
     void api
       .get<string[]>('/admin/tables', { signal })
       .then((r) => {
         setTables(r.data)
-        if (r.data.length && !selected) setSelected(r.data[0])
+        setSelected((cur) => {
+          if (r.data.length === 0) return ''
+          if (cur && r.data.includes(cur)) return cur
+          return r.data[0]
+        })
       })
       .catch((e) => {
         if (!isAbortLikeError(e)) setTables([])
       })
-  }, [])
+  }, [refreshSeq])
 
   useAbortableEffect(
     (signal) => {
@@ -33,14 +41,24 @@ export function DbTablesViewer() {
         })
         .finally(() => setLoading(false))
     },
-    [selected]
+    [selected, refreshSeq]
   )
 
   const cols = rows.length > 0 ? Object.keys(rows[0]) : []
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-semibold text-foreground">DB Tables</h1>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-foreground">DB Tables</h1>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={loading}
+          className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-card disabled:opacity-50"
+        >
+          Refresh
+        </button>
+      </div>
       <div className="mb-4">
         <PopupSelect
           label="Table"

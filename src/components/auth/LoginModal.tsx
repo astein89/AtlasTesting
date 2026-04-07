@@ -59,16 +59,19 @@ export function LoginModal() {
         user: {
           id: string
           username: string
+          shortName?: string
           name?: string
           role: string
           roles?: string[]
           permissions?: string[]
+          mustChangePassword?: boolean
         }
       }>('/auth/login', { ...data, rememberMe })
       setAuth(
         {
           ...res.user,
           permissions: res.user.permissions,
+          mustChangePassword: res.user.mustChangePassword,
         },
         res.accessToken,
         res.refreshToken,

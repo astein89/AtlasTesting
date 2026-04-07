@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
+import {
+  PASSWORD_MAX_LENGTH,
+  describePasswordRequirements,
+  passwordMeetsPolicy,
+  type PasswordPolicy,
+} from '../../lib/passwordPolicy'
 
 interface AdminChangePasswordModalProps {
   userId: string
@@ -18,6 +24,14 @@ export function AdminChangePasswordModal({
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [policy, setPolicy] = useState<PasswordPolicy | null>(null)
+
+  useEffect(() => {
+    api
+      .get<PasswordPolicy>('/settings/password-policy')
+      .then((r) => setPolicy(r.data))
+      .catch(() => setPolicy(null))
+  }, [])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -35,8 +49,17 @@ export function AdminChangePasswordModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters')
+    const p =
+      policy ?? {
+        minLength: 6,
+        requireUppercase: false,
+        requireLowercase: false,
+        requireDigit: false,
+        requireSpecial: false,
+      }
+    const pwErr = passwordMeetsPolicy(newPassword, p)
+    if (pwErr) {
+      setError(pwErr)
       return
     }
     if (newPassword !== confirmPassword) {
@@ -69,6 +92,11 @@ export function AdminChangePasswordModal({
           Set password for {username}
         </h2>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {policy ? (
+            <p className="text-xs text-foreground/70">
+              {describePasswordRequirements(policy).join(' · ')}
+            </p>
+          ) : null}
           <div>
             <label className="block text-sm font-medium text-foreground">New password</label>
             <input
@@ -76,7 +104,8 @@ export function AdminChangePasswordModal({
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              minLength={6}
+              minLength={policy?.minLength ?? 6}
+              maxLength={PASSWORD_MAX_LENGTH}
               autoComplete="new-password"
             />
           </div>
@@ -87,7 +116,8 @@ export function AdminChangePasswordModal({
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              minLength={6}
+              minLength={policy?.minLength ?? 6}
+              maxLength={PASSWORD_MAX_LENGTH}
               autoComplete="new-password"
             />
           </div>

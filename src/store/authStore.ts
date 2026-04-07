@@ -6,11 +6,14 @@ import { normalizePermissionArray, roleHasPermission } from '../lib/permissionsC
 interface User {
   id: string
   username: string
+  shortName?: string
   name?: string
   role: string
   roles?: string[]
   /** Effective permission keys from the server (JWT /me). */
   permissions?: string[]
+  /** True when the current password fails server policy; API calls are blocked until changed. */
+  mustChangePassword?: boolean
 }
 
 /** When persisted user has no permissions yet (pre-refresh), match server defaults. */

@@ -4,10 +4,42 @@ import { v4 as uuidv4 } from 'uuid'
 import { primaryRoleSlug } from '../lib/rolePermissions.js'
 import { getRoleSlugsForUserId, roleSlugExists, setUserRoles } from '../lib/userRoles.js'
 import { db } from '../db/index.js'
+import { passwordPolicyError } from '../lib/passwordPolicy.js'
 import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 const SALT_ROUNDS = 10
+
+function normalizeShortName(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null
+  const s = String(raw).trim()
+  return s.length > 0 ? s : null
+}
+
+/** `candidate` matches another row's username or short_name (case-insensitive). */
+function loginIdentifierTaken(candidate: string, excludeUserId?: string): boolean {
+  const c = candidate.trim()
+  if (!c) return false
+  if (excludeUserId) {
+    const row = db
+      .prepare(
+        `SELECT id FROM users WHERE id != ? AND (
+          LOWER(username) = LOWER(?) OR
+          (short_name IS NOT NULL AND TRIM(short_name) != '' AND LOWER(short_name) = LOWER(?))
+        )`
+      )
+      .get(excludeUserId, c, c) as { id: string } | undefined
+    return Boolean(row)
+  }
+  const row = db
+    .prepare(
+      `SELECT id FROM users WHERE
+        LOWER(username) = LOWER(?) OR
+        (short_name IS NOT NULL AND TRIM(short_name) != '' AND LOWER(short_name) = LOWER(?))`
+    )
+    .get(c, c) as { id: string } | undefined
+  return Boolean(row)
+}
 
 function parseRoleSlugs(body: { role?: unknown; roles?: unknown }): string[] | null {
   if (Array.isArray(body.roles) && body.roles.length > 0) {
@@ -24,46 +56,79 @@ router.use(authMiddleware)
 router.use(requirePermission('users.manage'))
 
 router.get('/', (_, res) => {
-  const rows = db.prepare('SELECT id, username, name, role, created_at FROM users').all() as Array<{
+  const rows = db
+    .prepare(
+      'SELECT id, username, short_name, name, role, created_at, password_change_required FROM users'
+    )
+    .all() as Array<{
     id: string
     username: string
+    short_name: string | null
     name: string | null
     role: string
     created_at: string
+    password_change_required: number
   }>
   res.json(
     rows.map((r) => ({
       id: r.id,
       username: r.username,
+      shortName: r.short_name || undefined,
       name: r.name,
       role: r.role,
       roles: getRoleSlugsForUserId(db, r.id),
+      mustChangePassword: Number(r.password_change_required) === 1,
     }))
   )
 })
 
 router.get('/:id', (req, res) => {
   const row = db
-    .prepare('SELECT id, username, name, role FROM users WHERE id = ?')
-    .get(req.params.id) as { id: string; username: string; name: string | null; role: string } | undefined
+    .prepare(
+      'SELECT id, username, short_name, name, role, password_change_required FROM users WHERE id = ?'
+    )
+    .get(req.params.id) as
+    | {
+        id: string
+        username: string
+        short_name: string | null
+        name: string | null
+        role: string
+        password_change_required: number
+      }
+    | undefined
   if (!row) return res.status(404).json({ error: 'User not found' })
   res.json({
     id: row.id,
     username: row.username,
+    shortName: row.short_name || undefined,
     name: row.name,
     role: row.role,
     roles: getRoleSlugsForUserId(db, row.id),
+    mustChangePassword: Number(row.password_change_required) === 1,
   })
 })
 
 router.post('/', (req, res) => {
-  const { username, password, name } = req.body
-  if (!username || !password) {
+  const { username, password, name, short_name: shortNameBody } = req.body
+  const usernameNorm = typeof username === 'string' ? username.trim() : ''
+  if (!usernameNorm || !password) {
     return res.status(400).json({ error: 'username and password required' })
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(username)
-  if (existing) return res.status(409).json({ error: 'Username already exists' })
+  const pwErr = passwordPolicyError(String(password))
+  if (pwErr) {
+    return res.status(400).json({ error: pwErr })
+  }
+
+  if (loginIdentifierTaken(usernameNorm)) {
+    return res.status(409).json({ error: 'That username or short name is already in use' })
+  }
+
+  const shortNorm = normalizeShortName(shortNameBody)
+  if (shortNorm && loginIdentifierTaken(shortNorm)) {
+    return res.status(409).json({ error: 'That username or short name is already in use' })
+  }
 
   const slugList = parseRoleSlugs(req.body)
   if (!slugList || slugList.length === 0) {
@@ -79,8 +144,8 @@ router.post('/', (req, res) => {
   const passwordHash = bcrypt.hashSync(password, SALT_ROUNDS)
   const primary = primaryRoleSlug(slugList)
   db.prepare(
-    'INSERT INTO users (id, username, password_hash, name, role) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, username, passwordHash, name || null, primary)
+    'INSERT INTO users (id, username, short_name, password_hash, name, role) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, usernameNorm, shortNorm, passwordHash, name || null, primary)
 
   try {
     setUserRoles(db, id, slugList)
@@ -90,20 +155,37 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: msg })
   }
 
-  const row = db.prepare('SELECT id, username, name, role FROM users WHERE id = ?').get(id) as {
+  const forcePwChange = Boolean(req.body.must_change_password)
+  if (forcePwChange) {
+    db.prepare('UPDATE users SET password_change_required = 1 WHERE id = ?').run(id)
+  }
+
+  const row = db
+    .prepare(
+      'SELECT id, username, short_name, name, role, password_change_required FROM users WHERE id = ?'
+    )
+    .get(id) as {
     id: string
     username: string
+    short_name: string | null
     name: string | null
     role: string
+    password_change_required: number
   }
   res.status(201).json({
-    ...row,
+    id: row.id,
+    username: row.username,
+    shortName: row.short_name || undefined,
+    name: row.name,
+    role: row.role,
     roles: getRoleSlugsForUserId(db, id),
+    mustChangePassword: Number(row.password_change_required) === 1,
   })
 })
 
 router.put('/:id', (req, res) => {
-  const { username, password, name, role, roles } = req.body
+  const { username, password, name, short_name: shortNameBody, role, roles, must_change_password: mustChangeBody } =
+    req.body
   const { id } = req.params
 
   const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id)
@@ -111,15 +193,30 @@ router.put('/:id', (req, res) => {
 
   const updates: string[] = []
   const values: unknown[] = []
+  const passwordChanging = password !== undefined && String(password).length > 0
   if (username !== undefined) {
-    const dup = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ?').get(username, id)
-    if (dup) return res.status(409).json({ error: 'Username already exists' })
+    const u = String(username).trim()
+    if (loginIdentifierTaken(u, id)) {
+      return res.status(409).json({ error: 'That username or short name is already in use' })
+    }
     updates.push('username = ?')
-    values.push(username)
+    values.push(u)
+  }
+  if (shortNameBody !== undefined) {
+    const sn = normalizeShortName(shortNameBody)
+    if (sn && loginIdentifierTaken(sn, id)) {
+      return res.status(409).json({ error: 'That username or short name is already in use' })
+    }
+    updates.push('short_name = ?')
+    values.push(sn)
   }
   if (password !== undefined && password.length > 0) {
-    updates.push('password_hash = ?')
-    values.push(bcrypt.hashSync(password, SALT_ROUNDS))
+    const pwErr = passwordPolicyError(String(password))
+    if (pwErr) {
+      return res.status(400).json({ error: pwErr })
+    }
+    updates.push('password_hash = ?', 'password_change_required = ?')
+    values.push(bcrypt.hashSync(password, SALT_ROUNDS), 0)
   }
   if (name !== undefined) {
     updates.push('name = ?')
@@ -142,35 +239,57 @@ router.put('/:id', (req, res) => {
       return res.status(400).json({ error: msg })
     }
   }
+  if (!passwordChanging && mustChangeBody !== undefined && mustChangeBody !== null) {
+    updates.push('password_change_required = ?')
+    values.push(Boolean(mustChangeBody) ? 1 : 0)
+  }
   if (updates.length > 0) {
     values.push(id)
     db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values)
   }
 
-  const row = db.prepare('SELECT id, username, name, role FROM users WHERE id = ?').get(id) as {
+  const row = db
+    .prepare(
+      'SELECT id, username, short_name, name, role, password_change_required FROM users WHERE id = ?'
+    )
+    .get(id) as {
     id: string
     username: string
+    short_name: string | null
     name: string | null
     role: string
+    password_change_required: number
   }
   res.json({
-    ...row,
+    id: row.id,
+    username: row.username,
+    shortName: row.short_name || undefined,
+    name: row.name,
+    role: row.role,
     roles: getRoleSlugsForUserId(db, id),
+    mustChangePassword: Number(row.password_change_required) === 1,
   })
 })
 
 router.put('/:id/password', (req, res) => {
   const { id } = req.params
   const { newPassword } = req.body
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password (min 6 chars) required' })
+  if (newPassword == null || typeof newPassword !== 'string' || !newPassword.trim()) {
+    return res.status(400).json({ error: 'New password required' })
+  }
+  const pwErr = passwordPolicyError(newPassword)
+  if (pwErr) {
+    return res.status(400).json({ error: pwErr })
   }
 
   const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'User not found' })
 
   const hash = bcrypt.hashSync(newPassword, SALT_ROUNDS)
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id)
+  db.prepare('UPDATE users SET password_hash = ?, password_change_required = 0 WHERE id = ?').run(
+    hash,
+    id
+  )
   res.json({ ok: true })
 })
 

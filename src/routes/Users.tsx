@@ -1,15 +1,30 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import {
+  PASSWORD_MAX_LENGTH,
+  describePasswordRequirements,
+  type PasswordPolicy,
+} from '../lib/passwordPolicy'
 import type { User } from '../types'
 
-type UserForm = { username: string; name: string; password: string; roles: string[] }
+type UserForm = {
+  username: string
+  shortName: string
+  name: string
+  password: string
+  roles: string[]
+  /** Require password change on next successful login (admin). Cleared when saving a new password here. */
+  mustChangePassword: boolean
+}
 
 const emptyForm = (): UserForm => ({
   username: '',
+  shortName: '',
   name: '',
   password: '',
   roles: [],
+  mustChangePassword: false,
 })
 
 function formatRolesList(u: User): string {
@@ -27,6 +42,7 @@ export function Users() {
   ])
   const [form, setForm] = useState<UserForm>(emptyForm())
   const [userModal, setUserModal] = useState<null | 'new' | string>(null)
+  const [passwordPolicy, setPasswordPolicy] = useState<PasswordPolicy | null>(null)
   const { showAlert, showConfirm } = useAlertConfirm()
 
   const isEdit = userModal !== null && userModal !== 'new'
@@ -46,6 +62,13 @@ export function Users() {
       })
   }, [])
 
+  useEffect(() => {
+    api
+      .get<PasswordPolicy>('/settings/password-policy')
+      .then((r) => setPasswordPolicy(r.data))
+      .catch(() => setPasswordPolicy(null))
+  }, [])
+
   const load = () => {
     api
       .get<User[]>('/users')
@@ -62,9 +85,11 @@ export function Users() {
   const openEditModal = (u: User) => {
     setForm({
       username: u.username,
+      shortName: u.shortName || '',
       name: u.name || '',
       password: '',
       roles: u.roles && u.roles.length > 0 ? [...u.roles] : [u.role],
+      mustChangePassword: u.mustChangePassword === true,
     })
     setUserModal(u.id)
   }
@@ -92,17 +117,23 @@ export function Users() {
       if (isEdit) {
         const payload: Record<string, unknown> = {
           username: form.username,
+          short_name: form.shortName.trim() || null,
           name: form.name,
           roles: form.roles,
         }
         if (form.password.trim()) payload.password = form.password
+        if (!form.password.trim()) {
+          payload.must_change_password = form.mustChangePassword
+        }
         await api.put(`/users/${userModal}`, payload)
       } else {
         await api.post('/users', {
           username: form.username,
+          short_name: form.shortName.trim() || undefined,
           name: form.name,
           password: form.password,
           roles: form.roles,
+          must_change_password: form.mustChangePassword,
         })
       }
       load()
@@ -148,8 +179,16 @@ export function Users() {
             className="w-full min-w-0 overflow-hidden rounded-lg border border-border bg-card px-4 py-3"
           >
             <p className="truncate font-medium text-foreground">{u.username}</p>
+            {u.shortName ? (
+              <p className="mt-0.5 truncate text-sm text-foreground/70">Short: {u.shortName}</p>
+            ) : null}
             <p className="mt-0.5 truncate text-sm text-foreground/70">{u.name || '—'}</p>
             <p className="mt-0.5 break-words text-sm text-foreground/60">{formatRolesList(u)}</p>
+            {u.mustChangePassword ? (
+              <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                Must change password on next login
+              </p>
+            ) : null}
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -176,8 +215,10 @@ export function Users() {
           <thead className="bg-card">
             <tr>
               <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Username</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Short name</th>
               <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Name</th>
               <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Roles</th>
+              <th className="px-4 py-2 text-left text-sm font-medium text-foreground">Password</th>
               <th className="px-4 py-2 text-right text-sm font-medium text-foreground">Actions</th>
             </tr>
           </thead>
@@ -185,8 +226,18 @@ export function Users() {
             {users.map((u) => (
               <tr key={u.id} className="bg-background">
                 <td className="px-4 py-2 text-foreground">{u.username}</td>
+                <td className="px-4 py-2 text-foreground">{u.shortName || '—'}</td>
                 <td className="px-4 py-2 text-foreground">{u.name || '-'}</td>
                 <td className="max-w-md px-4 py-2 text-foreground">{formatRolesList(u)}</td>
+                <td className="px-4 py-2 text-foreground">
+                  {u.mustChangePassword ? (
+                    <span className="inline-block rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-300">
+                      Change on login
+                    </span>
+                  ) : (
+                    <span className="text-sm text-foreground/50">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right">
                   <button
                     type="button"
@@ -220,6 +271,7 @@ export function Users() {
           toggleRole={toggleRole}
           onSave={handleSave}
           onCancel={closeUserModal}
+          passwordPolicy={passwordPolicy}
         />
       )}
     </div>
@@ -235,6 +287,7 @@ interface UserFormModalProps {
   toggleRole: (slug: string) => void
   onSave: () => void
   onCancel: () => void
+  passwordPolicy: PasswordPolicy | null
 }
 
 function UserFormModal({
@@ -246,6 +299,7 @@ function UserFormModal({
   toggleRole,
   onSave,
   onCancel,
+  passwordPolicy,
 }: UserFormModalProps) {
   const [showPassword, setShowPassword] = useState(false)
   useEffect(() => {
@@ -287,6 +341,14 @@ function UserFormModal({
             />
           </div>
           <div className="sm:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-foreground">Short name (optional)</label>
+            <input
+              value={form.shortName}
+              onChange={(e) => setForm((f) => ({ ...f, shortName: e.target.value }))}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+            />
+          </div>
+          <div className="sm:col-span-2">
             <label className="mb-1 block text-sm font-medium text-foreground">Name</label>
             <input
               placeholder="Name"
@@ -305,6 +367,8 @@ function UserFormModal({
                 placeholder={isEdit ? 'Leave blank to keep current' : 'Password'}
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                minLength={passwordPolicy && (!isEdit || form.password.trim()) ? passwordPolicy.minLength : undefined}
+                maxLength={PASSWORD_MAX_LENGTH}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-foreground"
               />
               <button
@@ -328,6 +392,35 @@ function UserFormModal({
                 )}
               </button>
             </div>
+            {passwordPolicy && (!isEdit || form.password.trim()) ? (
+              <p className="text-xs text-foreground/65">
+                Requirements: {describePasswordRequirements(passwordPolicy).join('; ')}.
+              </p>
+            ) : null}
+            {form.password.trim() ? (
+              <p className="mt-2 text-xs text-foreground/65">
+                Saving a new password clears the &quot;change on next login&quot; requirement for this user.
+              </p>
+            ) : null}
+          </div>
+          <div className="sm:col-span-2">
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded border-border"
+                checked={form.mustChangePassword}
+                disabled={Boolean(form.password.trim())}
+                onChange={(e) => setForm((f) => ({ ...f, mustChangePassword: e.target.checked }))}
+              />
+              <span>
+                <span className="font-medium">Require password change on next login</span>
+                {form.password.trim() ? (
+                  <span className="mt-0.5 block text-xs text-foreground/65">
+                    Not available while setting a new password above (that clears the requirement).
+                  </span>
+                ) : null}
+              </span>
+            </label>
           </div>
           <div className="sm:col-span-2">
             <span className="mb-2 block text-sm font-medium text-foreground">Roles</span>

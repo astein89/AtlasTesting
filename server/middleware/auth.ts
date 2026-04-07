@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express'
+import { type Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { db } from '../db/index.js'
 import {
@@ -22,6 +22,15 @@ export interface JwtPayload {
 
 export interface AuthRequest extends Request {
   user?: { id: string; role: string; roles: string[]; permissions: string[] }
+}
+
+/** Routes under `/api/.../auth` that must stay usable while `password_change_required` is set. */
+function isPasswordChangeGateExempt(req: Request): boolean {
+  const base = req.baseUrl || ''
+  if (base.split('/').filter(Boolean).pop() !== 'auth') return false
+  if (req.method === 'GET' && req.path === '/me') return true
+  if (req.method === 'POST' && req.path === '/change-password') return true
+  return false
 }
 
 function resolvePermissions(payload: JwtPayload): string[] {
@@ -55,6 +64,19 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
           ? [payload.role]
           : []
     req.user = { id: payload.sub, role: payload.role, roles, permissions }
+
+    if (!isPasswordChangeGateExempt(req)) {
+      const row = db
+        .prepare('SELECT password_change_required FROM users WHERE id = ?')
+        .get(payload.sub) as { password_change_required: number } | undefined
+      if (row && Number(row.password_change_required) === 1) {
+        return res.status(403).json({
+          error: 'Password change required',
+          code: 'PASSWORD_CHANGE_REQUIRED',
+        })
+      }
+    }
+
     next()
   } catch {
     return res.status(401).json({ error: 'Invalid token' })

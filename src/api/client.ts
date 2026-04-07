@@ -79,6 +79,15 @@ api.interceptors.response.use(
     const original = err.config
     const isRefreshRequest =
       typeof original?.url === 'string' && original.url.includes('/auth/refresh')
+    if (err.response?.status === 403) {
+      const code = (err.response.data as { code?: string } | undefined)?.code
+      if (code === 'PASSWORD_CHANGE_REQUIRED') {
+        const u = useAuthStore.getState().user
+        if (u) {
+          useAuthStore.setState({ user: { ...u, mustChangePassword: true } })
+        }
+      }
+    }
     if (err.response?.status === 401 && !original._retry && !isRefreshRequest) {
       original._retry = true
       const refreshToken = useAuthStore.getState().refreshToken

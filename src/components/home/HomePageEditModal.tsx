@@ -17,8 +17,11 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { api } from '@/api/client'
+import { appModules, type AppModule } from '@/config/modules'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { HomeCustomLinkEditModal } from '@/components/home/HomeCustomLinkEditModal'
+import { HomeModuleCardIcon } from '@/components/home/HomeModuleCardIcon'
+import { mergeHomeModuleOrder } from '@/lib/homeModuleOrder'
 import { publicAsset } from '@/lib/basePath'
 import { externalFaviconCandidateUrls } from '@/lib/linkFavicon'
 import {
@@ -68,6 +71,38 @@ function LinkRowFavicon({ href }: { href: string }) {
       referrerPolicy="no-referrer"
       onError={() => setI((idx) => (idx < candidates.length - 1 ? idx + 1 : idx))}
     />
+  )
+}
+
+function SortableModuleRow({ module: m }: { module: AppModule }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: m.id,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+  return (
+    <li ref={setNodeRef} style={style} className={isDragging ? 'opacity-60' : ''}>
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-background/50 py-2 pl-1 pr-2">
+        <button
+          type="button"
+          className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
+          {...attributes}
+          {...listeners}
+          aria-label="Drag to reorder module"
+        >
+          <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
+          </svg>
+        </button>
+        <HomeModuleCardIcon moduleId={m.id} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">{m.title}</div>
+          <div className="truncate text-xs text-foreground/55">{m.description}</div>
+        </div>
+      </div>
+    </li>
   )
 }
 
@@ -151,6 +186,7 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
   const [links, setLinks] = useState<HomeCustomLink[]>(() =>
     initial.customLinks.length ? [...initial.customLinks] : []
   )
+  const [moduleOrder, setModuleOrder] = useState(() => mergeHomeModuleOrder(initial.moduleOrder))
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
   const [saving, setSaving] = useState(false)
 
@@ -182,6 +218,17 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
     })
   }
 
+  const handleModuleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setModuleOrder((ids) => {
+      const oldIndex = ids.indexOf(String(active.id))
+      const newIndex = ids.indexOf(String(over.id))
+      if (oldIndex < 0 || newIndex < 0) return ids
+      return arrayMove(ids, oldIndex, newIndex)
+    })
+  }
+
   const removeLink = (index: number) => {
     setLinks((prev) => prev.filter((_, i) => i !== index))
   }
@@ -207,6 +254,7 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
       const { data } = await api.put<HomePageConfig>('/home', {
         introMarkdown,
         customLinks: links.filter((l) => l.title.trim() && l.href.trim()),
+        moduleOrder,
         showWelcomeLogo: Boolean(showWelcomeLogo),
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(welcomeLogoMaxRem),
       })
@@ -241,8 +289,8 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
             Edit home page
           </h2>
           <p className="mt-1 text-sm text-foreground/70">
-            Edit the welcome content (Markdown), then manage extra links: reorder by dragging, or use Edit for
-            full details. Close with Cancel or Save (backdrop clicks do not dismiss).
+            Edit the welcome content (Markdown), drag to reorder module cards and extra links, then save. Close
+            with Cancel or Save (backdrop clicks do not dismiss).
           </p>
         </div>
 
@@ -303,6 +351,25 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
               Links starting with <code className="rounded bg-background px-1">/</code> stay in the app; http(s)
               URLs open in a new tab.
             </p>
+          </div>
+
+          <div>
+            <span className="mb-1 block text-sm font-medium text-foreground">Module cards</span>
+            <p className="mb-2 text-xs text-foreground/65">
+              Order shown here applies on the home page for each user&apos;s visible modules (permissions
+              unchanged).
+            </p>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleModuleDragEnd}>
+              <SortableContext items={moduleOrder} strategy={verticalListSortingStrategy}>
+                <ul className="space-y-2">
+                  {moduleOrder.map((id) => {
+                    const m = appModules.find((mod) => mod.id === id)
+                    if (!m) return null
+                    return <SortableModuleRow key={id} module={m} />
+                  })}
+                </ul>
+              </SortableContext>
+            </DndContext>
           </div>
 
           <div>

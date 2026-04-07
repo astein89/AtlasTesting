@@ -8,6 +8,7 @@ import {
   createRoutesFromElements,
 } from 'react-router-dom'
 import { AuthGuard } from './components/auth/AuthGuard'
+import { ForcedPasswordChangeModal } from './components/auth/ForcedPasswordChangeModal'
 import { PermissionGuard } from './components/auth/PermissionGuard'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Layout } from './components/layout/Layout'
@@ -121,16 +122,31 @@ function RootShell() {
   return (
     <AlertConfirmProvider>
       <AuthInit />
+      <ForcedPasswordChangeModal />
       <Outlet />
     </AlertConfirmProvider>
   )
+}
+
+/** Session user fields returned by `GET /auth/me` (keep in sync with server). */
+type AuthMeUser = {
+  id: string
+  username: string
+  shortName?: string
+  name?: string
+  role: string
+  roles?: string[]
+  permissions?: string[]
+  mustChangePassword?: boolean
 }
 
 function AuthInit() {
   const setAuth = useAuthStore((s) => s.setAuth)
   const setInitializing = useAuthStore((s) => s.setInitializing)
   const refreshToken = useAuthStore((s) => s.refreshToken)
+  const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
+  const userId = user?.id
   const [hydrationDone, setHydrationDone] = useState(false)
 
   useEffect(() => {
@@ -180,14 +196,7 @@ function AuthInit() {
     void ensureAccessToken()
       .then((ok) => {
         if (!ok) throw new Error('refresh failed')
-        return api.get<{
-          id: string
-          username: string
-          name?: string
-          role: string
-          roles?: string[]
-          permissions?: string[]
-        }>('/auth/me')
+        return api.get<AuthMeUser>('/auth/me')
       })
       .then((r) => {
         const token = useAuthStore.getState().accessToken
@@ -196,10 +205,12 @@ function AuthInit() {
             {
               id: r.data.id,
               username: r.data.username,
+              shortName: r.data.shortName,
               name: r.data.name,
               role: r.data.role,
               roles: r.data.roles,
               permissions: r.data.permissions,
+              mustChangePassword: r.data.mustChangePassword ?? false,
             },
             token,
             currentRefresh
@@ -216,6 +227,38 @@ function AuthInit() {
 
     return () => clearTimeout(timeout)
   }, [hydrationDone, refreshToken, user, setAuth, setInitializing])
+
+  useEffect(() => {
+    if (!hydrationDone) return
+    if (!userId || !accessToken || !refreshToken) return
+    let cancelled = false
+    void api
+      .get<AuthMeUser>('/auth/me')
+      .then((r) => {
+        if (cancelled) return
+        const tok = useAuthStore.getState().accessToken
+        const rt = useAuthStore.getState().refreshToken
+        if (!tok || !rt || useAuthStore.getState().user?.id !== r.data.id) return
+        setAuth(
+          {
+            id: r.data.id,
+            username: r.data.username,
+            shortName: r.data.shortName,
+            name: r.data.name,
+            role: r.data.role,
+            roles: r.data.roles,
+            permissions: r.data.permissions,
+            mustChangePassword: r.data.mustChangePassword ?? false,
+          },
+          tok,
+          rt
+        )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [hydrationDone, userId, accessToken, refreshToken, setAuth])
 
   return null
 }
