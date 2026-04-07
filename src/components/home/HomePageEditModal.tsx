@@ -34,6 +34,22 @@ import type { HomeCustomLink, HomePageConfig } from '@/types/homePage'
 
 type LinkDialogState = null | 'add' | { edit: number }
 
+const APP_MODULE_ID_SET = new Set(appModules.map((m) => m.id))
+
+function normalizeModulesHiddenFromInitial(ids: string[] | undefined): string[] {
+  if (!Array.isArray(ids)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of ids) {
+    if (typeof id !== 'string') continue
+    const t = id.trim()
+    if (!APP_MODULE_ID_SET.has(t) || seen.has(t)) continue
+    out.push(t)
+    seen.add(t)
+  }
+  return out
+}
+
 function LinkRowFavicon({ href }: { href: string }) {
   const h = href.trim()
   const candidates = useMemo(() => {
@@ -74,7 +90,15 @@ function LinkRowFavicon({ href }: { href: string }) {
   )
 }
 
-function SortableModuleRow({ module: m }: { module: AppModule }) {
+function SortableModuleRow({
+  module: m,
+  hideFromHome,
+  onToggleHideFromHome,
+}: {
+  module: AppModule
+  hideFromHome: boolean
+  onToggleHideFromHome: () => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: m.id,
   })
@@ -84,7 +108,7 @@ function SortableModuleRow({ module: m }: { module: AppModule }) {
   }
   return (
     <li ref={setNodeRef} style={style} className={isDragging ? 'opacity-60' : ''}>
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-background/50 py-2 pl-1 pr-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/50 py-2 pl-1 pr-2">
         <button
           type="button"
           className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
@@ -101,6 +125,15 @@ function SortableModuleRow({ module: m }: { module: AppModule }) {
           <div className="truncate text-sm font-medium text-foreground">{m.title}</div>
           <div className="truncate text-xs text-foreground/55">{m.description}</div>
         </div>
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground/75 sm:shrink-0">
+          <input
+            type="checkbox"
+            checked={hideFromHome}
+            onChange={onToggleHideFromHome}
+            className="h-3.5 w-3.5 shrink-0 rounded border-border text-primary"
+          />
+          Hide on home
+        </label>
       </div>
     </li>
   )
@@ -187,6 +220,9 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
     initial.customLinks.length ? [...initial.customLinks] : []
   )
   const [moduleOrder, setModuleOrder] = useState(() => mergeHomeModuleOrder(initial.moduleOrder))
+  const [modulesHiddenFromHome, setModulesHiddenFromHome] = useState<string[]>(() =>
+    normalizeModulesHiddenFromInitial(initial.modulesHiddenFromHome)
+  )
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
   const [saving, setSaving] = useState(false)
 
@@ -255,6 +291,7 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
         introMarkdown,
         customLinks: links.filter((l) => l.title.trim() && l.href.trim()),
         moduleOrder,
+        modulesHiddenFromHome,
         showWelcomeLogo: Boolean(showWelcomeLogo),
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(welcomeLogoMaxRem),
       })
@@ -356,8 +393,8 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
           <div>
             <span className="mb-1 block text-sm font-medium text-foreground">Module cards</span>
             <p className="mb-2 text-xs text-foreground/65">
-              Order shown here applies on the home page for each user&apos;s visible modules (permissions
-              unchanged).
+              Reorder cards for the home hub, or hide a module from home only (sidebar and bookmarks still work;
+              permissions unchanged).
             </p>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleModuleDragEnd}>
               <SortableContext items={moduleOrder} strategy={verticalListSortingStrategy}>
@@ -365,7 +402,18 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
                   {moduleOrder.map((id) => {
                     const m = appModules.find((mod) => mod.id === id)
                     if (!m) return null
-                    return <SortableModuleRow key={id} module={m} />
+                    return (
+                      <SortableModuleRow
+                        key={id}
+                        module={m}
+                        hideFromHome={modulesHiddenFromHome.includes(id)}
+                        onToggleHideFromHome={() =>
+                          setModulesHiddenFromHome((prev) =>
+                            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                          )
+                        }
+                      />
+                    )
                   })}
                 </ul>
               </SortableContext>

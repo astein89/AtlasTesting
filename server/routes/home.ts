@@ -32,6 +32,8 @@ export interface HomePagePayload {
   customLinks: HomeCustomLink[]
   /** Display order for home module cards; full list of known module ids. */
   moduleOrder: string[]
+  /** Known module ids hidden from home cards only (sidebar/routes unchanged). */
+  modulesHiddenFromHome: string[]
   showWelcomeLogo?: boolean
   welcomeLogoMaxRem?: number
 }
@@ -105,17 +107,33 @@ function normalizeModuleOrder(raw: unknown): string[] {
   return out
 }
 
+function normalizeModulesHiddenFromHome(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const x of raw) {
+    if (typeof x !== 'string') continue
+    const id = x.trim()
+    if (!HOME_MODULE_ID_SET.has(id) || seen.has(id)) continue
+    out.push(id)
+    seen.add(id)
+  }
+  return out
+}
+
 const DEFAULT_KV_HOME = {
   introMarkdown: readDefaultIntroFromRepoFile(),
   showWelcomeLogo: false,
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
   moduleOrder: [...HOME_MODULE_IDS],
+  modulesHiddenFromHome: [] as string[],
 }
 
 const DEFAULT_HOME: HomePagePayload = {
   introMarkdown: DEFAULT_KV_HOME.introMarkdown,
   customLinks: [],
   moduleOrder: [...HOME_MODULE_IDS],
+  modulesHiddenFromHome: [],
   showWelcomeLogo: DEFAULT_KV_HOME.showWelcomeLogo,
   welcomeLogoMaxRem: DEFAULT_KV_HOME.welcomeLogoMaxRem,
 }
@@ -153,11 +171,15 @@ function parseHomeKv(raw: string | undefined): Omit<HomePagePayload, 'customLink
     const showWelcomeLogo = coerceHomeBool(j.showWelcomeLogo)
     const welcomeLogoMaxRem = coerceWelcomeLogoMaxRem(j.welcomeLogoMaxRem)
     const moduleOrder = normalizeModuleOrder(j.moduleOrder)
+    const modulesHiddenFromHome = normalizeModulesHiddenFromHome(
+      (j as { modulesHiddenFromHome?: unknown }).modulesHiddenFromHome
+    )
     return {
       introMarkdown,
       showWelcomeLogo,
       welcomeLogoMaxRem,
       moduleOrder,
+      modulesHiddenFromHome,
     }
   } catch {
     return { ...DEFAULT_KV_HOME }
@@ -229,7 +251,8 @@ function replaceLinksInDb(links: HomeCustomLink[]) {
 
 function normalizePayload(
   body: unknown,
-  moduleOrderFallback: string[]
+  moduleOrderFallback: string[],
+  modulesHiddenFallback: string[]
 ): { ok: true; data: HomePagePayload } | { ok: false; error: string } {
   if (!body || typeof body !== 'object') return { ok: false, error: 'Invalid body' }
   const b = body as Record<string, unknown>
@@ -309,7 +332,27 @@ function normalizePayload(
     moduleOrder = normalizeModuleOrder(moduleOrderFallback)
   }
 
-  return { ok: true, data: { introMarkdown, customLinks, showWelcomeLogo, welcomeLogoMaxRem, moduleOrder } }
+  let modulesHiddenFromHome: string[]
+  if (b.modulesHiddenFromHome !== undefined && b.modulesHiddenFromHome !== null) {
+    if (!Array.isArray(b.modulesHiddenFromHome)) {
+      return { ok: false, error: 'modulesHiddenFromHome must be an array' }
+    }
+    modulesHiddenFromHome = normalizeModulesHiddenFromHome(b.modulesHiddenFromHome)
+  } else {
+    modulesHiddenFromHome = normalizeModulesHiddenFromHome(modulesHiddenFallback)
+  }
+
+  return {
+    ok: true,
+    data: {
+      introMarkdown,
+      customLinks,
+      showWelcomeLogo,
+      welcomeLogoMaxRem,
+      moduleOrder,
+      modulesHiddenFromHome,
+    },
+  }
 }
 
 /** Slug/label pairs for home link visibility (editors may not have users.manage). */
@@ -333,6 +376,7 @@ router.get('/', (_req, res) => {
     introMarkdown: kv.introMarkdown,
     customLinks: loadCustomLinksFromDb(),
     moduleOrder: kv.moduleOrder,
+    modulesHiddenFromHome: kv.modulesHiddenFromHome,
     showWelcomeLogo: kv.showWelcomeLogo,
     welcomeLogoMaxRem: kv.welcomeLogoMaxRem,
   })
@@ -340,8 +384,8 @@ router.get('/', (_req, res) => {
 
 router.put('/', authMiddleware, requirePermission('home.edit'), (req: AuthRequest, res) => {
   const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY) as { value: string } | undefined
-  const prevOrder = parseHomeKv(row?.value).moduleOrder
-  const normalized = normalizePayload(req.body, prevOrder)
+  const prevKv = parseHomeKv(row?.value)
+  const normalized = normalizePayload(req.body, prevKv.moduleOrder, prevKv.modulesHiddenFromHome)
   if (!normalized.ok) {
     return res.status(400).json({ error: normalized.error })
   }
@@ -350,6 +394,7 @@ router.put('/', authMiddleware, requirePermission('home.edit'), (req: AuthReques
     showWelcomeLogo: normalized.data.showWelcomeLogo === true,
     welcomeLogoMaxRem: normalized.data.welcomeLogoMaxRem,
     moduleOrder: normalized.data.moduleOrder,
+    modulesHiddenFromHome: normalized.data.modulesHiddenFromHome,
   }
   db.prepare('INSERT OR REPLACE INTO app_kv (key, value) VALUES (?, ?)').run(
     HOME_KEY,
@@ -360,6 +405,7 @@ router.put('/', authMiddleware, requirePermission('home.edit'), (req: AuthReques
     introMarkdown: kvOnly.introMarkdown,
     customLinks: normalized.data.customLinks,
     moduleOrder: kvOnly.moduleOrder,
+    modulesHiddenFromHome: kvOnly.modulesHiddenFromHome,
     showWelcomeLogo: kvOnly.showWelcomeLogo,
     welcomeLogoMaxRem: kvOnly.welcomeLogoMaxRem,
   })

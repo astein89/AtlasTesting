@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, isAbortLikeError } from '@/api/client'
 import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { appModules, getModuleRequiredPermission } from '@/config/modules'
@@ -17,8 +17,25 @@ const FALLBACK_HOME: HomePageConfig = {
   introMarkdown:
     '# Welcome to **DC Automation**\n\nUse the modules to open **Testing** or **Locations**. Sign in when needed.\n\nIf this message persists, the home configuration could not be loaded—check the API and network.',
   customLinks: [],
+  modulesHiddenFromHome: [],
   showWelcomeLogo: false,
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
+}
+
+const knownModuleIdSet = new Set(appModules.map((m) => m.id))
+
+function normalizeModulesHiddenFromHomeApi(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const x of ids) {
+    if (typeof x !== 'string') continue
+    const id = x.trim()
+    if (!knownModuleIdSet.has(id) || seen.has(id)) continue
+    out.push(id)
+    seen.add(id)
+  }
+  return out
 }
 
 function userRoleSlugs(user: ReturnType<typeof useAuthStore.getState>['user']): string[] {
@@ -69,6 +86,7 @@ export function HomePage() {
         moduleOrder: mergeHomeModuleOrder(
           Array.isArray(data.moduleOrder) ? (data.moduleOrder as string[]) : undefined
         ),
+        modulesHiddenFromHome: normalizeModulesHiddenFromHomeApi(data.modulesHiddenFromHome),
         showWelcomeLogo: data.showWelcomeLogo === true,
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(data.welcomeLogoMaxRem),
       })
@@ -89,8 +107,14 @@ export function HomePage() {
     [setEditOpen]
   )
 
+  const hiddenFromHome = useMemo(
+    () => new Set(config.modulesHiddenFromHome ?? []),
+    [config.modulesHiddenFromHome]
+  )
   const visibleModules = sortHomeModules(
-    appModules.filter((m) => hasPermission(getModuleRequiredPermission(m))),
+    appModules.filter(
+      (m) => hasPermission(getModuleRequiredPermission(m)) && !hiddenFromHome.has(m.id)
+    ),
     config.moduleOrder
   )
   const hasVisibleModules = visibleModules.length > 0
@@ -216,6 +240,7 @@ export function HomePage() {
               moduleOrder: mergeHomeModuleOrder(
                 Array.isArray(next.moduleOrder) ? next.moduleOrder : undefined
               ),
+              modulesHiddenFromHome: normalizeModulesHiddenFromHomeApi(next.modulesHiddenFromHome),
               showWelcomeLogo: next.showWelcomeLogo === true,
               welcomeLogoMaxRem: clampWelcomeLogoMaxRem(next.welcomeLogoMaxRem),
             })

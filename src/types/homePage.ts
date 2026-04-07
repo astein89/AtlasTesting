@@ -21,6 +21,11 @@ export interface HomePageConfig {
    * Omitted or partial lists are merged with defaults on load.
    */
   moduleOrder?: string[]
+  /**
+   * Module ids to omit from home module cards. Modules remain available from the sidebar and
+   * direct URLs; only the home hub cards are affected.
+   */
+  modulesHiddenFromHome?: string[]
   /** When true, show `public/logo.png` beside the welcome Markdown (left on wide viewports). */
   showWelcomeLogo?: boolean
   /** Max width of the welcome logo in `rem` (clamped server-side; default 16). */
