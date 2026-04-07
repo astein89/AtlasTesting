@@ -3,8 +3,16 @@ import { normalizePermissionArray, roleHasPermission } from './permissionsCatalo
 
 const DEFAULT_BY_SLUG: Record<string, string[]> = {
   admin: ['*'],
-  user: ['module.home', 'module.testing', 'module.wiki', 'wiki.edit', 'testing.data.write'],
-  viewer: ['module.home', 'module.testing', 'module.wiki'],
+  user: [
+    'module.home',
+    'module.testing',
+    'module.wiki',
+    'module.files',
+    'wiki.edit',
+    'testing.data.write',
+    'files.manage',
+  ],
+  viewer: ['module.home', 'module.testing', 'module.wiki', 'module.files'],
 }
 
 /** Pick one slug for legacy `users.role` / JWT `role` (deterministic). */

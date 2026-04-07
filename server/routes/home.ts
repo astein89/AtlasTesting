@@ -85,7 +85,7 @@ function readDefaultIntroFromRepoFile(): string {
 }
 
 /** Must stay aligned with `appModules` ids in `src/config/modules.ts`. */
-const HOME_MODULE_IDS: string[] = ['testing', 'locations', 'wiki', 'admin']
+const HOME_MODULE_IDS: string[] = ['testing', 'locations', 'wiki', 'files', 'admin']
 const HOME_MODULE_ID_SET = new Set(HOME_MODULE_IDS)
 
 function normalizeModuleOrder(raw: unknown): string[] {

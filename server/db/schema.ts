@@ -227,6 +227,13 @@ export function initSchema(db: DbWrapper) {
   migrateRolesReplaceDataWrite(db)
   migrateUserRoles(db)
   migrateRolesAddLocationsSchemasManage(db)
+  migrateStoredFiles(db)
+  migrateFileFolders(db)
+  migrateStoredFilesExplorerColumns(db)
+  migrateStoredFilesRoleOnlyAcl(db)
+  migrateFileFoldersAllowedRoleSlugs(db)
+  migrateStoredFilesInheritFolderAcl(db)
+  migrateRolesGrantModuleFiles(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
@@ -735,14 +742,21 @@ function migrateRoles(db: DbWrapper) {
           'module.home',
           'module.testing',
           'module.wiki',
+          'module.files',
           'wiki.edit',
           'testing.data.write',
+          'files.manage',
         ]),
       ],
       [
         'viewer',
         'Viewer',
-        JSON.stringify(['module.home', 'module.testing', 'module.wiki']),
+        JSON.stringify([
+          'module.home',
+          'module.testing',
+          'module.wiki',
+          'module.files',
+        ]),
       ],
     ]
     const ins = db.prepare('INSERT INTO roles (slug, label, permissions) VALUES (?, ?, ?)')
@@ -821,6 +835,163 @@ function migrateRolesAddLocationsSchemasManage(db: DbWrapper) {
       if (list.includes('locations.schemas.manage')) continue
       const next = [...list, 'locations.schemas.manage']
       db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify(next.sort()), slug)
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Files library metadata + disk path under `uploads/files/` (see `server/routes/files.ts`). */
+function migrateStoredFiles(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS stored_files (
+        id TEXT PRIMARY KEY,
+        original_filename TEXT NOT NULL,
+        storage_filename TEXT NOT NULL UNIQUE,
+        mime_type TEXT,
+        size_bytes INTEGER,
+        uploaded_by TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (uploaded_by) REFERENCES users(id)
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_stored_files_uploaded_by ON stored_files(uploaded_by)')
+    db.run('CREATE INDEX IF NOT EXISTS idx_stored_files_created_at ON stored_files(created_at)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Folder hierarchy for Files explorer (disk paths stay flat UUID filenames). */
+function migrateFileFolders(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS file_folders (
+        id TEXT PRIMARY KEY,
+        parent_id TEXT,
+        name TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        created_by TEXT,
+        FOREIGN KEY (parent_id) REFERENCES file_folders(id) ON DELETE RESTRICT,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `)
+    db.run(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_file_folders_sibling_name ON file_folders (COALESCE(parent_id, ''), lower(name))`
+    )
+    db.run('CREATE INDEX IF NOT EXISTS idx_file_folders_parent ON file_folders(parent_id)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** `stored_files.folder_id`, per-file ACL columns (see docs/files_module.plan.md). */
+function migrateStoredFilesExplorerColumns(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'stored_files')
+    if (!cols.includes('folder_id')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN folder_id TEXT REFERENCES file_folders(id)')
+    }
+    if (!cols.includes('allowed_role_slugs')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN allowed_role_slugs TEXT')
+    }
+    if (!cols.includes('required_permission')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN required_permission TEXT')
+    }
+    db.run('CREATE INDEX IF NOT EXISTS idx_stored_files_folder_id ON stored_files(folder_id)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Per-file ACL is role-slug only; drop legacy permission-key restrictions. */
+function migrateStoredFilesRoleOnlyAcl(db: DbWrapper) {
+  try {
+    db.run('UPDATE stored_files SET required_permission = NULL WHERE required_permission IS NOT NULL')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Folder-level role visibility (same JSON array as `stored_files.allowed_role_slugs`). */
+function migrateFileFoldersAllowedRoleSlugs(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'file_folders')
+    if (!cols.includes('allowed_role_slugs')) {
+      db.run('ALTER TABLE file_folders ADD COLUMN allowed_role_slugs TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** When 1 (default), file visibility follows folder chain ACLs; when 0, only `allowed_role_slugs` on the file applies. */
+function migrateStoredFilesInheritFolderAcl(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'stored_files')
+    if (!cols.includes('inherit_folder_acl')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN inherit_folder_acl INTEGER DEFAULT 1')
+      db.run('UPDATE stored_files SET inherit_folder_acl = 1 WHERE inherit_folder_acl IS NULL')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Grant `module.files` / `files.manage` on existing installs (seed only runs on empty `roles`).
+ * Mirrors default viewer vs editor split: wiki readers get list/download; wiki editors get upload/delete.
+ */
+function migrateRolesGrantModuleFiles(db: DbWrapper) {
+  try {
+    const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{
+      slug: string
+      permissions: string
+    }>
+    for (const { slug, permissions } of rows) {
+      let arr: unknown
+      try {
+        arr = JSON.parse(permissions)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(arr)) continue
+      const list = arr.filter((x): x is string => typeof x === 'string')
+      if (list.includes('*')) continue
+      const next = new Set(list)
+      let changed = false
+      const addFiles = () => {
+        if (!next.has('module.files')) {
+          next.add('module.files')
+          changed = true
+        }
+      }
+      const addManage = () => {
+        if (!next.has('files.manage')) {
+          next.add('files.manage')
+          changed = true
+        }
+      }
+      if (slug === 'viewer') {
+        addFiles()
+      } else if (slug === 'user') {
+        addFiles()
+        addManage()
+      } else {
+        if (list.includes('wiki.edit')) {
+          addFiles()
+          addManage()
+        } else if (
+          list.includes('module.wiki') ||
+          list.includes('module.testing') ||
+          list.includes('module.locations')
+        ) {
+          addFiles()
+        }
+      }
+      if (!changed) continue
+      db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify([...next].sort()), slug)
     }
   } catch {
     // Ignore

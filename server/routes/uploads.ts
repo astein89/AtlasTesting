@@ -9,6 +9,13 @@ const router = Router()
 router.use(authMiddleware)
 router.use(requirePermission('module.testing'))
 
+/** Testing-module field images only; URLs are `/api/uploads/testing/…` (static mount is repo `uploads/`). */
+const TESTING_UPLOAD_SEGMENT = 'testing'
+
+function testingUploadsDir(): string {
+  return path.join(process.cwd(), 'uploads', TESTING_UPLOAD_SEGMENT)
+}
+
 function sanitizeFilename(name: string): string {
   const base = name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'image'
   return base.slice(0, 200)
@@ -16,7 +23,7 @@ function sanitizeFilename(name: string): string {
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    const dir = path.join(process.cwd(), 'uploads')
+    const dir = testingUploadsDir()
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     cb(null, dir)
   },
@@ -26,7 +33,7 @@ const storage = multer.diskStorage({
     if (safe && safe !== 'image') {
       let final = safe + ext.toLowerCase()
       let n = 0
-      const dir = path.join(process.cwd(), 'uploads')
+      const dir = testingUploadsDir()
       while (fs.existsSync(path.join(dir, final))) {
         n += 1
         final = `${safe}_${n}${ext.toLowerCase()}`
@@ -48,17 +55,18 @@ const upload = multer({
   },
 })
 
+const uploadsUrlBase = `/api/uploads/${TESTING_UPLOAD_SEGMENT}/`
+
 router.post('/', requireCanEditData, upload.array('images', 20), (req: AuthRequest, res) => {
   const files = req.files as Express.Multer.File[]
-  const base = '/api/uploads/'
-  const paths = (files || []).map((f) => base + f.filename) as string[]
+  const paths = (files || []).map((f) => uploadsUrlBase + f.filename) as string[]
   res.json({ paths })
 })
 
 router.post('/single', requireCanEditData, upload.single('image'), (req: AuthRequest, res) => {
   const file = req.file
   if (!file) return res.status(400).json({ error: 'No image uploaded' })
-  res.json({ path: '/api/uploads/' + file.filename } as { path: string })
+  res.json({ path: uploadsUrlBase + file.filename } as { path: string })
 })
 
 export { router as uploadsRouter }

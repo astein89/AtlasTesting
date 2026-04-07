@@ -1,7 +1,8 @@
-import { Router } from 'express'
+import { Router, type Response, type NextFunction } from 'express'
 import { db } from '../db/index.js'
 import { PERMISSION_CATALOG, validatePermissionsList } from '../lib/permissionsCatalog.js'
 import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
+import { roleHasPermission } from '../lib/permissionsCatalog.js'
 
 const router = Router()
 
@@ -46,6 +47,26 @@ function countUsersAssignedToRole(slug: string): number {
 }
 
 router.use(authMiddleware)
+
+/** Edit file ACL (role slugs only); same shape as `/options`. */
+function requireFilesAclPicker(req: AuthRequest, res: Response, next: NextFunction) {
+  if (!req.user) return res.status(403).json({ error: 'Forbidden' })
+  if (
+    roleHasPermission(req.user.permissions, '*') ||
+    roleHasPermission(req.user.permissions, 'files.manage')
+  ) {
+    return next()
+  }
+  return res.status(403).json({ error: 'Forbidden' })
+}
+
+router.get('/acl-picker', requireFilesAclPicker, (_req: AuthRequest, res) => {
+  const rows = db.prepare('SELECT slug, label FROM roles ORDER BY slug').all() as Array<{
+    slug: string
+    label: string
+  }>
+  res.json(rows)
+})
 
 /** Role labels for user forms (anyone who can assign users). */
 router.get('/options', requirePermission('users.manage'), (_req: AuthRequest, res) => {

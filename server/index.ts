@@ -15,6 +15,7 @@ import { uploadsRouter } from './routes/uploads.js'
 import { locationsRouter } from './routes/locations.js'
 import { homeRouter } from './routes/home.js'
 import { wikiRouter } from './routes/wiki.js'
+import { filesRouter } from './routes/files.js'
 import { rolesRouter } from './routes/roles.js'
 import { settingsRouter } from './routes/settings.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
@@ -45,6 +46,7 @@ apiRouter.use('/upload', uploadsRouter)
 apiRouter.use('/locations', locationsRouter)
 apiRouter.use('/home', homeRouter)
 apiRouter.use('/wiki', wikiRouter)
+apiRouter.use('/files', filesRouter)
 apiRouter.use('/roles', rolesRouter)
 apiRouter.use('/settings', settingsRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
@@ -67,6 +69,8 @@ function spaLegacyRedirect(req: express.Request, res: express.Response, next: ex
     rel.startsWith('/api') ||
     rel.startsWith('/testing') ||
     rel.startsWith('/locations') ||
+    rel.startsWith('/wiki') ||
+    rel.startsWith('/files') ||
     rel.startsWith('/admin') ||
     rel === '/' ||
     rel === '/login'

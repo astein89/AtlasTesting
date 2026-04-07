@@ -4,6 +4,7 @@ import { LoginModal } from '../auth/LoginModal'
 import { Navbar } from './Navbar'
 import { Sidebar } from './Sidebar'
 import { AdminModuleSidebar } from './AdminModuleSidebar'
+import { FilesModuleHostProvider } from '../../contexts/FilesModuleHostContext'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { useLoginModalStore } from '../../store/loginModalStore'
 
@@ -54,35 +55,37 @@ export function Layout({ showSidebar = true }: LayoutProps) {
   return (
     <div className="flex h-screen flex-col min-h-0 bg-background text-foreground">
       <Navbar onMenuClick={showSidebar ? () => setSidebarOpen((o) => !o) : undefined} />
-      <div className="flex min-h-0 min-w-0 flex-1">
-        {showSidebar && (
-          <>
-            {inAdminModule ? (
-              <AdminModuleSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-            ) : (
-              <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-            )}
-            {sidebarOpen && (
-              <div
-                className="fixed inset-0 z-40 bg-black/50 md:hidden"
-                onClick={() => setSidebarOpen(false)}
-                aria-hidden
-              />
-            )}
-          </>
-        )}
-        <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
-          <Suspense
-            fallback={
-              <div className="flex min-h-[12rem] items-center justify-center text-foreground/60">
-                <span className="text-sm">Loading this page…</span>
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
-        </main>
-      </div>
+      <FilesModuleHostProvider>
+        <div className="flex min-h-0 min-w-0 flex-1">
+          {showSidebar && (
+            <>
+              {inAdminModule ? (
+                <AdminModuleSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+              ) : (
+                <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+              )}
+              {sidebarOpen && (
+                <div
+                  className="fixed inset-0 z-40 bg-black/50 md:hidden"
+                  onClick={() => setSidebarOpen(false)}
+                  aria-hidden
+                />
+              )}
+            </>
+          )}
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
+            <Suspense
+              fallback={
+                <div className="flex min-h-[12rem] items-center justify-center text-foreground/60">
+                  <span className="text-sm">Loading this page…</span>
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </main>
+        </div>
+      </FilesModuleHostProvider>
       <LoginModal />
     </div>
   )

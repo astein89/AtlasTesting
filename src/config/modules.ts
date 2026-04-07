@@ -1,7 +1,13 @@
-import { ADMIN_PREFIX, TESTING_PREFIX, LOCATIONS_PREFIX, WIKI_PREFIX } from '@/lib/appPaths'
+import {
+  ADMIN_PREFIX,
+  FILES_PREFIX,
+  TESTING_PREFIX,
+  LOCATIONS_PREFIX,
+  WIKI_PREFIX,
+} from '@/lib/appPaths'
 
 export interface AppModule {
-  /** Used for home module cards; artwork is mapped in `HomeModuleCardIcon` for `testing` | `locations` | `wiki` | `admin`. */
+  /** Used for home module cards; artwork is mapped in `HomeModuleCardIcon` for known module ids. */
   id: string
   /** First URL segment, e.g. "testing" -> /testing */
   path: string
@@ -43,6 +49,14 @@ export const appModules: AppModule[] = [
     description: 'Documentation and guides (Markdown).',
     requiredPermission: 'module.wiki',
     to: WIKI_PREFIX,
+  },
+  {
+    id: 'files',
+    path: 'files',
+    title: 'Files',
+    description: 'Upload and download shared documents.',
+    requiredPermission: 'module.files',
+    to: FILES_PREFIX,
   },
   {
     id: 'admin',

@@ -33,15 +33,20 @@ function isPasswordChangeGateExempt(req: Request): boolean {
   return false
 }
 
+/**
+ * Effective permissions for this request.
+ * Prefer merging from JWT `roles` / `role` against the current DB so role edits and migrations apply
+ * without forcing re-login. Fall back to embedded JWT `permissions` only for legacy tokens that omit roles.
+ */
 function resolvePermissions(payload: JwtPayload): string[] {
-  if (Array.isArray(payload.permissions) && payload.permissions.length > 0) {
-    return normalizePermissionArray(payload.permissions)
-  }
   if (Array.isArray(payload.roles) && payload.roles.length > 0) {
     return mergePermissionsForRoleSlugs(db, payload.roles)
   }
   if (payload.role) {
-    return getPermissionsForRoleSlug(db, payload.role)
+    return mergePermissionsForRoleSlugs(db, [payload.role])
+  }
+  if (Array.isArray(payload.permissions) && payload.permissions.length > 0) {
+    return normalizePermissionArray(payload.permissions)
   }
   return getPermissionsForRoleSlug(db, 'user')
 }

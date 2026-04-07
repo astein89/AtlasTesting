@@ -50,6 +50,7 @@ const WikiIndex = lazy(() => import('./routes/wiki/WikiIndex').then((m) => ({ de
 const WikiCatchAll = lazy(() =>
   import('./routes/wiki/WikiCatchAll').then((m) => ({ default: m.WikiCatchAll }))
 )
+const FilesLibrary = lazy(() => import('./routes/FilesLibrary').then((m) => ({ default: m.FilesLibrary })))
 
 const REHYDRATE_DELAY_MS = 300
 
@@ -80,6 +81,18 @@ const locationsLayout = (
 const wikiLayout = (
   <AuthGuard>
     <PermissionGuard permission="module.wiki">
+      <DateTimeConfigProvider>
+        <ConditionalFormatPresetsProvider>
+          <Layout />
+        </ConditionalFormatPresetsProvider>
+      </DateTimeConfigProvider>
+    </PermissionGuard>
+  </AuthGuard>
+)
+
+const filesLayout = (
+  <AuthGuard>
+    <PermissionGuard permission="module.files">
       <DateTimeConfigProvider>
         <ConditionalFormatPresetsProvider>
           <Layout />
@@ -379,6 +392,9 @@ export function createAppBrowserRouter(basePath: string) {
           <Route path="/wiki" element={wikiLayout}>
             <Route index element={<WikiIndex />} />
             <Route path="*" element={<WikiCatchAll />} />
+          </Route>
+          <Route path="/files" element={filesLayout}>
+            <Route index element={<FilesLibrary />} />
           </Route>
           <Route path="/locations" element={locationsLayout}>
             <Route

@@ -6,6 +6,7 @@
 export const TESTING_PREFIX = '/testing'
 export const LOCATIONS_PREFIX = '/locations'
 export const WIKI_PREFIX = '/wiki'
+export const FILES_PREFIX = '/files'
 export const ADMIN_PREFIX = '/admin'
 
 /** Path under the Testing module, e.g. testingPath('test-plans', planId, 'data') */
@@ -37,6 +38,16 @@ export function wikiPath(...segments: string[]): string {
     .join('/')
     .replace(/^\/+/, '')
   return `${WIKI_PREFIX}/${tail}`
+}
+
+/** Path under Files module (single index for v1). */
+export function filesPath(...segments: string[]): string {
+  if (segments.length === 0) return FILES_PREFIX
+  const tail = segments
+    .filter(Boolean)
+    .join('/')
+    .replace(/^\/+/, '')
+  return `${FILES_PREFIX}/${tail}`
 }
 
 /** Root `content/wiki/index.md` is path `index`; URLs use `/wiki` and `/wiki/edit` (not `/wiki/index`). */

@@ -19,8 +19,16 @@ interface User {
 /** When persisted user has no permissions yet (pre-refresh), match server defaults. */
 function legacyPermissionsForRole(role: string | undefined): string[] {
   if (role === 'admin') return ['*']
-  if (role === 'viewer') return ['module.home', 'module.testing', 'module.wiki']
-  return ['module.home', 'module.testing', 'module.wiki', 'wiki.edit', 'testing.data.write']
+  if (role === 'viewer') return ['module.home', 'module.testing', 'module.wiki', 'module.files']
+  return [
+    'module.home',
+    'module.testing',
+    'module.wiki',
+    'module.files',
+    'wiki.edit',
+    'testing.data.write',
+    'files.manage',
+  ]
 }
 
 function effectivePermissions(user: User | null | undefined): string[] {
