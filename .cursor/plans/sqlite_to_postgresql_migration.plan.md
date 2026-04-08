@@ -62,6 +62,56 @@ flowchart TB
 
 ---
 
+## Operator cutover instructions
+
+Step-by-step guidance for operators. For PostgreSQL install, networking, and Pi-specific commands, see [docs/RASPBERRY_PI_SETUP.md](../docs/RASPBERRY_PI_SETUP.md). For backups and `pg_dump` after cutover, see [docs/BACKUP_SETUP.md](../docs/BACKUP_SETUP.md).
+
+### Prerequisites
+
+- **PostgreSQL** is installed and reachable (use **14+** unless your org standard differs).
+- **Application**: Dependencies installed (`npm ci` or `npm install`). Set **`DATABASE_URL`** or discrete **`DB_HOST`**, **`DB_PORT`**, **`DB_USER`**, **`DB_PASSWORD`**, **`DB_NAME`** as documented in [`.env.example`](../.env.example) once PostgreSQL support ships.
+- **Migrating from SQLite**: Know the path to **`dc-automation.db`** (or use **`DB_PATH`**). Take a **filesystem backup copy** of the SQLite file before running any import.
+
+### Greenfield (empty PostgreSQL, no SQLite data)
+
+1. Create the database and application role (see [docs/RASPBERRY_PI_SETUP.md](../docs/RASPBERRY_PI_SETUP.md) for example SQL on Debian/Raspberry Pi OS).
+2. Set **`DATABASE_URL`** / **`config.json`** so the app points at the new database.
+3. Apply the **baseline PostgreSQL schema** using whichever mechanism the implementation provides: **`initSchemaPg()` on app startup**, a one-time operator step with **`psql`** or a SQL file, or invocation from the migrate script — document the chosen policy in release notes and align this runbook when the feature is implemented.
+4. Optionally run seed if your deployment uses it.
+5. Deploy **`content/wiki/`** with the app; wiki pages are files on disk, not stored in the database.
+
+### Cutover from existing SQLite
+
+Execute in order:
+
+1. **Stop** the application (or use a maintenance window).
+2. **Back up** the SQLite database file and, if you are changing hosts, the **`content/wiki/`** tree.
+3. Ensure the **PostgreSQL target database is empty** (preferred). If the data migration script supports truncate/re-run, document that explicitly; otherwise assume a fresh database.
+4. **Apply the baseline PostgreSQL schema** using the same mechanism as greenfield (see above).
+5. Run **`npm run db:migrate`** (or the final script name from `package.json`) with environment variables set for both the **SQLite source path** and **PostgreSQL connection** (same as production config).
+6. Review the script **stdout**; **non-zero exit code** means failure — do not point production at PostgreSQL until the import succeeds.
+7. Update production configuration to **PostgreSQL** (`DATABASE_URL` / config), **restart** the app.
+8. **Smoke-test**: sign-in, exercise critical flows (see verification below).
+
+### Verification checklist
+
+- Script printed plausible **row counts** per table (if implemented); spot-check against SQLite if possible.
+- Application **starts cleanly** against PostgreSQL with no schema errors in logs.
+- At least **one read and one write** path (e.g. login, create or update a record).
+
+### Rollback
+
+- Revert **`DATABASE_URL` / config** to the previous SQLite-backed settings.
+- Restore the **backed-up `dc-automation.db`** if the file was replaced or damaged.
+- Do **not** use the one-time SQLite→PostgreSQL script as a rollback mechanism.
+
+### Do not
+
+- Do **not** invoke the SQLite→PostgreSQL **data migration script** from [server/index.ts](../server/index.ts) or request handlers.
+- Do **not** replay SQLite **`migrate*`** history on PostgreSQL; use only the **baseline** PG schema for PostgreSQL.
+
+---
+
 ## 1. Add PostgreSQL driver and config
 
 **Dependencies** ([package.json](../package.json)):
