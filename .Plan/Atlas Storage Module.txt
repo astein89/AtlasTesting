@@ -1,0 +1,367 @@
+Project summary
+
+Build a Node.js web application for visualizing and managing a 5-level pallet ASRS. Each level is a 90 by 51 coordinate grid. Every coordinate represents either a storage position or another mapped feature of the system, such as structural space, conveyor area, blocked area, or other designations. The app must render each level as a live 2D map, overlay inventory data onto valid storage positions, and allow operators to view what is stored at each position.
+
+The system should separate:
+
+static location master data
+dynamic inventory occupancy data
+optional overlay/status data
+rendered UI state
+
+The app should support browsing by level, filtering, searching, and inspecting a position to see its details.
+
+Functional description for an AI coder
+
+Create a full-stack Node.js application with these major parts:
+
+1. Static ASRS map model
+
+Store a master list of all mapped coordinates for the ASRS. Each row represents one coordinate and includes:
+
+level
+x
+y
+designation or location type
+
+Examples of designation:
+
+storage position
+no position
+conveyor
+service area
+blocked
+reserved
+structural element
+
+The master map defines the physical layout and should not change often.
+
+2. Dynamic inventory model
+
+Store current inventory occupancy by mapped position. For each occupied position, store:
+
+level
+x
+y
+pallet or load ID
+item/SKU
+description
+quantity
+status
+timestamp
+
+The UI should overlay this inventory data on top of the static map.
+
+3. Rendered level view
+
+For each of 5 levels, render a 90 by 51 grid. Each grid cell should visually represent the coordinate state.
+
+Rendering rules:
+
+if the location is not a storage position, show its base designation
+if the location is a storage position and empty, show as empty storage
+if the location is a storage position and occupied, show pallet ID or short item label
+if there are overlays, such as alarm, blocked, disabled, or selected, those should visually override the base state
+4. Position detail panel
+
+When a user clicks a cell, show a detail panel with:
+
+level
+x
+y
+designation
+occupancy state
+pallet/load ID
+item
+quantity
+status
+timestamps
+any notes or alerts
+5. Filters and search
+
+Allow the user to:
+
+switch between levels
+search by pallet ID
+search by SKU
+search by coordinate
+filter occupied vs empty
+filter by status
+6. Overlay support
+
+Support separate overlay layers that can modify how a cell is displayed, such as:
+
+blocked position
+disabled position
+alarm
+reserved
+highlighted search result
+maintenance area
+
+Overlay priority should be configurable so some overlays override others.
+
+7. Admin/data management
+
+Provide screens or APIs to:
+
+import the master location map
+import or sync current inventory
+update a position manually
+apply status overrides
+audit changes
+8. Future-ready architecture
+
+Design the app so it can later support:
+
+live updates from PLC/WMS/WCS
+multiple facilities
+additional levels
+historical occupancy tracking
+heatmaps and movement analytics
+What the UI should feel like
+
+A warehouse visualization dashboard, not a spreadsheet.
+
+Suggested layout:
+
+left sidebar: level selector, filters, search
+center: large rendered grid map
+right panel: selected position details
+top bar: facility/system summary, alarms, last refresh time
+
+Grid behavior:
+
+zoomable
+pan if needed
+tooltips on hover
+click for detail
+color-coded cell states
+optional text label inside cell
+optional legend
+Suggested technical stack
+
+For an AI coder, I would specify:
+
+Backend
+Node.js
+Express or NestJS
+PostgreSQL preferred
+Prisma or TypeORM ORM
+REST API or GraphQL
+Frontend
+React
+Next.js if full-stack web app
+CSS grid or canvas/SVG rendering
+Tailwind for UI
+Zustand/Redux for client state if needed
+Realtime
+WebSocket or Socket.IO for live updates later
+Imports/integration
+CSV/XLSX import support
+background sync jobs if inventory comes from another system
+Important implementation guidance
+
+Tell the AI coder this explicitly:
+
+Do not render the map by running per-cell database queries. Load the relevant level’s static map and inventory in bulk, merge them in memory, and render from a computed grid model. The rendering model should separate base layout, occupancy, and overlays. Cell color/state should be derived from a numeric or enum status code, not from expensive string comparisons throughout the UI.
+
+That one instruction will save a lot of bad implementation.
+
+Data model you would likely need
+locations
+
+Static master coordinates.
+
+Fields:
+
+id
+facility_id
+level
+x
+y
+key (level|x|y)
+designation
+is_storage_position
+aisle
+bay
+row
+depth
+enabled
+metadata_json
+inventory
+
+Current contents at a location.
+
+Fields:
+
+id
+facility_id
+location_key
+level
+x
+y
+load_id
+sku
+item_description
+quantity
+lot
+status
+received_at
+last_updated_at
+location_overlays
+
+Dynamic overrides.
+
+Fields:
+
+id
+location_key
+overlay_type
+priority
+label
+color_code
+active
+start_at
+end_at
+source
+inventory_history
+
+If you want history/audit.
+
+Fields:
+
+id
+location_key
+load_id
+action_type
+old_value_json
+new_value_json
+changed_at
+changed_by
+facilities
+
+If this could expand later.
+
+Fields:
+
+id
+name
+description
+Extra data still needed
+
+To build it well, an AI coder would need these answers.
+
+1. Full designation list
+
+What are all possible base map types?
+For example:
+
+S = storage
+V = void
+C = conveyor
+B = blocked
+etc.
+
+And for each:
+
+display label
+default color
+whether inventory can exist there
+2. Overlay list
+
+What dynamic states can override the base map?
+For example:
+
+blocked
+reserved
+alarm
+disabled
+maintenance
+selected
+
+And what priority order should they use?
+
+3. What should show inside occupied cells
+
+Pick one primary display:
+
+pallet ID
+SKU
+item short name
+quantity
+custom short label
+
+And define what goes in tooltip vs side panel.
+
+4. Position identity rules
+
+Are level + x + y always unique?
+Or do you need:
+
+side
+depth
+lane
+rack face
+double-deep position
+left/right fork side
+
+This is important. In a real ASRS, x/y alone may not be enough.
+
+5. Inventory source
+
+Where does current inventory come from?
+
+manual entry
+imported spreadsheet
+WMS export
+SQL database
+API from another system
+PLC/WCS feed
+
+This determines the backend design.
+
+6. Refresh/update model
+
+Should inventory be:
+
+refreshed manually
+polled every N seconds
+pushed live by integration
+edited by users in app
+7. User roles
+
+Who uses it?
+
+operators
+engineers
+supervisors
+admins
+
+Do they all have edit rights, or view-only for some?
+
+8. Interaction requirements
+
+Do users only view data, or also:
+
+move inventory
+mark blocked positions
+acknowledge alarms
+edit metadata
+upload imports
+9. Historical requirements
+
+Do you need:
+
+current state only
+movement history
+occupancy trend
+utilization reports
+alarm history
+10. Visual behavior
+
+Need answers for:
+
+fixed cell size or zoomable
+show all 5 levels at once or one at a time
+mobile support or desktop only
+printable views needed or not
