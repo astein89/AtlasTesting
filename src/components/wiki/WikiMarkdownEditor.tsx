@@ -344,18 +344,24 @@ function RedoIcon({ className }: { className?: string }) {
   )
 }
 
+export type WikiMarkdownEditorLayout = 'page' | 'modal'
+
 export function WikiMarkdownEditor({
   value,
   onChange,
   disabled,
   /** When this value changes (e.g. wiki page path), undo/redo stacks are cleared. */
   historyResetKey,
+  /** `modal`: shorter editor heights for use inside stacked modals (e.g. home welcome). */
+  layout = 'page',
 }: {
   value: string
   onChange: (next: string) => void
   disabled?: boolean
   historyResetKey?: string
+  layout?: WikiMarkdownEditorLayout
 }) {
+  const inModal = layout === 'modal'
   const taRef = useRef<HTMLTextAreaElement>(null)
   const pastRef = useRef<string[]>([])
   const futureRef = useRef<string[]>([])
@@ -904,22 +910,38 @@ export function WikiMarkdownEditor({
             : 'flex flex-col'
         }
       >
-        <div className={showPreview ? 'min-h-[min(50vh,28rem)] w-full min-w-0 flex-1' : 'w-full'}>
+        <div
+          className={
+            showPreview
+              ? inModal
+                ? 'min-h-[min(36vh,18rem)] w-full min-w-0 flex-1'
+                : 'min-h-[min(50vh,28rem)] w-full min-w-0 flex-1'
+              : 'w-full'
+          }
+        >
           <textarea
             ref={taRef}
             value={value}
             onChange={(e) => commitChange(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={disabled}
-            rows={showPreview ? 22 : 28}
+            rows={inModal ? (showPreview ? 14 : 18) : showPreview ? 22 : 28}
             spellCheck
-            className="h-[min(70vh,40rem)] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none ring-primary focus:ring-2 disabled:opacity-60 lg:h-[calc(100vh-14rem)] lg:min-h-[20rem]"
+            className={
+              inModal
+                ? 'h-[min(36vh,18rem)] min-h-[10rem] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none ring-primary focus:ring-2 disabled:opacity-60 lg:min-h-[12rem]'
+                : 'h-[min(70vh,40rem)] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none ring-primary focus:ring-2 disabled:opacity-60 lg:h-[calc(100vh-14rem)] lg:min-h-[20rem]'
+            }
             aria-label="Markdown source"
           />
         </div>
         {showPreview ? (
           <div
-            className="wiki-editor-preview max-h-[min(50vh,28rem)] w-full overflow-auto rounded-lg border border-border bg-card p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)] lg:w-[calc(50%-0.5rem)] lg:max-w-xl xl:max-w-2xl"
+            className={
+              inModal
+                ? 'wiki-editor-preview max-h-[min(36vh,18rem)] w-full overflow-auto rounded-lg border border-border bg-card p-4 lg:sticky lg:top-2 lg:max-h-[min(72vh,34rem)] lg:w-[calc(50%-0.5rem)] lg:max-w-xl xl:max-w-2xl'
+                : 'wiki-editor-preview max-h-[min(50vh,28rem)] w-full overflow-auto rounded-lg border border-border bg-card p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)] lg:w-[calc(50%-0.5rem)] lg:max-w-xl xl:max-w-2xl'
+            }
             aria-label="Live preview"
           >
             {value.trim() ? (

@@ -3,6 +3,7 @@ import cors from 'cors'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { initDatabase } from './db/index.js'
 import { runSeed } from './db/seed.js'
 import { authRouter } from './routes/auth.js'
 import { adminRouter } from './routes/admin.js'
@@ -168,19 +169,25 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: 'Internal server error' })
 })
 
-runSeed()
-seedWikiDefaults()
+void (async () => {
+  await initDatabase()
+  await runSeed()
+  seedWikiDefaults()
 
-if (isProd && !basePath) {
-  app.use(express.static(distPath))
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) return next()
-    res.sendFile(path.join(distPath, 'index.html'))
+  if (isProd && !basePath) {
+    app.use(express.static(distPath))
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) return next()
+      res.sendFile(path.join(distPath, 'index.html'))
+    })
+    app.use((_req, res) => res.status(404).json({ error: 'Not found' }))
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    const p = basePath || '(none)'
+    console.log(`Server running on http://0.0.0.0:${PORT} BASE_PATH=${p}`)
   })
-  app.use((_req, res) => res.status(404).json({ error: 'Not found' }))
-}
-
-app.listen(PORT, '0.0.0.0', () => {
-  const p = basePath || '(none)'
-  console.log(`Server running on http://0.0.0.0:${PORT} BASE_PATH=${p}`)
+})().catch((err) => {
+  console.error(err)
+  process.exit(1)
 })

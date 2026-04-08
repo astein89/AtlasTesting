@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -20,9 +20,11 @@ import { api } from '@/api/client'
 import { appModules, type AppModule } from '@/config/modules'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { HomeCustomLinkEditModal } from '@/components/home/HomeCustomLinkEditModal'
+import { HomeWelcomeMarkdownModal } from '@/components/home/HomeWelcomeMarkdownModal'
 import { HomeModuleCardIcon } from '@/components/home/HomeModuleCardIcon'
 import { mergeHomeModuleOrder } from '@/lib/homeModuleOrder'
 import { publicAsset } from '@/lib/basePath'
+import { uploadsUrl } from '@/lib/uploadsUrl'
 import { externalFaviconCandidateUrls } from '@/lib/linkFavicon'
 import {
   WELCOME_LOGO_DEFAULT_REM,
@@ -88,6 +90,17 @@ function LinkRowFavicon({ href }: { href: string }) {
       onError={() => setI((idx) => (idx < candidates.length - 1 ? idx + 1 : idx))}
     />
   )
+}
+
+function homeBrandingPreviewUrl(
+  path: string | null,
+  revision: number | undefined,
+  nonce: number
+): string | null {
+  if (!path?.trim()) return null
+  let u = uploadsUrl(path.trim(), revision ?? 0)
+  if (nonce > 0) u += (u.includes('?') ? '&' : '?') + `_=${nonce}`
+  return u
 }
 
 function SortableModuleRow({
@@ -224,6 +237,17 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
     normalizeModulesHiddenFromInitial(initial.modulesHiddenFromHome)
   )
   const [linkDialog, setLinkDialog] = useState<LinkDialogState>(null)
+  const [welcomeEditorOpen, setWelcomeEditorOpen] = useState(false)
+  const [welcomeEditorSession, setWelcomeEditorSession] = useState(0)
+  const [welcomeLogoPath, setWelcomeLogoPath] = useState<string | null>(() =>
+    initial.welcomeLogoPath?.trim() ? initial.welcomeLogoPath.trim() : null
+  )
+  const [siteFaviconPath, setSiteFaviconPath] = useState<string | null>(() =>
+    initial.siteFaviconPath?.trim() ? initial.siteFaviconPath.trim() : null
+  )
+  const [brandingPreviewNonce, setBrandingPreviewNonce] = useState(0)
+  const welcomeLogoFileRef = useRef<HTMLInputElement>(null)
+  const faviconFileRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
 
   const sensors = useSensors(
@@ -269,6 +293,27 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
     setLinks((prev) => prev.filter((_, i) => i !== index))
   }
 
+  const welcomeLogoPreviewSrc = homeBrandingPreviewUrl(
+    welcomeLogoPath,
+    initial.homeBrandingRevision,
+    brandingPreviewNonce
+  )
+  const faviconPreviewSrc = homeBrandingPreviewUrl(
+    siteFaviconPath,
+    initial.homeBrandingRevision,
+    brandingPreviewNonce
+  )
+
+  const uploadBrandingFile = async (which: 'welcome' | 'favicon', file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const url = which === 'welcome' ? '/home/welcome-logo' : '/home/site-favicon'
+    const { data } = await api.post<{ path: string }>(url, form)
+    setBrandingPreviewNonce((n) => n + 1)
+    if (which === 'welcome') setWelcomeLogoPath(data.path)
+    else setSiteFaviconPath(data.path)
+  }
+
   const handleLinkSave = (link: HomeCustomLink) => {
     if (linkDialog === 'add') {
       setLinks((prev) => [...prev, link])
@@ -294,6 +339,8 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
         modulesHiddenFromHome,
         showWelcomeLogo: Boolean(showWelcomeLogo),
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(welcomeLogoMaxRem),
+        welcomeLogoPath: welcomeLogoPath ?? null,
+        siteFaviconPath: siteFaviconPath ?? null,
       })
       onSaved(data)
       onClose()
@@ -342,52 +389,176 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
             <span>
               <span className="block text-sm font-medium text-foreground">Logo beside welcome</span>
               <span className="mt-0.5 block text-xs text-foreground/65">
-                Shows <code className="rounded bg-background px-1">public/logo.png</code> to the left of the welcome
-                text on medium+ screens (stacked on small screens).
+                Shows your welcome image to the left of the welcome text on medium+ screens (stacked on small
+                screens). Use a custom file below or the built-in <code className="rounded bg-background px-1">public/logo.png</code>.
               </span>
             </span>
           </label>
 
           {showWelcomeLogo ? (
-            <div className="rounded-lg border border-border bg-background/40 px-3 py-2.5">
-              <label className="mb-2 block text-sm font-medium text-foreground" htmlFor="logo-size">
-                Logo size (max width)
-              </label>
-              <div className="flex flex-wrap items-center gap-3">
-                <input
-                  id="logo-size"
-                  type="range"
-                  min={WELCOME_LOGO_MIN_REM}
-                  max={WELCOME_LOGO_MAX_REM}
-                  step="0.5"
-                  value={welcomeLogoMaxRem}
-                  onChange={(e) => setWelcomeLogoMaxRem(clampWelcomeLogoMaxRem(parseFloat(e.target.value)))}
-                  className="h-2 min-w-[8rem] flex-1 cursor-pointer accent-primary"
-                />
-                <span className="tabular-nums text-sm text-foreground/80">{welcomeLogoMaxRem}rem</span>
+            <div className="space-y-3 rounded-lg border border-border bg-background/40 px-3 py-2.5">
+              <div>
+                <span className="block text-sm font-medium text-foreground">Welcome image</span>
+                <p className="text-xs text-foreground/65">
+                  PNG, JPEG, WebP, GIF, or SVG. Max 2&nbsp;MB. Replaces the default logo for the home hub only.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {welcomeLogoPreviewSrc ? (
+                    <img
+                      src={welcomeLogoPreviewSrc}
+                      alt=""
+                      className="h-16 w-auto max-w-[10rem] rounded-lg border border-border object-contain"
+                    />
+                  ) : (
+                    <img
+                      src={publicAsset('logo.png')}
+                      alt=""
+                      className="h-16 w-auto max-w-[10rem] rounded-lg border border-border object-contain opacity-90"
+                    />
+                  )}
+                  <input
+                    ref={welcomeLogoFileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      e.target.value = ''
+                      if (f) void uploadBrandingFile('welcome', f).catch(() => showAlert('Upload failed'))
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => welcomeLogoFileRef.current?.click()}
+                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-background/80"
+                  >
+                    Upload…
+                  </button>
+                  {welcomeLogoPath ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWelcomeLogoPath(null)
+                        setBrandingPreviewNonce((n) => n + 1)
+                      }}
+                      className="text-sm text-foreground/80 hover:text-foreground hover:underline"
+                    >
+                      Use built-in logo
+                    </button>
+                  ) : null}
+                </div>
               </div>
-              <p className="mt-1 text-xs text-foreground/60">
-                Between {WELCOME_LOGO_MIN_REM} and {WELCOME_LOGO_MAX_REM} rem. Applies on the home page only.
-              </p>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground" htmlFor="logo-size">
+                  Logo size (max width)
+                </label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    id="logo-size"
+                    type="range"
+                    min={WELCOME_LOGO_MIN_REM}
+                    max={WELCOME_LOGO_MAX_REM}
+                    step="0.5"
+                    value={welcomeLogoMaxRem}
+                    onChange={(e) => setWelcomeLogoMaxRem(clampWelcomeLogoMaxRem(parseFloat(e.target.value)))}
+                    className="h-2 min-w-[8rem] flex-1 cursor-pointer accent-primary"
+                  />
+                  <span className="tabular-nums text-sm text-foreground/80">{welcomeLogoMaxRem}rem</span>
+                </div>
+                <p className="mt-1 text-xs text-foreground/60">
+                  Between {WELCOME_LOGO_MIN_REM} and {WELCOME_LOGO_MAX_REM} rem.
+                </p>
+              </div>
             </div>
           ) : null}
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-foreground" htmlFor="intro-md">
-              Welcome content (Markdown)
-            </label>
-            <textarea
-              id="intro-md"
-              value={introMarkdown}
-              onChange={(e) => setIntroMarkdown(e.target.value)}
-              rows={10}
-              placeholder={'Headings, **bold**, lists, and [links](/testing) are supported.'}
-              className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
-            />
-            <p className="mt-1 text-xs text-foreground/60">
+          <div className="rounded-lg border border-border bg-background/40 px-3 py-2.5">
+            <span className="block text-sm font-medium text-foreground">Site icon (favicon)</span>
+            <p className="mt-0.5 text-xs text-foreground/65">
+              Browser tab and “Add to Home Screen” icon for this app. PNG recommended (square); SVG supported.
+              Max 512&nbsp;KB. Default is <code className="rounded bg-background px-1">public/icon.png</code>. Saves
+              after you click Save below.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              {faviconPreviewSrc ? (
+                <img
+                  src={faviconPreviewSrc}
+                  alt=""
+                  className="h-10 w-10 rounded border border-border object-contain"
+                />
+              ) : (
+                <img
+                  src={publicAsset('icon.png')}
+                  alt=""
+                  className="h-10 w-10 rounded border border-border object-contain opacity-90"
+                />
+              )}
+              <input
+                ref={faviconFileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  e.target.value = ''
+                  if (f) void uploadBrandingFile('favicon', f).catch(() => showAlert('Upload failed'))
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => faviconFileRef.current?.click()}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-background/80"
+              >
+                Upload favicon…
+              </button>
+              {siteFaviconPath ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSiteFaviconPath(null)
+                    setBrandingPreviewNonce((n) => n + 1)
+                  }}
+                  className="text-sm text-foreground/80 hover:text-foreground hover:underline"
+                >
+                  Use built-in icon
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-background/40 px-3 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <span className="block text-sm font-medium text-foreground">Welcome content (Markdown)</span>
+                <p className="mt-0.5 text-xs text-foreground/65">
+                  Open the full editor for the same toolbar, preview, and shortcuts as wiki pages.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setWelcomeEditorSession((n) => n + 1)
+                  setWelcomeEditorOpen(true)
+                }}
+                className="shrink-0 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-background/80"
+              >
+                Edit welcome…
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-foreground/60">
               Links starting with <code className="rounded bg-background px-1">/</code> stay in the app; http(s)
               URLs open in a new tab.
             </p>
+            {introMarkdown.trim() ? (
+              <pre
+                className="mt-2 max-h-28 overflow-auto rounded-md border border-border/70 bg-background px-2 py-1.5 font-mono text-[11px] leading-snug text-foreground/80 whitespace-pre-wrap"
+                aria-label="Welcome markdown preview (trimmed)"
+              >
+                {introMarkdown.length > 1200 ? `${introMarkdown.slice(0, 1200)}…` : introMarkdown}
+              </pre>
+            ) : (
+              <p className="mt-2 text-sm text-foreground/50">No welcome text yet. Click Edit welcome…</p>
+            )}
           </div>
 
           <div>
@@ -471,6 +642,14 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
           </button>
         </div>
       </div>
+
+      <HomeWelcomeMarkdownModal
+        open={welcomeEditorOpen}
+        editorSessionKey={`home-welcome-${welcomeEditorSession}`}
+        initialMarkdown={introMarkdown}
+        onClose={() => setWelcomeEditorOpen(false)}
+        onApply={setIntroMarkdown}
+      />
 
       {linkDialog != null && (
         <HomeCustomLinkEditModal

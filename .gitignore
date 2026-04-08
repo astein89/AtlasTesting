@@ -9,6 +9,7 @@ uploads
 # Live wiki data (editable on disk); canonical defaults live in content/wiki-seed/
 content/wiki/
 .env
+config.json
 *.log
 .DS_Store
 

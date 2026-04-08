@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Router } from 'express'
+import { Router, type Response } from 'express'
+import multer from 'multer'
 import { db } from '../db/index.js'
 import {
   authMiddleware,
@@ -11,6 +12,7 @@ import {
 } from '../middleware/auth.js'
 import { isValidLinkRequiredPermission } from '../lib/permissionsCatalog.js'
 import { roleSlugExists } from '../lib/userRoles.js'
+import { asyncRoute } from '../utils/asyncRoute.js'
 
 const router = Router()
 
@@ -36,6 +38,12 @@ export interface HomePagePayload {
   modulesHiddenFromHome: string[]
   showWelcomeLogo?: boolean
   welcomeLogoMaxRem?: number
+  /** Path under repo `uploads/` (e.g. `home/welcome-logo.png`). Null/omit = built-in `public/logo.png`. */
+  welcomeLogoPath?: string | null
+  /** Same; null = built-in `public/icon.png` for tab / PWA icon. */
+  siteFaviconPath?: string | null
+  /** Bumped when either branding path changes (cache bust for `/api/uploads/...`). */
+  homeBrandingRevision?: number
 }
 
 const MAX_LINKS = 40
@@ -127,6 +135,9 @@ const DEFAULT_KV_HOME = {
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
   moduleOrder: [...HOME_MODULE_IDS],
   modulesHiddenFromHome: [] as string[],
+  welcomeLogoPath: null as string | null,
+  siteFaviconPath: null as string | null,
+  homeBrandingRevision: 0,
 }
 
 const DEFAULT_HOME: HomePagePayload = {
@@ -141,6 +152,159 @@ const MAX_LINK_TITLE = 120
 const MAX_LINK_DESC = 400
 const MAX_HREF = 2000
 const MAX_ROLE_SLUGS_PER_LINK = 32
+
+const HOME_ASSET_PATH_RE = /^home\/[a-zA-Z0-9._-]+$/
+const MAX_WELCOME_LOGO_BYTES = 2 * 1024 * 1024
+const MAX_SITE_FAVICON_BYTES = 512 * 1024
+const HOME_IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+])
+
+function uploadsRootDir(): string {
+  return path.resolve(process.cwd(), 'uploads')
+}
+
+function homeUploadsDir(): string {
+  const d = path.join(uploadsRootDir(), 'home')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
+
+function extFromHomeImageMime(m: string): string | null {
+  const map: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'image/svg+xml': 'svg',
+  }
+  return map[m] ?? null
+}
+
+function homeAssetFileExists(rel: string): boolean {
+  if (!HOME_ASSET_PATH_RE.test(rel)) return false
+  const abs = path.resolve(uploadsRootDir(), ...rel.split('/'))
+  const root = uploadsRootDir()
+  if (!abs.startsWith(root)) return false
+  return fs.existsSync(abs)
+}
+
+function deleteHomeBrandingFiles(base: 'welcome-logo' | 'site-favicon') {
+  const dir = path.join(uploadsRootDir(), 'home')
+  if (!fs.existsSync(dir)) return
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith(`${base}.`)) {
+      try {
+        fs.unlinkSync(path.join(dir, name))
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+function readStoredAssetPath(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const t = v.trim()
+  if (!t || !HOME_ASSET_PATH_RE.test(t)) return null
+  return t
+}
+
+function coerceHomeRevision(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.min(1_000_000_000, Math.floor(v))
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = parseInt(v, 10)
+    if (Number.isFinite(n) && n >= 0) return Math.min(1_000_000_000, n)
+  }
+  return 0
+}
+
+function normalizeNullableAssetPath(
+  raw: unknown,
+  prev: string | null,
+  fieldLabel: string
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw === undefined) return { ok: true, value: prev }
+  if (raw === null) return { ok: true, value: null }
+  if (typeof raw !== 'string') return { ok: false, error: `${fieldLabel} must be a string or null` }
+  const t = raw.trim()
+  if (t === '') return { ok: true, value: null }
+  if (!HOME_ASSET_PATH_RE.test(t)) return { ok: false, error: `Invalid ${fieldLabel} path` }
+  if (!homeAssetFileExists(t)) {
+    return {
+      ok: false,
+      error: `${fieldLabel} file is missing. Upload the image again or choose the default.`,
+    }
+  }
+  return { ok: true, value: t }
+}
+
+function publicHomeAssetPath(stored: string | null | undefined): string | null {
+  const p = readStoredAssetPath(stored)
+  if (!p) return null
+  return homeAssetFileExists(p) ? p : null
+}
+
+function homeImageFileFilter(_req: AuthRequest, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  if (HOME_IMAGE_MIMES.has(file.mimetype)) {
+    cb(null, true)
+    return
+  }
+  cb(new Error('Allowed types: PNG, JPEG, WebP, GIF, SVG'))
+}
+
+function makeHomeImageStorage(base: 'welcome-logo' | 'site-favicon') {
+  return multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, homeUploadsDir())
+    },
+    filename: (_req, file, cb) => {
+      const ext = extFromHomeImageMime(file.mimetype)
+      if (!ext) {
+        cb(new Error('Unsupported image type'), '')
+        return
+      }
+      try {
+        deleteHomeBrandingFiles(base)
+      } catch {
+        /* ignore */
+      }
+      cb(null, `${base}.${ext}`)
+    },
+  })
+}
+
+const welcomeLogoUpload = multer({
+  storage: makeHomeImageStorage('welcome-logo'),
+  limits: { fileSize: MAX_WELCOME_LOGO_BYTES },
+  fileFilter: homeImageFileFilter,
+})
+
+const siteFaviconUpload = multer({
+  storage: makeHomeImageStorage('site-favicon'),
+  limits: { fileSize: MAX_SITE_FAVICON_BYTES },
+  fileFilter: homeImageFileFilter,
+})
+
+function handleHomeUploadError(err: unknown, res: Response) {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      res.status(400).json({ error: 'File too large' })
+      return
+    }
+    res.status(400).json({ error: err.message })
+    return
+  }
+  if (err instanceof Error) {
+    res.status(400).json({ error: err.message })
+    return
+  }
+  res.status(400).json({ error: 'Upload failed' })
+}
 
 function isValidHref(href: string): boolean {
   const t = href.trim()
@@ -180,19 +344,22 @@ function parseHomeKv(raw: string | undefined): Omit<HomePagePayload, 'customLink
       welcomeLogoMaxRem,
       moduleOrder,
       modulesHiddenFromHome,
+      welcomeLogoPath: readStoredAssetPath(j.welcomeLogoPath),
+      siteFaviconPath: readStoredAssetPath(j.siteFaviconPath),
+      homeBrandingRevision: coerceHomeRevision(j.homeBrandingRevision),
     }
   } catch {
     return { ...DEFAULT_KV_HOME }
   }
 }
 
-function loadCustomLinksFromDb(): HomeCustomLink[] {
-  const rows = db
+async function loadCustomLinksFromDb(): Promise<HomeCustomLink[]> {
+  const rows = (await db
     .prepare(
       `SELECT id, title, description, href, allowed_role_slugs, required_permission, sort_order
        FROM home_links ORDER BY sort_order ASC, id ASC`
     )
-    .all() as Array<{
+    .all()) as Array<{
     id: string
     title: string
     description: string
@@ -228,15 +395,15 @@ function loadCustomLinksFromDb(): HomeCustomLink[] {
   return out
 }
 
-function replaceLinksInDb(links: HomeCustomLink[]) {
-  db.prepare('DELETE FROM home_links').run()
+async function replaceLinksInDb(links: HomeCustomLink[]) {
+  await db.prepare('DELETE FROM home_links').run()
   const ins = db.prepare(`
     INSERT INTO home_links (id, title, description, href, allowed_role_slugs, required_permission, sort_order)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
   let sortOrder = 0
   for (const link of links) {
-    ins.run(
+    await ins.run(
       link.id,
       link.title,
       link.description,
@@ -249,11 +416,10 @@ function replaceLinksInDb(links: HomeCustomLink[]) {
   }
 }
 
-function normalizePayload(
+async function normalizePayload(
   body: unknown,
-  moduleOrderFallback: string[],
-  modulesHiddenFallback: string[]
-): { ok: true; data: HomePagePayload } | { ok: false; error: string } {
+  prevKv: Omit<HomePagePayload, 'customLinks'>
+): Promise<{ ok: true; data: HomePagePayload } | { ok: false; error: string }> {
   if (!body || typeof body !== 'object') return { ok: false, error: 'Invalid body' }
   const b = body as Record<string, unknown>
   let introMarkdown = ''
@@ -290,7 +456,7 @@ function normalizePayload(
         .slice(0, MAX_ROLE_SLUGS_PER_LINK)
       const uniq = [...new Set(raw)].sort()
       for (const s of uniq) {
-        if (!roleSlugExists(db, s)) {
+        if (!(await roleSlugExists(db, s))) {
           return { ok: false, error: `Unknown role "${s}" for link "${title}"` }
         }
       }
@@ -329,7 +495,7 @@ function normalizePayload(
     }
     moduleOrder = normalizeModuleOrder(b.moduleOrder)
   } else {
-    moduleOrder = normalizeModuleOrder(moduleOrderFallback)
+    moduleOrder = normalizeModuleOrder(prevKv.moduleOrder)
   }
 
   let modulesHiddenFromHome: string[]
@@ -339,8 +505,21 @@ function normalizePayload(
     }
     modulesHiddenFromHome = normalizeModulesHiddenFromHome(b.modulesHiddenFromHome)
   } else {
-    modulesHiddenFromHome = normalizeModulesHiddenFromHome(modulesHiddenFallback)
+    modulesHiddenFromHome = normalizeModulesHiddenFromHome(prevKv.modulesHiddenFromHome)
   }
+
+  const wPath = normalizeNullableAssetPath(
+    b.welcomeLogoPath,
+    prevKv.welcomeLogoPath ?? null,
+    'Welcome logo'
+  )
+  if (!wPath.ok) return { ok: false, error: wPath.error }
+  const fPath = normalizeNullableAssetPath(
+    b.siteFaviconPath,
+    prevKv.siteFaviconPath ?? null,
+    'Site favicon'
+  )
+  if (!fPath.ok) return { ok: false, error: fPath.error }
 
   return {
     ok: true,
@@ -351,64 +530,148 @@ function normalizePayload(
       welcomeLogoMaxRem,
       moduleOrder,
       modulesHiddenFromHome,
+      welcomeLogoPath: wPath.value,
+      siteFaviconPath: fPath.value,
     },
   }
 }
 
 /** Slug/label pairs for home link visibility (editors may not have users.manage). */
-router.get('/role-options', authMiddleware, requirePermission('home.edit'), (_req: AuthRequest, res) => {
-  try {
-    const rows = db.prepare('SELECT slug, label FROM roles ORDER BY slug').all() as Array<{
-      slug: string
-      label: string
-    }>
-    res.json(rows)
-  } catch {
-    res.status(500).json({ error: 'Failed to load roles' })
-  }
-})
+router.get(
+  '/role-options',
+  authMiddleware,
+  requirePermission('home.edit'),
+  asyncRoute(async (_req: AuthRequest, res) => {
+    try {
+      const rows = (await db.prepare('SELECT slug, label FROM roles ORDER BY slug').all()) as Array<{
+        slug: string
+        label: string
+      }>
+      res.json(rows)
+    } catch {
+      res.status(500).json({ error: 'Failed to load roles' })
+    }
+  })
+)
 
 /** Public read: home hub is shown before login. Mutations remain `home.edit`. */
-router.get('/', (_req, res) => {
-  const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY) as { value: string } | undefined
-  const kv = parseHomeKv(row?.value)
-  res.json({
-    introMarkdown: kv.introMarkdown,
-    customLinks: loadCustomLinksFromDb(),
-    moduleOrder: kv.moduleOrder,
-    modulesHiddenFromHome: kv.modulesHiddenFromHome,
-    showWelcomeLogo: kv.showWelcomeLogo,
-    welcomeLogoMaxRem: kv.welcomeLogoMaxRem,
+router.get(
+  '/',
+  asyncRoute(async (_req, res) => {
+    const row = (await db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY)) as
+      | { value: string }
+      | undefined
+    const kv = parseHomeKv(row?.value)
+    res.json({
+      introMarkdown: kv.introMarkdown,
+      customLinks: await loadCustomLinksFromDb(),
+      moduleOrder: kv.moduleOrder,
+      modulesHiddenFromHome: kv.modulesHiddenFromHome,
+      showWelcomeLogo: kv.showWelcomeLogo,
+      welcomeLogoMaxRem: kv.welcomeLogoMaxRem,
+      welcomeLogoPath: publicHomeAssetPath(kv.welcomeLogoPath),
+      siteFaviconPath: publicHomeAssetPath(kv.siteFaviconPath),
+      homeBrandingRevision: kv.homeBrandingRevision ?? 0,
+    })
   })
-})
+)
 
-router.put('/', authMiddleware, requirePermission('home.edit'), (req: AuthRequest, res) => {
-  const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY) as { value: string } | undefined
-  const prevKv = parseHomeKv(row?.value)
-  const normalized = normalizePayload(req.body, prevKv.moduleOrder, prevKv.modulesHiddenFromHome)
-  if (!normalized.ok) {
-    return res.status(400).json({ error: normalized.error })
-  }
-  const kvOnly = {
-    introMarkdown: normalized.data.introMarkdown,
-    showWelcomeLogo: normalized.data.showWelcomeLogo === true,
-    welcomeLogoMaxRem: normalized.data.welcomeLogoMaxRem,
-    moduleOrder: normalized.data.moduleOrder,
-    modulesHiddenFromHome: normalized.data.modulesHiddenFromHome,
-  }
-  db.prepare('INSERT OR REPLACE INTO app_kv (key, value) VALUES (?, ?)').run(
-    HOME_KEY,
-    JSON.stringify(kvOnly)
-  )
-  replaceLinksInDb(normalized.data.customLinks)
-  res.json({
-    introMarkdown: kvOnly.introMarkdown,
-    customLinks: normalized.data.customLinks,
-    moduleOrder: kvOnly.moduleOrder,
-    modulesHiddenFromHome: kvOnly.modulesHiddenFromHome,
-    showWelcomeLogo: kvOnly.showWelcomeLogo,
-    welcomeLogoMaxRem: kvOnly.welcomeLogoMaxRem,
+router.put(
+  '/',
+  authMiddleware,
+  requirePermission('home.edit'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const row = (await db.prepare('SELECT value FROM app_kv WHERE key = ?').get(HOME_KEY)) as
+      | { value: string }
+      | undefined
+    const prevKv = parseHomeKv(row?.value)
+    const normalized = await normalizePayload(req.body, prevKv)
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error })
+    }
+    const prevW = prevKv.welcomeLogoPath ?? null
+    const nextW = normalized.data.welcomeLogoPath ?? null
+    const prevF = prevKv.siteFaviconPath ?? null
+    const nextF = normalized.data.siteFaviconPath ?? null
+    if (prevW && !nextW) deleteHomeBrandingFiles('welcome-logo')
+    if (prevF && !nextF) deleteHomeBrandingFiles('site-favicon')
+    let rev = coerceHomeRevision(prevKv.homeBrandingRevision)
+    if (prevW !== nextW || prevF !== nextF) rev += 1
+    const kvOnly = {
+      introMarkdown: normalized.data.introMarkdown,
+      showWelcomeLogo: normalized.data.showWelcomeLogo === true,
+      welcomeLogoMaxRem: normalized.data.welcomeLogoMaxRem,
+      moduleOrder: normalized.data.moduleOrder,
+      modulesHiddenFromHome: normalized.data.modulesHiddenFromHome,
+      welcomeLogoPath: nextW,
+      siteFaviconPath: nextF,
+      homeBrandingRevision: rev,
+    }
+    await db
+      .prepare(
+        `INSERT INTO app_kv (key, value) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`
+      )
+      .run(HOME_KEY, JSON.stringify(kvOnly))
+    await replaceLinksInDb(normalized.data.customLinks)
+    res.json({
+      introMarkdown: kvOnly.introMarkdown,
+      customLinks: normalized.data.customLinks,
+      moduleOrder: kvOnly.moduleOrder,
+      modulesHiddenFromHome: kvOnly.modulesHiddenFromHome,
+      showWelcomeLogo: kvOnly.showWelcomeLogo,
+      welcomeLogoMaxRem: kvOnly.welcomeLogoMaxRem,
+      welcomeLogoPath: publicHomeAssetPath(kvOnly.welcomeLogoPath),
+      siteFaviconPath: publicHomeAssetPath(kvOnly.siteFaviconPath),
+      homeBrandingRevision: kvOnly.homeBrandingRevision,
+    })
   })
-})
+)
+
+router.post(
+  '/welcome-logo',
+  authMiddleware,
+  requirePermission('home.edit'),
+  (req: AuthRequest, res, next) => {
+    welcomeLogoUpload.single('file')(req, res, (err: unknown) => {
+      if (err) {
+        handleHomeUploadError(err, res)
+        return
+      }
+      next()
+    })
+  },
+  asyncRoute(async (req: AuthRequest, res) => {
+    const f = req.file
+    if (!f) {
+      res.status(400).json({ error: 'No file uploaded (use field name "file")' })
+      return
+    }
+    res.json({ path: `home/${f.filename}` })
+  })
+)
+
+router.post(
+  '/site-favicon',
+  authMiddleware,
+  requirePermission('home.edit'),
+  (req: AuthRequest, res, next) => {
+    siteFaviconUpload.single('file')(req, res, (err: unknown) => {
+      if (err) {
+        handleHomeUploadError(err, res)
+        return
+      }
+      next()
+    })
+  },
+  asyncRoute(async (req: AuthRequest, res) => {
+    const f = req.file
+    if (!f) {
+      res.status(400).json({ error: 'No file uploaded (use field name "file")' })
+      return
+    }
+    res.json({ path: `home/${f.filename}` })
+  })
+)
 
 export { router as homeRouter }

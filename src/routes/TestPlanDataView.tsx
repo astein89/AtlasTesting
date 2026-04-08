@@ -28,7 +28,7 @@ import {
 import type { DataField, Test, TestPlan, TimerValue } from '../types'
 import { getStatusOptions } from '../types'
 import { getElapsedMs, formatTimerMs, parseTimerValue } from '../utils/timer'
-import { getDefaultValueForField } from '../utils/fieldDefaults'
+import { DATETIME_PLAN_DEFAULT_ROW_CREATED, getDefaultValueForField } from '../utils/fieldDefaults'
 import {
   computeRecordDataWithPlanAutomation,
   getPendingConditionalStatusUpdates,
@@ -92,6 +92,11 @@ function getDefaultData(
         }
       } else if (f.type === 'formula') {
         out[f.key] = getDefaultValueForField(f, defaults)
+      } else if (f.type === 'datetime' && typeof planDefault === 'string') {
+        out[f.key] =
+          planDefault === DATETIME_PLAN_DEFAULT_ROW_CREATED
+            ? new Date().toISOString()
+            : planDefault
       } else {
         out[f.key] = typeof planDefault === 'string' ? planDefault : String(planDefault)
       }

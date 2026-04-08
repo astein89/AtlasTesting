@@ -12,6 +12,7 @@ import { suggestAvailableWikiSlugSegment } from '../lib/wikiSlug.js'
 import { roleHasPermission } from '../lib/permissionsCatalog.js'
 import { db } from '../db/index.js'
 import { roleSlugExists } from '../lib/userRoles.js'
+import { asyncRoute } from '../utils/asyncRoute.js'
 
 const router = Router()
 
@@ -72,7 +73,7 @@ function readPageMeta(wikiRoot: string): PageMetaFile {
               .filter((x): x is string => typeof x === 'string')
               .map((s) => s.trim())
               .filter(Boolean)
-              .filter((s) => roleSlugExists(db, s))
+              .filter((s) => /^[a-z0-9][a-z0-9_-]*$/.test(s))
           ),
         ].sort()
         if (slugs.length > 0) {
@@ -351,17 +352,22 @@ router.get('/slug-suggestion', authMiddleware, requirePermission('module.wiki'),
 })
 
 /** Role labels for wiki page visibility (editors setting allowed viewers). */
-router.get('/role-options', authMiddleware, requirePermission('wiki.edit'), (_req: AuthRequest, res) => {
-  try {
-    const rows = db.prepare('SELECT slug, label FROM roles ORDER BY slug').all() as Array<{
-      slug: string
-      label: string
-    }>
-    res.json(rows)
-  } catch {
-    res.status(500).json({ error: 'Failed to load roles' })
-  }
-})
+router.get(
+  '/role-options',
+  authMiddleware,
+  requirePermission('wiki.edit'),
+  asyncRoute(async (_req: AuthRequest, res) => {
+    try {
+      const rows = (await db.prepare('SELECT slug, label FROM roles ORDER BY slug').all()) as Array<{
+        slug: string
+        label: string
+      }>
+      res.json(rows)
+    } catch {
+      res.status(500).json({ error: 'Failed to load roles' })
+    }
+  })
+)
 
 router.post('/slug-suggestion', authMiddleware, requirePermission('module.wiki'), (req, res) => {
   const body = req.body as { title?: unknown; parentPath?: unknown }
@@ -513,7 +519,7 @@ router.get('/page', authMiddleware, requirePermission('module.wiki'), (req: Auth
 })
 
 /** PUT /api/wiki/page?path=foo/bar  body: { markdown: string }  Optional ?as=index creates path/index.md (new section). */
-router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRequest, res) => {
+router.put('/page', authMiddleware, requirePermission('wiki.edit'), asyncRoute(async (req: AuthRequest, res) => {
   const raw = typeof req.query.path === 'string' ? req.query.path : ''
   const wantIndex =
     typeof req.query.as === 'string' && req.query.as.toLowerCase() === 'index'
@@ -573,7 +579,7 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRe
         return res.status(400).json({ error: `At most ${MAX_VIEW_ROLE_SLUGS} roles per page` })
       }
       for (const s of cleaned) {
-        if (!roleSlugExists(db, s)) {
+        if (!(await roleSlugExists(db, s))) {
           return res.status(400).json({ error: `Unknown role: ${s}` })
         }
       }
@@ -669,7 +675,7 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), (req: AuthRe
   } catch {
     return res.status(500).json({ error: 'Failed to save page' })
   }
-})
+}))
 
 function parentWikiPath(normalized: string): string {
   const segs = normalized.split('/').filter(Boolean)

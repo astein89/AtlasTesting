@@ -19,11 +19,18 @@ import {
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { testingPath } from '../lib/appPaths'
+import {
+  dateInputValueToIsoOrNowIfToday,
+  isoToDateInputValue,
+  type DateTimeDisplayKind,
+} from '../lib/dateTimeConfig'
+import { DATETIME_PLAN_DEFAULT_ROW_CREATED } from '../utils/fieldDefaults'
 import type {
   ConditionalFormatRule,
   ConditionalStatusOptionCondition,
   ConditionalStatusStandardClause,
   DataField,
+  FieldConfig,
   TestPlan,
   TimerValue,
 } from '../types'
@@ -1134,11 +1141,12 @@ export function TestPlanEditor() {
                       Default values (by test plan)
                     </label>
                     <p className="mt-1 mb-2 text-sm text-foreground/60">
-                      Pre-fill when adding a new record. Leave blank to use the normal default.
+                      Pre-fill when adding a new record. Leave blank to use the normal default. For date/time
+                      fields you can set a fixed value or choose “when row is added” to stamp the current time.
                     </p>
                     <div
                       className="mt-2 grid gap-y-3 gap-x-4 rounded-lg border border-border bg-card p-3 sm:gap-y-2"
-                      style={{ gridTemplateColumns: 'auto 180px auto' }}
+                      style={{ gridTemplateColumns: 'auto minmax(12rem, 18rem) auto' }}
                     >
                       {planFields.map((f) => {
                         const key = f.key
@@ -1250,7 +1258,130 @@ export function TestPlanEditor() {
                                   className="w-full"
                                 />
                               )}
-                              {!['number', 'text', 'longtext', 'boolean', 'select', 'radio_select', 'checkbox_select', 'status', 'atlas_location'].includes(f.type) && (
+                              {f.type === 'datetime' && (() => {
+                                const displayKind: DateTimeDisplayKind =
+                                  (f.config as FieldConfig | undefined)?.dateTimeDisplay ?? 'dateTime'
+                                const mode =
+                                  val === undefined
+                                    ? 'none'
+                                    : val === DATETIME_PLAN_DEFAULT_ROW_CREATED
+                                      ? 'now'
+                                      : 'fixed'
+                                const fixedRaw =
+                                  mode === 'fixed' && typeof val === 'string' ? val : ''
+                                const fixedParsed = fixedRaw ? new Date(fixedRaw) : null
+                                const fixedValid =
+                                  !!fixedParsed && !Number.isNaN(fixedParsed.getTime())
+
+                                return (
+                                  <div className="w-full min-w-0 space-y-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                                        <input
+                                          type="radio"
+                                          name={`datetime-plan-def-${key}`}
+                                          checked={mode === 'none'}
+                                          onChange={() => setVal('')}
+                                          className="mt-0.5"
+                                        />
+                                        <span>No default</span>
+                                      </label>
+                                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                                        <input
+                                          type="radio"
+                                          name={`datetime-plan-def-${key}`}
+                                          checked={mode === 'now'}
+                                          onChange={() => setVal(DATETIME_PLAN_DEFAULT_ROW_CREATED)}
+                                          className="mt-0.5"
+                                        />
+                                        <span>When row is added — current date &amp; time</span>
+                                      </label>
+                                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                                        <input
+                                          type="radio"
+                                          name={`datetime-plan-def-${key}`}
+                                          checked={mode === 'fixed'}
+                                          onChange={() => {
+                                            const initial =
+                                              fixedValid && fixedRaw
+                                                ? fixedRaw
+                                                : new Date().toISOString()
+                                            setVal(initial)
+                                          }}
+                                          className="mt-0.5"
+                                        />
+                                        <span>Fixed value</span>
+                                      </label>
+                                    </div>
+                                    {mode === 'fixed' && (
+                                      <>
+                                        {(displayKind === 'shortDate' || displayKind === 'longDate') && (
+                                          <input
+                                            type="date"
+                                            value={isoToDateInputValue(fixedRaw)}
+                                            onChange={(e) =>
+                                              setVal(dateInputValueToIsoOrNowIfToday(e.target.value))
+                                            }
+                                            className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                          />
+                                        )}
+                                        {(displayKind === 'shortTime' || displayKind === 'longTime') && (
+                                          <input
+                                            type="time"
+                                            step={displayKind === 'longTime' ? 1 : 60}
+                                            value={
+                                              fixedValid
+                                                ? displayKind === 'longTime'
+                                                  ? `${String(fixedParsed!.getHours()).padStart(2, '0')}:${String(fixedParsed!.getMinutes()).padStart(2, '0')}:${String(fixedParsed!.getSeconds()).padStart(2, '0')}`
+                                                  : `${String(fixedParsed!.getHours()).padStart(2, '0')}:${String(fixedParsed!.getMinutes()).padStart(2, '0')}`
+                                                : ''
+                                            }
+                                            onChange={(e) => {
+                                              const v = e.target.value
+                                              if (!v) {
+                                                setVal('')
+                                                return
+                                              }
+                                              const parts = v.split(':').map(Number)
+                                              const h = parts[0] ?? 0
+                                              const m = parts[1] ?? 0
+                                              const s = parts[2] ?? 0
+                                              const ref = new Date(1970, 0, 1, h, m, s, 0)
+                                              setVal(
+                                                Number.isNaN(ref.getTime()) ? '' : ref.toISOString()
+                                              )
+                                            }}
+                                            className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                          />
+                                        )}
+                                        {displayKind === 'dateTime' && (
+                                          <input
+                                            type="datetime-local"
+                                            value={
+                                              fixedValid
+                                                ? `${fixedParsed!.getFullYear()}-${String(fixedParsed!.getMonth() + 1).padStart(2, '0')}-${String(fixedParsed!.getDate()).padStart(2, '0')}T${String(fixedParsed!.getHours()).padStart(2, '0')}:${String(fixedParsed!.getMinutes()).padStart(2, '0')}`
+                                                : ''
+                                            }
+                                            onChange={(e) => {
+                                              const v = e.target.value
+                                              if (!v) {
+                                                setVal('')
+                                                return
+                                              }
+                                              const d = new Date(v)
+                                              setVal(
+                                                Number.isNaN(d.getTime()) ? '' : d.toISOString()
+                                              )
+                                            }}
+                                            className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
+                                          />
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                )
+                              })()}
+                              {!['number', 'text', 'longtext', 'boolean', 'select', 'radio_select', 'checkbox_select', 'status', 'atlas_location', 'datetime'].includes(f.type) && (
                                 <input
                                   type="text"
                                   value={val === undefined ? '' : String(val)}

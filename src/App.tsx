@@ -20,6 +20,7 @@ import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
 import { DateTimeConfigProvider } from './contexts/DateTimeConfigContext'
 import { ConditionalFormatPresetsProvider } from './contexts/ConditionalFormatPresetsContext'
 import { testingPath } from './lib/appPaths'
+import { SiteBrandingHead } from './components/layout/SiteBrandingHead'
 
 const FieldsList = lazy(() => import('./routes/FieldsList').then((m) => ({ default: m.FieldsList })))
 const FieldEditor = lazy(() => import('./routes/FieldEditor').then((m) => ({ default: m.FieldEditor })))
@@ -134,6 +135,7 @@ function LegacyBookmarkToTesting() {
 function RootShell() {
   return (
     <AlertConfirmProvider>
+      <SiteBrandingHead />
       <AuthInit />
       <ForcedPasswordChangeModal />
       <Outlet />
@@ -457,7 +459,7 @@ export function createAppBrowserRouter(basePath: string) {
     ),
     {
       basename: basePath,
-      future: { v7_relativeSplatPath: true },
+      future: { v7_relativeSplatPath: true, v7_startTransition: true },
     }
   )
 }

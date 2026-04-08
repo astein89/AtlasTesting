@@ -17,14 +17,14 @@ export type PermissionCatalogEntry = {
 
 export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'module.home', label: 'Home hub', group: 'Modules' },
-  { id: 'module.testing', label: 'Testing', group: 'Modules' },
+  { id: 'module.testing', label: 'Test Plans', group: 'Modules' },
   { id: 'module.locations', label: 'Locations', group: 'Modules' },
   { id: 'module.wiki', label: 'Wiki', group: 'Modules' },
   { id: 'module.files', label: 'Files', group: 'Modules' },
   { id: 'module.admin', label: 'Administration', group: 'Modules' },
   {
     id: 'testing.data.write',
-    label: 'Create / edit / delete test records & uploads (Testing)',
+    label: 'Create / edit / delete test records & uploads (Test Plans)',
     group: 'Module writes',
   },
   {
@@ -44,10 +44,10 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },
   { id: 'admin.db', label: 'Database tables viewer', group: 'Administration' },
   { id: 'settings.access', label: 'App settings', group: 'Administration' },
-  { id: 'fields.manage', label: 'Data fields (CRUD)', group: 'Testing (configuration)' },
-  { id: 'testing.plans.manage', label: 'Test plans (create / edit / delete)', group: 'Testing (configuration)' },
-  { id: 'testing.tests.manage', label: 'Tests under a plan (edit / delete)', group: 'Testing (configuration)' },
-  { id: 'records.history', label: 'View record history', group: 'Testing (data)' },
+  { id: 'fields.manage', label: 'Data fields (CRUD)', group: 'Test Plans (configuration)' },
+  { id: 'testing.plans.manage', label: 'Test plans (create / edit / delete)', group: 'Test Plans (configuration)' },
+  { id: 'testing.tests.manage', label: 'Tests under a plan (edit / delete)', group: 'Test Plans (configuration)' },
+  { id: 'records.history', label: 'View record history', group: 'Test Plans (data)' },
   { id: '*', label: 'Full access (all permissions)', group: 'Superuser' },
 ]
 

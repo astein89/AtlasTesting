@@ -7,7 +7,7 @@ import { getBasePath } from '../../lib/basePath'
 import { recordsToCsv } from '../../utils/csvExport'
 import { sanitizeForLog } from '../../utils/sanitizeLog'
 import { getElapsedMs } from '../../utils/timer'
-import type { DataField, TimerValue } from '../../types'
+import type { DataField, TestPlan, TimerValue } from '../../types'
 
 async function fetchPhotoBlob(path: string): Promise<Blob | null> {
   const url = path.startsWith('http') ? path : `${window.location.origin}${getBasePath()}${path.startsWith('/') ? '' : '/'}${path}`
@@ -107,6 +107,26 @@ function sanitizeForFilename(s: string): string {
   return s.replace(/[^a-z0-9._-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'export'
 }
 
+function buildFieldsByKey(fields: DataField[] | undefined): Map<string, DataField> | undefined {
+  if (!fields?.length) return undefined
+  return new Map(fields.map((f) => [f.key, f]))
+}
+
+function resolveExportFieldOrderKeys(
+  fieldOrderKeys: string[] | undefined,
+  formLayoutOrder: string[] | undefined,
+  fields: DataField[] | undefined
+): string[] | undefined {
+  if (fieldOrderKeys && fieldOrderKeys.length > 0) return fieldOrderKeys
+  if (formLayoutOrder && fields && formLayoutOrder.length > 0) {
+    return formLayoutOrder
+      .filter((id) => !id.startsWith('newline-'))
+      .map((id) => fields.find((f) => f.id === id)?.key)
+      .filter((k): k is string => Boolean(k))
+  }
+  return undefined
+}
+
 /** MMDDYYHHMMSS from record's recordedAt (ISO string) */
 function formatRecordTimestamp(recordedAt: string): string {
   const d = new Date(recordedAt)
@@ -181,6 +201,34 @@ export function ExportPlanModal({
   const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
+  /** When `fields` prop is omitted, load definitions for CSV formatting (e.g. datetime display). */
+  const [fetchedFields, setFetchedFields] = useState<DataField[] | null>(null)
+
+  const effectiveFields = fields?.length ? fields : fetchedFields ?? undefined
+
+  useEffect(() => {
+    if (fields?.length) {
+      setFetchedFields(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [planRes, allRes] = await Promise.all([
+          api.get<TestPlan>(`/test-plans/${planId}`),
+          api.get<DataField[]>('/fields'),
+        ])
+        if (cancelled) return
+        const idSet = new Set(planRes.data.fieldIds ?? [])
+        setFetchedFields(allRes.data.filter((f) => idSet.has(f.id)))
+      } catch {
+        if (!cancelled) setFetchedFields([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [planId, fields])
 
   const canExportFiltered = filteredRecords != null && filteredRecords.length > 0
   // Filtered = current view only (never other archived). All = fetched current-only records (with optional date range).
@@ -247,24 +295,21 @@ export function ExportPlanModal({
     if (recordsToExport.length === 0 || (!includeCsv && (!includePhotos || !hasPhotos))) return
     setExporting(true)
     try {
+      const orderedFieldKeys = resolveExportFieldOrderKeys(
+        fieldOrderKeys,
+        formLayoutOrder,
+        effectiveFields
+      )
+      const fieldsByKey = buildFieldsByKey(effectiveFields)
+      const csvExportOptions = {
+        fieldOrder: orderedFieldKeys,
+        testName: testName ?? undefined,
+        fieldsByKey,
+      }
       if (fileCount === 1) {
         if (includeCsv) {
-          // Prefer explicit field order (from data table), otherwise derive from form layout (excluding separators).
-          let orderedFieldKeys: string[] | undefined
-          if (fieldOrderKeys && fieldOrderKeys.length > 0) {
-            orderedFieldKeys = fieldOrderKeys
-          } else if (formLayoutOrder && fields && formLayoutOrder.length > 0) {
-            orderedFieldKeys = formLayoutOrder
-              .filter((id) => !id.startsWith('newline-'))
-              .map((id) => fields.find((f) => f.id === id)?.key)
-              .filter((k): k is string => Boolean(k))
-          }
-
-          const csv = recordsToCsv(sortedForExport, {
-            fieldOrder: orderedFieldKeys,
-            testName: testName ?? undefined,
-          })
-          const blob = new Blob([csv], { type: 'text/csv' })
+          const csv = recordsToCsv(sortedForExport, csvExportOptions)
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
           a.href = url
@@ -302,7 +347,7 @@ export function ExportPlanModal({
       } else {
         const zip = new JSZip()
         if (includeCsv) {
-          zip.file('data.csv', recordsToCsv(sortedForExport, { testName: testName ?? undefined }))
+          zip.file('data.csv', recordsToCsv(sortedForExport, csvExportOptions))
         }
         if (includePhotos && hasPhotos) {
           const usedPaths = new Set<string>()

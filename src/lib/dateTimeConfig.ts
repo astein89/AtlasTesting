@@ -113,6 +113,86 @@ export function getExampleForDateTimeDisplay(kind: DateTimeDisplayKind): string 
   return dateFnsFormat(EXAMPLE_DATE, formatStr)
 }
 
+/** Stored ISO (or empty) → `yyyy-MM-dd` for `<input type="date">`. Invalid/unparseable returns `''`. */
+export function isoToDateInputValue(iso: string | undefined): string {
+  const raw = (iso ?? '').trim()
+  if (!raw) return ''
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`
+}
+
+/** `yyyy-MM-dd` from a date picker → ISO string at local midnight (same behavior as datetime form fields). */
+export function dateInputValueToIso(yyyyMmDd: string): string {
+  const v = yyyyMmDd.trim()
+  if (!v) return ''
+  const d = new Date(`${v}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString()
+}
+
+/**
+ * Like {@link dateInputValueToIso}, but if the picked calendar day is **today** (local),
+ * returns `new Date().toISOString()` so choosing "today" in a date-only control includes current time.
+ * Other days still store local midnight as ISO.
+ */
+export function dateInputValueToIsoOrNowIfToday(yyyyMmDd: string): string {
+  const v = yyyyMmDd.trim()
+  if (!v) return ''
+  const picked = new Date(`${v}T00:00:00`)
+  if (Number.isNaN(picked.getTime())) return ''
+  const now = new Date()
+  if (
+    picked.getFullYear() === now.getFullYear() &&
+    picked.getMonth() === now.getMonth() &&
+    picked.getDate() === now.getDate()
+  ) {
+    return now.toISOString()
+  }
+  return picked.toISOString()
+}
+
+/** ISO (or empty) → `HH:mm` or `HH:mm:ss` for `<input type="time">`. */
+export function isoToTimeInputValue(iso: string | undefined, withSeconds: boolean): string {
+  const raw = (iso ?? '').trim()
+  if (!raw) return ''
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return ''
+  if (withSeconds) {
+    return `${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}:${String(parsed.getSeconds()).padStart(2, '0')}`
+  }
+  return `${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`
+}
+
+/**
+ * `HH:mm` / `HH:mm:ss` from a time picker → ISO string on 1970-01-01 local (time-only field storage).
+ */
+export function timeInputValueToIso(timeStr: string, withSeconds: boolean): string {
+  const v = timeStr.trim()
+  if (!v) return ''
+  const parts = v.split(':').map((p) => Number(p))
+  const h = Number.isFinite(parts[0]) ? parts[0]! : 0
+  const m = Number.isFinite(parts[1]) ? parts[1]! : 0
+  const s = withSeconds && parts.length > 2 && Number.isFinite(parts[2]) ? parts[2]! : 0
+  const ref = new Date(1970, 0, 1, h, m, s, 0)
+  return Number.isNaN(ref.getTime()) ? '' : ref.toISOString()
+}
+
+/** ISO → value for `<input type="datetime-local">` (minute precision). */
+export function isoToDateTimeLocalValue(iso: string | undefined): string {
+  const raw = (iso ?? '').trim()
+  if (!raw) return ''
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}T${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`
+}
+
+export function dateTimeLocalValueToIso(localVal: string): string {
+  const v = localVal.trim()
+  if (!v) return ''
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString()
+}
+
 /** Labels for the datetime display kind dropdown */
 export const DATE_TIME_DISPLAY_OPTIONS: { value: DateTimeDisplayKind; label: string }[] = [
   { value: 'shortDate', label: 'Short date' },

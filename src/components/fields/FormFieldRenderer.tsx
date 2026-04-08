@@ -15,7 +15,15 @@ import { formatFieldValue } from '../../utils/formatFieldValue'
 import { getStatusOptions } from '../../types'
 import type { DataField, FieldConfig } from '../../types'
 import type { TimerValue } from '../../types'
-import type { DateTimeDisplayKind } from '../../lib/dateTimeConfig'
+import {
+  dateInputValueToIsoOrNowIfToday,
+  dateTimeLocalValueToIso,
+  isoToDateInputValue,
+  isoToDateTimeLocalValue,
+  isoToTimeInputValue,
+  timeInputValueToIso,
+  type DateTimeDisplayKind,
+} from '../../lib/dateTimeConfig'
 
 const INVALID_CHAR_WARNING_MS = 2500
 
@@ -432,39 +440,22 @@ export function renderFormField(
   }
   if (f.type === 'datetime') {
     const raw = value == null || value === '' ? '' : String(value)
-    const parsed = raw ? new Date(raw) : null
-    const valid = parsed && !Number.isNaN(parsed.getTime())
     const displayKind: DateTimeDisplayKind =
       (f.config as FieldConfig | undefined)?.dateTimeDisplay ?? 'dateTime'
 
     if (displayKind === 'shortDate' || displayKind === 'longDate') {
-      const valueForInput = valid
-        ? `${parsed!.getFullYear()}-${String(parsed!.getMonth() + 1).padStart(2, '0')}-${String(parsed!.getDate()).padStart(2, '0')}`
-        : ''
       return (
         <input
           type="date"
-          value={valueForInput}
-          onChange={(e) => {
-            const v = e.target.value
-            if (!v) {
-              onChange(f.key, '')
-              return
-            }
-            const d = new Date(v + 'T00:00:00')
-            onChange(f.key, Number.isNaN(d.getTime()) ? '' : d.toISOString())
-          }}
+          value={isoToDateInputValue(raw)}
+          onChange={(e) => onChange(f.key, dateInputValueToIsoOrNowIfToday(e.target.value))}
           className={inputClass}
           disabled={disabled}
         />
       )
     }
     if (displayKind === 'shortTime' || displayKind === 'longTime') {
-      const valueForInput = valid
-        ? displayKind === 'longTime'
-          ? `${String(parsed!.getHours()).padStart(2, '0')}:${String(parsed!.getMinutes()).padStart(2, '0')}:${String(parsed!.getSeconds()).padStart(2, '0')}`
-          : `${String(parsed!.getHours()).padStart(2, '0')}:${String(parsed!.getMinutes()).padStart(2, '0')}`
-        : ''
+      const withSeconds = displayKind === 'longTime'
       const setNow = () => {
         const now = new Date()
         const ref = new Date(1970, 0, 1, now.getHours(), now.getMinutes(), now.getSeconds(), 0)
@@ -474,17 +465,15 @@ export function renderFormField(
         <div className="flex min-w-0 items-center gap-2">
           <input
             type="time"
-            value={valueForInput}
-            step={displayKind === 'longTime' ? 1 : 60}
+            value={isoToTimeInputValue(raw, withSeconds)}
+            step={withSeconds ? 1 : 60}
             onChange={(e) => {
               const v = e.target.value
               if (!v) {
                 onChange(f.key, '')
                 return
               }
-              const [h, m, s] = v.split(':').map(Number)
-              const ref = new Date(1970, 0, 1, h ?? 0, m ?? 0, s ?? 0, 0)
-              onChange(f.key, ref.toISOString())
+              onChange(f.key, timeInputValueToIso(v, withSeconds))
             }}
             className={inputClass}
             disabled={disabled}
@@ -500,22 +489,11 @@ export function renderFormField(
         </div>
       )
     }
-    const valueForInput = valid
-      ? `${parsed!.getFullYear()}-${String(parsed!.getMonth() + 1).padStart(2, '0')}-${String(parsed!.getDate()).padStart(2, '0')}T${String(parsed!.getHours()).padStart(2, '0')}:${String(parsed!.getMinutes()).padStart(2, '0')}`
-      : ''
     return (
       <input
         type="datetime-local"
-        value={valueForInput}
-        onChange={(e) => {
-          const v = e.target.value
-          if (!v) {
-            onChange(f.key, '')
-            return
-          }
-          const d = new Date(v)
-          onChange(f.key, Number.isNaN(d.getTime()) ? '' : d.toISOString())
-        }}
+        value={isoToDateTimeLocalValue(raw)}
+        onChange={(e) => onChange(f.key, dateTimeLocalValueToIso(e.target.value))}
         className={inputClass}
         disabled={disabled}
       />

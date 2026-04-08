@@ -3,6 +3,8 @@ import { useAuthStore } from '../../store/authStore'
 import { useHomePageEditStore } from '../../store/homePageEditStore'
 import { useLoginModalStore } from '../../store/loginModalStore'
 import { publicAsset } from '../../lib/basePath'
+import { uploadsUrl } from '../../lib/uploadsUrl'
+import { useSiteBrandingStore } from '../../store/siteBrandingStore'
 import { ThemeToggle } from './ThemeToggle'
 
 interface NavbarProps {
@@ -18,6 +20,10 @@ export function Navbar({ onMenuClick }: NavbarProps) {
   const setHomeEditorOpen = useHomePageEditStore((s) => s.setEditorOpen)
   const openLoginModal = useLoginModalStore((s) => s.openLogin)
   const onHomePage = pathname === '/' || pathname === ''
+  const navbarIconSrc = useSiteBrandingStore((s) => {
+    const p = s.siteFaviconPath?.trim()
+    return p ? uploadsUrl(p, s.homeBrandingRevision) : publicAsset('icon.png')
+  })
 
   const handleLogout = () => {
     logout()
@@ -41,7 +47,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
             </button>
           )}
           <Link to="/" className="flex min-w-0 items-center gap-2 truncate text-base font-semibold text-foreground sm:text-lg">
-            <img src={publicAsset('icon.png')} alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
+            <img src={navbarIconSrc} alt="" className="h-7 w-7 shrink-0 rounded object-contain sm:h-8 sm:w-8" />
             <span className="truncate">DC Automation</span>
           </Link>
         </div>

@@ -7,15 +7,9 @@ import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { useAuthStore } from '../store/authStore'
+import { normalizeLocationZone, type NormalizedLocationZone } from '../utils/locationApiRows'
 
-interface Zone {
-  id: string
-  name: string
-  description?: string | null
-  schemaId: string
-  schemaName: string
-  locationCount: number
-}
+type Zone = NormalizedLocationZone
 
 interface LocationSchema {
   id: string
@@ -47,11 +41,13 @@ export function LocationZones() {
       api.get<Zone[]>('/locations/zones'),
       api.get<LocationSchema[]>('/locations/schemas'),
     ])
-    setZones(zonesResp.data)
+    setZones((zonesResp.data ?? []).map((z) => normalizeLocationZone(z as Record<string, unknown>)))
     setSchemas(schemasResp.data)
     setSelectedZoneIds((prev) => {
       const next = new Set<string>()
-      const existing = new Set((zonesResp.data ?? []).map((z) => z.id))
+      const existing = new Set(
+        (zonesResp.data ?? []).map((z) => normalizeLocationZone(z as Record<string, unknown>).id)
+      )
       for (const id of prev) if (existing.has(id)) next.add(id)
       return next
     })

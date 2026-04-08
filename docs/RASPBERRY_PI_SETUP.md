@@ -17,6 +17,46 @@ After login, open **Home** (`/`) to choose **Testing** or **Locations**; the API
 
 ---
 
+## Optional: PostgreSQL instead of SQLite
+
+By default DC Automation uses **SQLite** (`dc-automation.db` on disk). To run against **PostgreSQL** (recommended for heavier use or when you want a server-managed database), install PostgreSQL on the Pi and point the app at it with **`DATABASE_URL`**.
+
+1. **Install PostgreSQL** (Debian / Raspberry Pi OS):
+
+   ```bash
+   sudo apt update
+   sudo apt install -y postgresql postgresql-contrib
+   sudo systemctl enable --now postgresql
+   ```
+
+2. **Create a database user and database** (run as the `postgres` OS user; replace passwords and names). The app user must be able to **CREATE tables in `public`** (PostgreSQL 15+ no longer allows that for every role by default).
+
+   ```bash
+   sudo -u postgres psql -c "CREATE USER dcauto WITH PASSWORD 'your-secure-password';"
+   sudo -u postgres psql -c "CREATE DATABASE dc_automation OWNER dcauto;"
+   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE dc_automation TO dcauto;"
+   sudo -u postgres psql -d dc_automation -c "GRANT ALL ON SCHEMA public TO dcauto;"
+   sudo -u postgres psql -d dc_automation -c "ALTER SCHEMA public OWNER TO dcauto;"
+   ```
+
+   If the database already exists but was owned by `postgres` and you only granted `CONNECT`, run the two `psql -d dc_automation` lines above (replace `dcauto` with your app role). That fixes **`permission denied for schema public`** (`SQLSTATE 42501`) during `npm run db:migrate` or first app start.
+
+3. **Connectivity for Node on the same machine:** use **`localhost`**. Ensure PostgreSQL listens locally (`listen_addresses` in `postgresql.conf` often includes `localhost`) and **`pg_hba.conf`** allows the app user to connect via TCP to `127.0.0.1` (e.g. `scram-sha-256` or `md5`). You do not need to expose port `5432` on the LAN unless a remote client requires it.
+
+4. **Application URL form:**
+
+   ```text
+   postgresql://dcauto:your-secure-password@127.0.0.1:5432/dc_automation
+   ```
+
+5. **Wire DC Automation:** set **`DATABASE_URL`** in the environment for the same Unix user that runs **PM2** (see [Step 8](#step-8-start-the-application)), e.g. in `ecosystem.config.cjs` under `env`, or a systemd drop-in. Restart after changes: `pm2 restart dc-automation`.
+
+6. **Migrating an existing SQLite file on the Pi:** with `DATABASE_URL` set, run **`npm run db:migrate`** once (see project `package.json`). It copies data from `dc-automation.db` (or `SQLITE_PATH` / `DB_PATH`) into PostgreSQL. Wiki files under `content/wiki/` remain on disk—copy them separately if you move hosts.
+
+7. **Optional tuning** on small boards: see PostgreSQL docs for `shared_buffers` and memory-related settings; keep changes minimal unless you measure load.
+
+---
+
 ## Step 1: Update the System
 
 ```bash

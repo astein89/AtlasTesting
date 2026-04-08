@@ -2,7 +2,16 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { initSchema, type DbWrapper } from './schema.js'
+import pg from 'pg'
+import { resolveDatabaseUrl, usePostgresFromEnv } from '../config.js'
+import {
+  initSchema,
+  type DbWrapper,
+  type AsyncDbWrapper,
+  type AsyncPreparedStatement,
+} from './schema.js'
+import { initSchemaPg } from './schema-pg.js'
+import { createPgPoolWrapper } from './pg.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const levelsUp = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
@@ -18,7 +27,7 @@ function resolveDefaultDbPath(): string {
 
 const dbPath = process.env.DB_PATH || resolveDefaultDbPath()
 
-function createDbWrapper(sqlite: Database.Database): DbWrapper {
+function createSqliteSyncWrapper(sqlite: Database.Database): DbWrapper {
   return {
     prepare(sql: string) {
       const stmt = sqlite.prepare(sql)
@@ -49,20 +58,69 @@ function createDbWrapper(sqlite: Database.Database): DbWrapper {
   }
 }
 
-const resolvedDb = path.resolve(dbPath)
-// eslint-disable-next-line no-console
-console.log(`[db] SQLite path: ${resolvedDb}`)
-// eslint-disable-next-line no-console
-console.log('[db] Opening database…')
+function createAsyncSqliteWrapper(sqlite: Database.Database): AsyncDbWrapper {
+  const sync = createSqliteSyncWrapper(sqlite)
+  return {
+    prepare(sql: string): AsyncPreparedStatement {
+      const stmt = sync.prepare(sql)
+      return {
+        async run(...params: unknown[]) {
+          return stmt.run(...params)
+        },
+        async get(...params: unknown[]) {
+          return stmt.get(...params)
+        },
+        async all(...params: unknown[]) {
+          return stmt.all(...params)
+        },
+      }
+    },
+    async run(sql: string, params?: unknown[] | unknown) {
+      sync.run(sql, params)
+    },
+    async exec(sql: string) {
+      sync.exec(sql)
+    },
+  }
+}
 
-let sqlite: Database.Database
-try {
-  sqlite = new Database(resolvedDb)
-} catch (e) {
-  const msg = e instanceof Error ? e.message : String(e)
-  if (msg.includes('bindings') || msg.includes('better_sqlite3.node')) {
+export let db: AsyncDbWrapper
+export let pgPool: pg.Pool | undefined
+
+export function isUsingPostgres(): boolean {
+  return pgPool != undefined
+}
+
+export async function initDatabase(): Promise<void> {
+  if (usePostgresFromEnv()) {
+    const url = resolveDatabaseUrl()
+    if (!url?.trim()) {
+      throw new Error('[db] PostgreSQL expected: set DATABASE_URL or config.databaseUrl')
+    }
     // eslint-disable-next-line no-console
-    console.error(`
+    console.log('[db] Connecting to PostgreSQL…')
+    pgPool = new pg.Pool({ connectionString: url })
+    db = createPgPoolWrapper(pgPool)
+    await initSchemaPg(db)
+    // eslint-disable-next-line no-console
+    console.log('[db] PostgreSQL ready (baseline schema)')
+    return
+  }
+
+  const resolvedDb = path.resolve(dbPath)
+  // eslint-disable-next-line no-console
+  console.log(`[db] SQLite path: ${resolvedDb}`)
+  // eslint-disable-next-line no-console
+  console.log('[db] Opening database…')
+
+  let sqlite: Database.Database
+  try {
+    sqlite = new Database(resolvedDb)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('bindings') || msg.includes('better_sqlite3.node')) {
+      // eslint-disable-next-line no-console
+      console.error(`
 [better-sqlite3] Native addon failed to load (missing .node binary).
 
 On Windows this often happens when:
@@ -72,20 +130,19 @@ On Windows this often happens when:
 
 See README.md (Tech Stack / troubleshooting).
 `)
+    }
+    throw e
   }
-  throw e
+  sqlite.pragma('busy_timeout = 10000')
+  sqlite.pragma('journal_mode = WAL')
+  sqlite.pragma('synchronous = NORMAL')
+  sqlite.pragma('foreign_keys = ON')
+  // eslint-disable-next-line no-console
+  console.log('[db] Connected; applying schema/migrations…')
+
+  const syncWrapper = createSqliteSyncWrapper(sqlite)
+  initSchema(syncWrapper)
+  db = createAsyncSqliteWrapper(sqlite)
+  // eslint-disable-next-line no-console
+  console.log('[db] Ready (SQLite)')
 }
-// Wait up to 10s when the DB is briefly locked (e.g. sync/another process) instead of failing immediately.
-sqlite.pragma('busy_timeout = 10000')
-sqlite.pragma('journal_mode = WAL')
-sqlite.pragma('synchronous = NORMAL')
-sqlite.pragma('foreign_keys = ON')
-// eslint-disable-next-line no-console
-console.log('[db] Connected; applying schema/migrations…')
-
-const dbWrapper = createDbWrapper(sqlite)
-initSchema(dbWrapper)
-// eslint-disable-next-line no-console
-console.log('[db] Ready')
-
-export const db = dbWrapper

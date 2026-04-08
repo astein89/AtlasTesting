@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, isAbortLikeError } from '../api/client'
 import { useAbortableEffect } from '../hooks/useAbortableEffect'
@@ -7,6 +7,10 @@ import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { LocationSchemaFieldsEditor } from '../components/locations/LocationSchemaFieldsEditor'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { validateLocationPatternMask } from '../utils/locationPatternMask'
+import {
+  normalizeLocationSchemaComponent,
+  type NormalizedLocationSchemaComponent,
+} from '../utils/locationApiRows'
 import { useAuthStore } from '../store/authStore'
 
 interface LocationSchema {
@@ -15,33 +19,20 @@ interface LocationSchema {
   description?: string | null
 }
 
-interface SchemaComponent {
-  id: string
-  schemaId: string
-  key: string
-  displayName: string
-  type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
-  width: number
-  patternMask?: string | null
-  minValue?: string | null
-  orderIndex?: number
-}
+type SchemaComponent = NormalizedLocationSchemaComponent
 
-function normalizeComponentRow(c: SchemaComponent): SchemaComponent {
-  const r = c as Record<string, unknown>
-  const typeRaw = r.type === 'mix' ? 'mixed' : r.type
-  const pm = r.patternMask ?? r.pattern_mask
-  const mv = r.minValue ?? r.min_value
-  const patternMask =
-    pm != null && String(pm).trim() !== '' ? String(pm).trim() : null
-  const minValue =
-    mv != null && String(mv).trim() !== '' ? String(mv).trim() : null
-  return {
-    ...c,
-    type: typeRaw as SchemaComponent['type'],
-    patternMask,
-    minValue,
-  }
+const COMPONENT_KEY_MAX_LEN = 64
+
+/** Stable id fragment for JSON / APIs: lowercase, [a-z0-9_], derived from display name. */
+function suggestComponentKeyFromDisplayName(displayName: string): string {
+  const s = displayName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_')
+  if (!s) return 'part'
+  return s.slice(0, COMPONENT_KEY_MAX_LEN)
 }
 
 export function LocationSchemaDetail() {
@@ -60,6 +51,8 @@ export function LocationSchemaDetail() {
   const [newComponentWidth, setNewComponentWidth] = useState<number>(2)
   const [newComponentPatternMask, setNewComponentPatternMask] = useState('')
   const [newComponentFixedValue, setNewComponentFixedValue] = useState('')
+  /** When true, display name changes do not overwrite the key field. */
+  const newComponentKeyManualRef = useRef(false)
 
   const [editComponentOpen, setEditComponentOpen] = useState(false)
   const [editComponentId, setEditComponentId] = useState<string | null>(null)
@@ -83,7 +76,7 @@ export function LocationSchemaDetail() {
         api.get<SchemaComponent[]>(`/locations/schemas/${id}/components`, { signal }),
       ])
       setSchema(schemasResp.data.find((s) => s.id === id) || null)
-      setComponents(compsResp.data.map(normalizeComponentRow))
+      setComponents(compsResp.data.map((row) => normalizeLocationSchemaComponent(row)))
     } catch (e) {
       if (isAbortLikeError(e)) return
       setError('Failed to load schema')
@@ -101,6 +94,17 @@ export function LocationSchemaDetail() {
     },
     [schemaId]
   )
+
+  function openNewComponentModal() {
+    newComponentKeyManualRef.current = false
+    setNewComponentKey('')
+    setNewComponentName('')
+    setNewComponentType('numeric')
+    setNewComponentWidth(2)
+    setNewComponentPatternMask('')
+    setNewComponentFixedValue('')
+    setNewComponentOpen(true)
+  }
 
   async function handleAddComponent(e: React.FormEvent) {
     e.preventDefault()
@@ -132,7 +136,8 @@ export function LocationSchemaDetail() {
         body.width = newComponentWidth
       }
       const resp = await api.post<SchemaComponent>(`/locations/schemas/${schemaId}/components`, body)
-      setComponents((prev) => [...prev, normalizeComponentRow(resp.data)])
+      setComponents((prev) => [...prev, normalizeLocationSchemaComponent(resp.data)])
+      newComponentKeyManualRef.current = false
       setNewComponentKey('')
       setNewComponentName('')
       setNewComponentWidth(2)
@@ -168,7 +173,7 @@ export function LocationSchemaDetail() {
       const resp = await api.put<SchemaComponent[]>(`/locations/schemas/${schemaId}/components/reorder`, {
         orderedIds,
       })
-      setComponents(resp.data.map(normalizeComponentRow))
+      setComponents(resp.data.map(normalizeLocationSchemaComponent))
     } catch {
       setComponents(prev)
       setReorderError('Failed to save order')
@@ -190,12 +195,13 @@ export function LocationSchemaDetail() {
   }
 
   function openEdit(c: SchemaComponent) {
-    setEditComponentId(c.id)
-    setEditComponentName(c.displayName)
-    setEditComponentType(c.type)
-    setEditComponentWidth(c.width)
-    setEditComponentPatternMask(c.patternMask?.trim() ?? '')
-    setEditComponentFixedValue(c.minValue?.trim() ?? '')
+    const row = normalizeLocationSchemaComponent(c)
+    setEditComponentId(row.id)
+    setEditComponentName(row.displayName)
+    setEditComponentType(row.type)
+    setEditComponentWidth(row.width)
+    setEditComponentPatternMask(row.patternMask?.trim() ?? '')
+    setEditComponentFixedValue(row.minValue?.trim() ?? '')
     setEditComponentOpen(true)
   }
 
@@ -255,7 +261,7 @@ export function LocationSchemaDetail() {
         payload
       )
       setComponents((prev) =>
-        prev.map((c) => (c.id === editComponentId ? normalizeComponentRow(resp.data) : c))
+        prev.map((c) => (c.id === editComponentId ? normalizeLocationSchemaComponent(resp.data) : c))
       )
       setEditComponentOpen(false)
       setEditComponentId(null)
@@ -321,7 +327,7 @@ export function LocationSchemaDetail() {
               </button>
               <button
                 type="button"
-                onClick={() => setNewComponentOpen(true)}
+                onClick={openNewComponentModal}
                 className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 disabled={!schemaId}
               >
@@ -491,7 +497,13 @@ export function LocationSchemaDetail() {
                 <input
                   type="text"
                   value={newComponentName}
-                  onChange={(e) => setNewComponentName(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setNewComponentName(v)
+                    if (!newComponentKeyManualRef.current) {
+                      setNewComponentKey(suggestComponentKeyFromDisplayName(v))
+                    }
+                  }}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
                   autoFocus
                 />
@@ -502,8 +514,13 @@ export function LocationSchemaDetail() {
                   <input
                     type="text"
                     value={newComponentKey}
-                    onChange={(e) => setNewComponentKey(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    onChange={(e) => {
+                      newComponentKeyManualRef.current = true
+                      setNewComponentKey(e.target.value)
+                    }}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                    spellCheck={false}
+                    autoCapitalize="off"
                   />
                 </div>
                 <div>
@@ -718,7 +735,7 @@ export function LocationSchemaDetail() {
                   type="submit"
                   className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
                   disabled={
-                    !editComponentName.trim() ||
+                    !(editComponentName ?? '').trim() ||
                     (editComponentType === 'fixed' && !editComponentFixedValue.trim()) ||
                     (editComponentType !== 'fixed' &&
                       !(editComponentType === 'mixed' && editComponentPatternMask.trim()) &&

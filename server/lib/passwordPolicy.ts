@@ -62,15 +62,15 @@ export function parsePasswordPolicyJson(raw: string | undefined): PasswordPolicy
   }
 }
 
-export function getPasswordPolicy(): PasswordPolicy {
-  const row = db.prepare('SELECT value FROM app_kv WHERE key = ?').get(PASSWORD_POLICY_KV_KEY) as
+export async function getPasswordPolicy(): Promise<PasswordPolicy> {
+  const row = (await db.prepare('SELECT value FROM app_kv WHERE key = ?').get(PASSWORD_POLICY_KV_KEY)) as
     | { value: string }
     | undefined
   return parsePasswordPolicyJson(row?.value)
 }
 
 /** Human-readable rejection reason, or `null` if the password satisfies the policy. */
-export function passwordPolicyError(password: string, policy: PasswordPolicy = getPasswordPolicy()): string | null {
+export function passwordPolicyError(password: string, policy: PasswordPolicy): string | null {
   if (typeof password !== 'string') {
     return 'Password is required'
   }

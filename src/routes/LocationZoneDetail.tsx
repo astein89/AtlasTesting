@@ -16,17 +16,16 @@ import {
   normalizeLocationMixedGeneratePartOrNull,
 } from '../utils/locationPatternMask'
 import { sanitizeFilenameSegment } from '../utils/safeFilename'
+import {
+  normalizeLocationSchemaComponent,
+  normalizeLocationZone,
+  type NormalizedLocationZone,
+} from '../utils/locationApiRows'
 
 /** Must match server generation caps in `server/routes/locations.ts`. */
 const MAX_GENERATE_LOCATIONS = 25_000
 
-interface Zone {
-  id: string
-  name: string
-  description?: string | null
-  schemaId: string
-  schemaName: string
-}
+type Zone = NormalizedLocationZone
 
 interface LocationRow {
   id: string
@@ -50,23 +49,6 @@ interface SchemaComponent {
   width: number
   patternMask?: string | null
   minValue?: string | null
-}
-
-function normalizeComponentRow(c: SchemaComponent): SchemaComponent {
-  const r = c as Record<string, unknown>
-  const typeRaw = r.type === 'mix' ? 'mixed' : r.type
-  const pm = r.patternMask ?? r.pattern_mask
-  const mv = r.minValue ?? r.min_value
-  const patternMask =
-    pm != null && String(pm).trim() !== '' ? String(pm).trim() : null
-  const minValue =
-    mv != null && String(mv).trim() !== '' ? String(mv).trim() : null
-  return {
-    ...c,
-    type: typeRaw as SchemaComponent['type'],
-    patternMask,
-    minValue,
-  }
 }
 
 function locationComponentHint(c: SchemaComponent): { widthLabel: string; charsetLabel: string } {
@@ -393,14 +375,17 @@ export function LocationZoneDetail() {
 
   async function loadZoneAndSchema(id: string) {
     const zonesResp = await api.get<Zone[]>('/locations/zones')
-    const z = zonesResp.data.find((row) => row.id === id) || null
+    const z =
+      zonesResp.data
+        .map((row) => normalizeLocationZone(row as Record<string, unknown>))
+        .find((row) => row.id === id) ?? null
     setZone(z)
-    if (z) {
+    if (z?.schemaId) {
       const [comps, fieldsResp] = await Promise.all([
         api.get<SchemaComponent[]>(`/locations/schemas/${z.schemaId}/components`),
         api.get<LocationSchemaField[]>(`/locations/schemas/${z.schemaId}/fields`),
       ])
-      const compsNorm = comps.data.map(normalizeComponentRow)
+      const compsNorm = comps.data.map((row) => normalizeLocationSchemaComponent(row))
       setComponents(compsNorm)
       setSchemaFields(fieldsResp.data)
       const initial: Record<string, string> = {}
@@ -408,6 +393,8 @@ export function LocationZoneDetail() {
       setRanges(initial)
     } else {
       setSchemaFields([])
+      setComponents([])
+      setRanges({})
     }
   }
 

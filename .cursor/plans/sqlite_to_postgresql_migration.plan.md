@@ -4,10 +4,13 @@ overview: Move DC Automation to PostgreSQL with PostgreSQL-native SQL, baseline 
 todos:
   - id: pg-core
     content: Add pg driver, config branch, schema-pg baseline, standalone scripts/migrate-sqlite-to-pg.ts; rewrite all server SQL for PostgreSQL
+    status: completed
   - id: backup-docs-scripts
     content: Update backup plan — docs/BACKUP_SETUP.md, any cron/pi references, and replace or supplement scripts/sqlite-dropbox-backup.sh with PostgreSQL strategy (e.g. pg_dump, permissions, rclone layout)
+    status: completed
   - id: pi-postgres-docs
     content: Update docs/RASPBERRY_PI_SETUP.md — apt install postgresql, create DB/user, listen_addresses/pg_hba, DATABASE_URL + PM2/config.json, optional Pi tuning
+    status: completed
 isProject: false
 ---
 

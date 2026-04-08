@@ -1,4 +1,5 @@
 import Papa from 'papaparse'
+import { stripExcelCsvBom } from './importColumnAutoMap'
 
 export interface ParsedImportFile {
   headers: string[]
@@ -45,7 +46,9 @@ export function parseCsv(file: File): Promise<ParsedImportFile> {
           resolve({ headers: [], rows: [] })
           return
         }
-        const rawHeaders = rows[0].map((c) => (c != null ? String(c).trim() : ''))
+        const rawHeaders = rows[0].map((c) =>
+          c != null ? stripExcelCsvBom(String(c)) : ''
+        )
         const headers = dedupeHeaders(rawHeaders)
         const dataRows = rows.slice(1)
         resolve({

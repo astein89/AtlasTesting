@@ -61,7 +61,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
                 }`
               }
             >
-              Testing
+              Test Plans
             </NavLink>
             <NavLink
               to={testingPath('results')}

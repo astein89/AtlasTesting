@@ -160,12 +160,8 @@ export const useAuthStore = create<AuthState>()(
       onRehydrateStorage: () => (persisted) => {
         const state = persisted?.state as { user?: unknown; refreshToken?: string } | undefined
         const hasRefresh = !!state?.refreshToken
-        const hasUser = !!state?.user
-        if (hasRefresh && !hasUser) {
-          useAuthStore.getState().setInitializing(true)
-        } else {
-          useAuthStore.getState().setInitializing(false)
-        }
+        /** Refresh exists but access token is never persisted — AuthInit must run before API calls. */
+        useAuthStore.getState().setInitializing(hasRefresh)
       },
     }
   )

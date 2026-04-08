@@ -9,25 +9,23 @@ import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { testingPath } from '../lib/appPaths'
 import type { DataField, TestPlan } from '../types'
 
-type SortKey = 'key' | 'label' | 'type' | 'updatedAt'
+type SortKey = 'label' | 'type' | 'updatedAt'
 type SortLevel = { key: SortKey; dir: 'asc' | 'desc' }
 
 export function FieldsList() {
   const [fields, setFields] = useState<DataField[]>([])
   const [testPlans, setTestPlans] = useState<TestPlan[]>([])
   const [loading, setLoading] = useState(true)
-  const [sortOrder, setSortOrder] = useState<SortLevel[]>([{ key: 'key', dir: 'asc' }])
+  const [sortOrder, setSortOrder] = useState<SortLevel[]>([{ key: 'label', dir: 'asc' }])
   const navigate = useNavigate()
   const { showAlert, showConfirm } = useAlertConfirm()
 
   const getVal = (f: DataField, key: SortKey) =>
-    key === 'key'
-      ? f.key
-      : key === 'label'
-        ? f.label ?? ''
-        : key === 'updatedAt'
-          ? f.updatedAt ?? f.createdAt ?? ''
-          : f.type
+    key === 'label'
+      ? f.label ?? ''
+      : key === 'updatedAt'
+        ? f.updatedAt ?? f.createdAt ?? ''
+        : f.type
 
   const sortedFields = useMemo(() => {
     const copy = [...fields]
@@ -195,15 +193,14 @@ export function FieldsList() {
                   onClick={(e) => handleRowClick(f, e)}
                   className="w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-background/50 active:bg-background/70"
                 >
-                  <p className="truncate font-medium text-foreground">
-                    {f.key}
+                  <p className="flex min-w-0 flex-wrap items-center gap-2 font-medium text-foreground">
+                    <span className="min-w-0 truncate">{f.label?.trim() || '—'}</span>
                     {f.ownerTestPlanId && (
-                      <span className="ml-2 inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-800 dark:border-yellow-400 dark:bg-yellow-500/20 dark:text-yellow-200">
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-800 dark:border-yellow-400 dark:bg-yellow-500/20 dark:text-yellow-200">
                         Plan-specific
                       </span>
                     )}
                   </p>
-                  <p className="mt-0.5 truncate text-sm text-foreground">{f.label}</p>
                   <p className="mt-0.5 truncate text-sm text-foreground/70">{formatType(f)}</p>
                   <div className="mt-0.5 min-w-0 text-xs text-foreground/70">
                     <span className="font-medium text-foreground/80">Plans: </span>
@@ -278,18 +275,6 @@ export function FieldsList() {
               <tr>
                 <th
                   className="cursor-pointer select-none px-4 py-2 text-left text-sm font-medium text-foreground hover:bg-background/50"
-                  {...getSortHandlers('key')}
-                  title="Tap to sort. Long-press to add secondary sort."
-                >
-                  Key
-                  {getSortIndex('key') >= 0 && (
-                    <span className="ml-1 text-foreground/60">
-                      {getSortIndex('key') + 1}{getSortDir('key') === 'asc' ? '↑' : '↓'}
-                    </span>
-                  )}
-                </th>
-                <th
-                  className="cursor-pointer select-none px-4 py-2 text-left text-sm font-medium text-foreground hover:bg-background/50"
                   {...getSortHandlers('label')}
                   title="Tap to sort. Long-press to add secondary sort."
                 >
@@ -335,7 +320,7 @@ export function FieldsList() {
             <tbody className="divide-y divide-border">
               {sortedFields.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-foreground/60">
+                  <td colSpan={5} className="p-6 text-center text-foreground/60">
                     No data fields yet.
                   </td>
                 </tr>
@@ -347,16 +332,15 @@ export function FieldsList() {
                   className="cursor-pointer bg-background transition-colors hover:bg-card"
                 >
                   <td className="px-4 py-2 text-foreground">
-                    <div className="flex items-center gap-2">
-                      <span>{f.key}</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0">{f.label?.trim() || '—'}</span>
                       {f.ownerTestPlanId && (
-                        <span className="inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-800 dark:border-yellow-400 dark:bg-yellow-500/20 dark:text-yellow-200">
+                        <span className="inline-flex shrink-0 items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-yellow-800 dark:border-yellow-400 dark:bg-yellow-500/20 dark:text-yellow-200">
                           Plan-specific
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-2 text-foreground">{f.label}</td>
                   <td className="px-4 py-2 text-foreground">{formatType(f)}</td>
                   <td
                     className="w-[12rem] max-w-[14rem] min-w-0 px-4 py-2 align-top text-sm text-foreground/80"

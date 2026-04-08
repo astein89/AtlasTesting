@@ -38,7 +38,7 @@ function isPasswordChangeGateExempt(req: Request): boolean {
  * Prefer merging from JWT `roles` / `role` against the current DB so role edits and migrations apply
  * without forcing re-login. Fall back to embedded JWT `permissions` only for legacy tokens that omit roles.
  */
-function resolvePermissions(payload: JwtPayload): string[] {
+async function resolvePermissions(payload: JwtPayload): Promise<string[]> {
   if (Array.isArray(payload.roles) && payload.roles.length > 0) {
     return mergePermissionsForRoleSlugs(db, payload.roles)
   }
@@ -59,33 +59,35 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     return res.status(401).json({ error: 'Unauthorized' })
   }
 
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as JwtPayload
-    const permissions = resolvePermissions(payload)
-    const roles =
-      Array.isArray(payload.roles) && payload.roles.length > 0
-        ? payload.roles
-        : payload.role
-          ? [payload.role]
-          : []
-    req.user = { id: payload.sub, role: payload.role, roles, permissions }
+  void (async () => {
+    try {
+      const payload = jwt.verify(token, JWT_SECRET) as JwtPayload
+      const permissions = await resolvePermissions(payload)
+      const roles =
+        Array.isArray(payload.roles) && payload.roles.length > 0
+          ? payload.roles
+          : payload.role
+            ? [payload.role]
+            : []
+      req.user = { id: payload.sub, role: payload.role, roles, permissions }
 
-    if (!isPasswordChangeGateExempt(req)) {
-      const row = db
-        .prepare('SELECT password_change_required FROM users WHERE id = ?')
-        .get(payload.sub) as { password_change_required: number } | undefined
-      if (row && Number(row.password_change_required) === 1) {
-        return res.status(403).json({
-          error: 'Password change required',
-          code: 'PASSWORD_CHANGE_REQUIRED',
-        })
+      if (!isPasswordChangeGateExempt(req)) {
+        const row = (await db
+          .prepare('SELECT password_change_required FROM users WHERE id = ?')
+          .get(payload.sub)) as { password_change_required: number } | undefined
+        if (row && Number(row.password_change_required) === 1) {
+          return res.status(403).json({
+            error: 'Password change required',
+            code: 'PASSWORD_CHANGE_REQUIRED',
+          })
+        }
       }
-    }
 
-    next()
-  } catch {
-    return res.status(401).json({ error: 'Invalid token' })
-  }
+      next()
+    } catch {
+      return res.status(401).json({ error: 'Invalid token' })
+    }
+  })()
 }
 
 export function requirePermission(key: string) {

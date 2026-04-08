@@ -245,7 +245,8 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     const state = location.state as WikiEditLocationState | null
     const fromNav =
       typeof state?.wikiNewTitle === 'string' ? state.wikiNewTitle.trim() : ''
-    const pagesP = fetchWikiPages(signal)
+    let pagesP: Promise<WikiPageListItem[]> | undefined
+    pagesP = fetchWikiPages(signal)
     try {
       const data = await fetchWikiPage(pagePath, signal)
       if (gen !== loadGenRef.current) return
@@ -325,13 +326,16 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
         setPageExistsOnServer(false)
       }
     } finally {
+      if (gen !== loadGenRef.current) {
+        void pagesP?.catch(() => {})
+      }
       if (gen === loadGenRef.current) {
         setLoading(false)
       }
     }
   }, [pagePath, showAlert, location.state])
 
-  useAbortableEffect((signal) => load(signal), [load])
+  useAbortableEffect((signal) => void load(signal).catch(() => {}), [load])
 
   useEffect(() => {
     allowLeaveWithoutSaveRef.current = false

@@ -1,5 +1,23 @@
 # SQLite → Dropbox backup setup
 
+## PostgreSQL deployments
+
+If the app uses **PostgreSQL** (`DATABASE_URL` is set), back up the database with **`pg_dump`** (or your host’s managed backups), not the SQLite script below. Typical pattern:
+
+```bash
+# Custom-format dump (compressed, single DB)
+pg_dump --format=custom --file=/path/to/staging/dc-automation-$(date +%Y%m%d-%H%M).dump "$DATABASE_URL"
+
+# Plain SQL (readable; larger)
+pg_dump --file=/path/to/staging/dc-automation-$(date +%Y%m%d-%H%M).sql "$DATABASE_URL"
+```
+
+Upload the resulting file with **rclone** the same way you would upload SQLite snapshots (point `RCLONE_REMOTE` at a folder such as `dropbox:Backups/dc-automation/postgres`). Document **restore** in your runbook: `pg_restore -d "$DATABASE_URL" file.dump` (custom format) or `psql "$DATABASE_URL" -f file.sql` (plain). Rotate old dumps with retention rules similar to `KEEP_LAST` / `MAX_AGE_DAYS` in [`backup.conf.example`](../scripts/backup.conf.example).
+
+The rest of this document applies to **SQLite-only** installs (`dc-automation.db`, no `DATABASE_URL`).
+
+---
+
 This guide configures the Bash script [`scripts/sqlite-dropbox-backup.sh`](../scripts/sqlite-dropbox-backup.sh) to back up the app’s SQLite database (`dc-automation.db` by default) to **Dropbox** using **rclone**, with safe online backups (`sqlite3 .backup`), change detection, retention, and optional alerts.
 
 **Target environment:** Linux (including **Raspberry Pi**). The script is not intended to run under Windows; use the same machine where the app runs in production, or a host that can read the database file over a reliable path.

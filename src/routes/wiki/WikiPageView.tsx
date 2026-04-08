@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { isAbortLikeError } from '@/api/client'
 import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import {
@@ -14,7 +14,13 @@ import { humanizePathForTitle, WikiBreadcrumbs } from '@/components/wiki/WikiBre
 import { WikiDuplicatePageModal } from '@/components/wiki/WikiDuplicatePageModal'
 import { WikiSidebarPageSettingsModal } from '@/components/wiki/WikiSidebarPageSettingsModal'
 import { WikiMarkdown } from '@/components/wiki/WikiMarkdown'
-import { wikiEditUrl, wikiPageUrl } from '@/lib/appPaths'
+import {
+  pickMostSpecificWikiTrail,
+  wikiEditUrl,
+  wikiPageUrl,
+  wikiTrailFromPathname,
+  wikiTrailFromSplat,
+} from '@/lib/appPaths'
 import { parseWikiHeadings } from '@/lib/wikiHeadings'
 import { buildWikiTree, findWikiTreeNode, sortedTreeChildren, type WikiTreeNode } from '@/lib/wikiTree'
 import { wikiNestParentPathOptions } from '@/lib/wikiPaths'
@@ -65,9 +71,20 @@ function WikiSubtreeNav({
   )
 }
 
-export function WikiPageView({ pagePath }: WikiPageViewProps) {
+export function WikiPageView({ pagePath: pagePathProp }: WikiPageViewProps) {
   const location = useLocation()
   const navigate = useNavigate()
+  const wikiSplat = useParams()['*']
+  /** Reconcile pathname / splat / prop so nested folder views never collapse to a shallow trail. */
+  const pagePath = useMemo(
+    () =>
+      pickMostSpecificWikiTrail([
+        wikiTrailFromPathname(location.pathname),
+        wikiTrailFromSplat(wikiSplat),
+        pagePathProp.replace(/^\/+|\/+$/g, ''),
+      ]),
+    [location.pathname, wikiSplat, pagePathProp]
+  )
   const canEdit = useAuthStore((s) => s.hasPermission('wiki.edit'))
   const [duplicateOpen, setDuplicateOpen] = useState(false)
   const [resolvedPagePath, setResolvedPagePath] = useState<string | null>(null)
@@ -116,8 +133,10 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
     setResolvedPagePath(null)
     setShowSectionPages(true)
 
-    const pagesP = fetchWikiPages(signal)
-    const orderP = fetchWikiSidebarOrder(signal).catch(() => ({} as Record<string, string[]>))
+    let pagesP: Promise<WikiPageListItem[]> | undefined
+    let orderP: Promise<Record<string, string[]>> | undefined
+    pagesP = fetchWikiPages(signal)
+    orderP = fetchWikiSidebarOrder(signal).catch(() => ({} as Record<string, string[]>))
 
     try {
       const data = await fetchWikiPage(pagePath, signal)
@@ -199,13 +218,17 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
         setShowSectionPages(true)
       }
     } finally {
+      if (gen !== loadGenRef.current) {
+        void pagesP?.catch(() => {})
+        void orderP?.catch(() => {})
+      }
       if (gen === loadGenRef.current) {
         setLoading(false)
       }
     }
   }, [pagePath])
 
-  useAbortableEffect((signal) => load(signal), [load])
+  useAbortableEffect((signal) => void load(signal).catch(() => {}), [load])
 
   const headings = useMemo(() => (markdown ? parseWikiHeadings(markdown) : []), [markdown])
 
@@ -229,6 +252,9 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
 
   const showArticleToolbar =
     !folderNav && !error && !loading && markdown !== null
+
+  /** Folder-without-index: create `index.md` for this tree node (full path), not a shortened prop. */
+  const createIndexTargetPath = folderNav?.root.path ?? pagePath
 
   const handlePrint = useCallback(() => {
     window.print()
@@ -372,8 +398,8 @@ export function WikiPageView({ pagePath }: WikiPageViewProps) {
           <WikiSubtreeNav parentNode={folderNav.root} orderMap={folderNav.order} />
           {canEdit ? (
             <p className="mt-4 border-t border-border pt-3">
-              <Link to={wikiEditUrl(pagePath)} className="text-primary underline">
-                Create index page at &ldquo;{pagePath}&rdquo;
+              <Link to={wikiEditUrl(createIndexTargetPath)} className="text-primary underline">
+                Create index page at &ldquo;{createIndexTargetPath}&rdquo;
               </Link>
             </p>
           ) : null}

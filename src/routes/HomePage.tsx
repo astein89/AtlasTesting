@@ -7,6 +7,8 @@ import { HomeIntroMarkdown } from '@/components/home/HomeIntroMarkdown'
 import { HomeLinkCard } from '@/components/home/HomeLinkCard'
 import { HomePageEditModal } from '@/components/home/HomePageEditModal'
 import { publicAsset } from '@/lib/basePath'
+import { applyIconsFromHomeBrandingPayload } from '@/lib/homeBrandingIcons'
+import { uploadsUrl } from '@/lib/uploadsUrl'
 import { WELCOME_LOGO_DEFAULT_REM, clampWelcomeLogoMaxRem } from '@/lib/welcomeLogoSize'
 import { useAuthStore } from '@/store/authStore'
 import { useHomePageEditStore } from '@/store/homePageEditStore'
@@ -15,11 +17,14 @@ import type { HomeCustomLink, HomePageConfig } from '@/types/homePage'
 /** Shown only if `/api/home` fails; normal default is `content/home-intro.md` on the server. */
 const FALLBACK_HOME: HomePageConfig = {
   introMarkdown:
-    '# Welcome to **DC Automation**\n\nUse the modules to open **Testing** or **Locations**. Sign in when needed.\n\nIf this message persists, the home configuration could not be loaded—check the API and network.',
+    '# Welcome to **DC Automation**\n\nUse the modules to open **Test Plans** or **Locations**. Sign in when needed.\n\nIf this message persists, the home configuration could not be loaded—check the API and network.',
   customLinks: [],
   modulesHiddenFromHome: [],
   showWelcomeLogo: false,
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
+  welcomeLogoPath: null,
+  siteFaviconPath: null,
+  homeBrandingRevision: 0,
 }
 
 const knownModuleIdSet = new Set(appModules.map((m) => m.id))
@@ -80,6 +85,16 @@ export function HomePage() {
           : ''
       if (!introMarkdown && typeof data.introSubtitle === 'string') introMarkdown = data.introSubtitle
       if (!introMarkdown.trim()) introMarkdown = FALLBACK_HOME.introMarkdown
+      const brandingRev =
+        typeof data.homeBrandingRevision === 'number' ? data.homeBrandingRevision : 0
+      const welcomePath =
+        typeof data.welcomeLogoPath === 'string' && data.welcomeLogoPath.trim()
+          ? data.welcomeLogoPath.trim()
+          : null
+      const faviconPath =
+        typeof data.siteFaviconPath === 'string' && data.siteFaviconPath.trim()
+          ? data.siteFaviconPath.trim()
+          : null
       setConfig({
         introMarkdown,
         customLinks: Array.isArray(data.customLinks) ? data.customLinks : [],
@@ -89,6 +104,13 @@ export function HomePage() {
         modulesHiddenFromHome: normalizeModulesHiddenFromHomeApi(data.modulesHiddenFromHome),
         showWelcomeLogo: data.showWelcomeLogo === true,
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(data.welcomeLogoMaxRem),
+        welcomeLogoPath: welcomePath,
+        siteFaviconPath: faviconPath,
+        homeBrandingRevision: brandingRev,
+      })
+      applyIconsFromHomeBrandingPayload({
+        siteFaviconPath: faviconPath,
+        homeBrandingRevision: brandingRev,
       })
     } catch (e) {
       if (isAbortLikeError(e)) return
@@ -129,6 +151,9 @@ export function HomePage() {
   /** Two columns only when both columns have content. */
   const twoColumnModulesAndLinks = hasVisibleModules && hasExtraLinks
   const logoMaxRem = clampWelcomeLogoMaxRem(config.welcomeLogoMaxRem)
+  const welcomeLogoSrc = config.welcomeLogoPath?.trim()
+    ? uploadsUrl(config.welcomeLogoPath.trim(), config.homeBrandingRevision ?? 0)
+    : publicAsset('logo.png')
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
@@ -150,8 +175,8 @@ export function HomePage() {
                   style={{ maxWidth: `${logoMaxRem}rem` }}
                 >
                   <img
-                    src={publicAsset('logo.png')}
-                    alt="DC Automation"
+                    src={welcomeLogoSrc}
+                    alt=""
                     className="block h-auto w-full rounded-xl object-contain shadow-sm"
                   />
                 </div>
@@ -230,7 +255,7 @@ export function HomePage() {
         <HomePageEditModal
           initial={config}
           onClose={() => setEditOpen(false)}
-          onSaved={(next) =>
+          onSaved={(next) => {
             setConfig({
               introMarkdown:
                 typeof next.introMarkdown === 'string' && next.introMarkdown.trim()
@@ -243,8 +268,22 @@ export function HomePage() {
               modulesHiddenFromHome: normalizeModulesHiddenFromHomeApi(next.modulesHiddenFromHome),
               showWelcomeLogo: next.showWelcomeLogo === true,
               welcomeLogoMaxRem: clampWelcomeLogoMaxRem(next.welcomeLogoMaxRem),
+              welcomeLogoPath:
+                typeof next.welcomeLogoPath === 'string' && next.welcomeLogoPath.trim()
+                  ? next.welcomeLogoPath.trim()
+                  : null,
+              siteFaviconPath:
+                typeof next.siteFaviconPath === 'string' && next.siteFaviconPath.trim()
+                  ? next.siteFaviconPath.trim()
+                  : null,
+              homeBrandingRevision:
+                typeof next.homeBrandingRevision === 'number' ? next.homeBrandingRevision : 0,
             })
-          }
+            applyIconsFromHomeBrandingPayload({
+              siteFaviconPath: next.siteFaviconPath,
+              homeBrandingRevision: next.homeBrandingRevision,
+            })
+          }}
         />
       )}
     </div>

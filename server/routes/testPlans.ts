@@ -1,8 +1,9 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../db/index.js'
-import { toIsoUtcString } from '../lib/timestamps.js'
+import { db, isUsingPostgres } from '../db/index.js'
+import { sqlUtcNowExpr, sqlUnixEpochFromXTs, toIsoUtcString } from '../lib/timestamps.js'
 import { authMiddleware, requirePermission } from '../middleware/auth.js'
+import { asyncRoute } from '../utils/asyncRoute.js'
 import { testsRouter } from './tests.js'
 
 const router = Router()
@@ -31,18 +32,20 @@ function parseStringArray(json: string | null): string[] {
   }
 }
 
-router.get('/stats', (_, res) => {
-  const plans = db.prepare('SELECT id, name FROM test_plans ORDER BY name').all() as Array<{
-    id: string
-    name: string
-  }>
-  const counts = db
-    .prepare(
-      `SELECT test_plan_id, status, COUNT(*) as cnt
+router.get(
+  '/stats',
+  asyncRoute(async (_, res) => {
+    const plans = (await db.prepare('SELECT id, name FROM test_plans ORDER BY name').all()) as Array<{
+      id: string
+      name: string
+    }>
+    const counts = (await db
+      .prepare(
+        `SELECT test_plan_id, status, COUNT(*) as cnt
        FROM test_runs
        GROUP BY test_plan_id, status`
-    )
-    .all() as Array<{ test_plan_id: string; status: string; cnt: number }>
+      )
+      .all()) as Array<{ test_plan_id: string; status: string; cnt: number }>
 
   const byPlan = new Map<
     string,
@@ -74,10 +77,13 @@ router.get('/stats', (_, res) => {
       }
     })
   )
-})
+  })
+)
 
-router.get('/', (_, res) => {
-  const rows = db.prepare('SELECT * FROM test_plans ORDER BY name').all() as Array<{
+router.get(
+  '/',
+  asyncRoute(async (_, res) => {
+    const rows = (await db.prepare('SELECT * FROM test_plans ORDER BY name').all()) as Array<{
     id: string
     name: string
     description: string | null
@@ -89,16 +95,14 @@ router.get('/', (_, res) => {
     created_at: string
     updated_at?: string | null
   }>
-  const counts = db
-    .prepare(
-      `SELECT test_plan_id, COUNT(*) as cnt FROM test_runs GROUP BY test_plan_id`
-    )
-    .all() as Array<{ test_plan_id: string; cnt: number }>
+    const counts = (await db
+      .prepare(`SELECT test_plan_id, COUNT(*) as cnt FROM test_runs GROUP BY test_plan_id`)
+      .all()) as Array<{ test_plan_id: string; cnt: number }>
   const countByPlan = new Map(counts.map((c) => [c.test_plan_id, c.cnt]))
 
-  const activityRows = db
-    .prepare(
-      `SELECT x.plan_id AS plan_id, MAX(CAST(strftime('%s', x.ts) AS INTEGER)) AS max_epoch
+    const activityRows = (await db
+      .prepare(
+        `SELECT x.plan_id AS plan_id, MAX(${sqlUnixEpochFromXTs(isUsingPostgres())}) AS max_epoch
        FROM (
          SELECT tr.test_plan_id AS plan_id, rh.changed_at AS ts
          FROM record_history rh
@@ -116,17 +120,17 @@ router.get('/', (_, res) => {
        ) x
        WHERE x.ts IS NOT NULL AND length(trim(x.ts)) > 0
        GROUP BY x.plan_id`
-    )
-    .all() as Array<{ plan_id: string; max_epoch: number | string | null }>
-  const lastEpochByPlan = new Map<string, number>()
-  for (const a of activityRows) {
+      )
+      .all()) as Array<{ plan_id: string; max_epoch: number | string | null }>
+    const lastEpochByPlan = new Map<string, number>()
+    for (const a of activityRows) {
     if (a.max_epoch == null) continue
     const n = typeof a.max_epoch === 'string' ? parseInt(a.max_epoch, 10) : a.max_epoch
     if (Number.isFinite(n)) lastEpochByPlan.set(a.plan_id, n)
-  }
+    }
 
-  res.json(
-    rows.map((r) => {
+    res.json(
+      rows.map((r) => {
       const epoch = lastEpochByPlan.get(r.id)
       const lastEditedAt =
         epoch != null && Number.isFinite(epoch)
@@ -164,9 +168,10 @@ router.get('/', (_, res) => {
         lastEditedAt,
         recordCount: countByPlan.get(r.id) ?? 0,
       }
-    })
-  )
-})
+      })
+    )
+  })
+)
 
 function parseDefaultSortOrder(json: string | null): Array<{ key: string; dir: 'asc' | 'desc' }> {
   try {
@@ -423,8 +428,10 @@ function conditionalStatusRuleOrderToJson(body: unknown): string | null | undefi
   return Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : null
 }
 
-router.get('/:id', (req, res) => {
-  const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(req.params.id) as {
+router.get(
+  '/:id',
+  asyncRoute(async (req, res) => {
+    const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(req.params.id)) as {
     id: string
     name: string
     description: string | null
@@ -468,9 +475,13 @@ router.get('/:id', (req, res) => {
     ),
     createdAt: row.created_at,
   })
-})
+  })
+)
 
-router.post('/', requirePermission('testing.plans.manage'), (req, res) => {
+router.post(
+  '/',
+  requirePermission('testing.plans.manage'),
+  asyncRoute(async (req, res) => {
   const { name, description, constraints, testPlan, fieldIds, fieldLayout, formLayoutOrder, defaultSortOrder, fieldDefaults, keyField, startDate, endDate, hiddenFieldIds, requiredFieldIds } =
     req.body
   if (!name) {
@@ -511,7 +522,7 @@ router.post('/', requirePermission('testing.plans.manage'), (req, res) => {
     conditionalStatusRuleOrderToJson(
       (req.body as { conditionalStatusRuleOrder?: unknown }).conditionalStatusRuleOrder
     ) ?? null
-  db.prepare(
+  await db.prepare(
     'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids, default_visible_columns, conditional_status_rules, conditional_status_rule_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
@@ -535,7 +546,7 @@ router.post('/', requirePermission('testing.plans.manage'), (req, res) => {
     conditionalStatusRuleOrderJson
   )
 
-  const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
+  const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id)) as {
     id: string
     name: string
     description: string | null
@@ -577,9 +588,13 @@ router.post('/', requirePermission('testing.plans.manage'), (req, res) => {
     ),
     createdAt: row.created_at,
   })
-})
+  })
+)
 
-router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
+router.put(
+  '/:id',
+  requirePermission('testing.plans.manage'),
+  asyncRoute(async (req, res) => {
   const {
     name,
     description,
@@ -602,7 +617,7 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
   } = req.body
   const { id } = req.params
 
-  const existing = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
+  const existing = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })
 
   if (typeof name === 'string' && !name.trim()) {
@@ -612,11 +627,9 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
   // Enforce that plan-specific fields cannot be attached to other plans.
   if (Array.isArray(fieldIds) && fieldIds.length > 0) {
     const placeholders = fieldIds.map(() => '?').join(',')
-    const rows = db
-      .prepare(
-        `SELECT id, owner_test_plan_id FROM fields WHERE id IN (${placeholders})`
-      )
-      .all(...fieldIds) as Array<{ id: string; owner_test_plan_id: string | null }>
+    const rows = (await db
+      .prepare(`SELECT id, owner_test_plan_id FROM fields WHERE id IN (${placeholders})`)
+      .all(...fieldIds)) as Array<{ id: string; owner_test_plan_id: string | null }>
     for (const row of rows) {
       if (row.owner_test_plan_id && row.owner_test_plan_id !== id) {
         return res
@@ -723,7 +736,9 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
     }
   }
   if (archivedRuns !== undefined && Array.isArray(archivedRuns)) {
-    const planRow = db.prepare('SELECT archived_runs FROM test_plans WHERE id = ?').get(id) as { archived_runs: string | null } | undefined
+    const planRow = (await db.prepare('SELECT archived_runs FROM test_plans WHERE id = ?').get(id)) as
+      | { archived_runs: string | null }
+      | undefined
     const oldRuns = parseArchivedRuns(planRow?.archived_runs ?? null)
     const newRuns = archivedRuns.filter(
       (x: unknown): x is { startDate: string; endDate: string; runId?: string } =>
@@ -740,10 +755,12 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
       let runId = run.runId ?? existing?.runId
       if (!runId) {
         runId = uuidv4()
-        db.prepare(
+        await db.prepare(
           'UPDATE test_runs SET run_id = ? WHERE test_plan_id = ? AND (run_id IS NULL OR run_id = ?)'
         ).run(runId, id, '')
-        const rows = db.prepare('SELECT id, data FROM test_runs WHERE test_plan_id = ? AND run_id = ?').all(id, runId) as Array<{ id: string; data: string | null }>
+        const rows = (await db
+          .prepare('SELECT id, data FROM test_runs WHERE test_plan_id = ? AND run_id = ?')
+          .all(id, runId)) as Array<{ id: string; data: string | null }>
         for (const row of rows) {
           if (!row.data) continue
           let parsed: unknown
@@ -754,7 +771,7 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
           }
           if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue
           const stopped = stopTimersInData(parsed as Record<string, unknown>)
-          db.prepare('UPDATE test_runs SET data = ? WHERE id = ?').run(JSON.stringify(stopped), row.id)
+          await db.prepare('UPDATE test_runs SET data = ? WHERE id = ?').run(JSON.stringify(stopped), row.id)
         }
       }
       finalRuns.push({ startDate: run.startDate, endDate: run.endDate, runId })
@@ -763,9 +780,9 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
       if (newByKey.has(runByKey(run))) continue
       const rid = run.runId
       if (rid) {
-        db.prepare('UPDATE test_runs SET run_id = NULL WHERE test_plan_id = ? AND run_id = ?').run(id, rid)
+        await db.prepare('UPDATE test_runs SET run_id = NULL WHERE test_plan_id = ? AND run_id = ?').run(id, rid)
       } else {
-        db.prepare(
+        await db.prepare(
           'UPDATE test_runs SET run_id = NULL WHERE test_plan_id = ? AND substr(run_at, 1, 10) >= ? AND substr(run_at, 1, 10) <= ?'
         ).run(id, run.startDate, run.endDate)
       }
@@ -774,7 +791,7 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
     values.push(finalRuns.length > 0 ? JSON.stringify(finalRuns) : null)
   }
   if (updates.length === 0) {
-    const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
+    const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id)) as {
       updated_at?: string | null
       id: string
       name: string
@@ -819,11 +836,11 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
       updatedAt: (row as { updated_at?: string | null }).updated_at ?? null,
     })
   }
-  updates.push('updated_at = datetime(\'now\')')
+  updates.push(`updated_at = ${sqlUtcNowExpr(isUsingPostgres())}`)
   values.push(id)
-  db.prepare(`UPDATE test_plans SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+  await db.prepare(`UPDATE test_plans SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
-  const row = db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id) as {
+  const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id)) as {
     id: string
     name: string
     description: string | null
@@ -867,18 +884,23 @@ router.put('/:id', requirePermission('testing.plans.manage'), (req, res) => {
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
   })
-})
+  })
+)
 
-router.delete('/:id', requirePermission('testing.plans.manage'), (req, res) => {
+router.delete(
+  '/:id',
+  requirePermission('testing.plans.manage'),
+  asyncRoute(async (req, res) => {
   const id = req.params.id
-  const existing = db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
+  const existing = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })
-  db.prepare('DELETE FROM test_runs WHERE test_plan_id = ?').run(id)
-  db.prepare('DELETE FROM tests WHERE test_plan_id = ?').run(id)
+  await db.prepare('DELETE FROM test_runs WHERE test_plan_id = ?').run(id)
+  await db.prepare('DELETE FROM tests WHERE test_plan_id = ?').run(id)
   // Also remove any plan-specific fields owned by this plan
-  db.prepare('DELETE FROM fields WHERE owner_test_plan_id = ?').run(id)
-  db.prepare('DELETE FROM test_plans WHERE id = ?').run(id)
+  await db.prepare('DELETE FROM fields WHERE owner_test_plan_id = ?').run(id)
+  await db.prepare('DELETE FROM test_plans WHERE id = ?').run(id)
   res.status(204).send()
-})
+  })
+)
 
 export { router as testPlansRouter }

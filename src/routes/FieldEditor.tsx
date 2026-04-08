@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -12,7 +12,22 @@ import { FRACTION_SCALES, type FractionScale } from '../utils/fraction'
 import { validateFormula, getFormulaTokensForHighlight, getFormulaReferencedFieldKeys, evaluateFormula, getFieldsReferencingKey } from '../utils/formulaEvaluator'
 import type { ConditionalFormatRule, DataField, FieldType, TestPlan } from '../types'
 import { STATUS_OPTIONS } from '../types'
-import { formatDateTime, DATE_TIME_DISPLAY_OPTIONS, getExampleForDateTimeDisplay, type DateTimeDisplayKind } from '../lib/dateTimeConfig'
+import {
+  getCfStandardOpChoices,
+  getCfStandardValuePlaceholder,
+} from '../lib/conditionalFormatStandardOps'
+import {
+  dateInputValueToIso,
+  dateTimeLocalValueToIso,
+  formatDateTime,
+  DATE_TIME_DISPLAY_OPTIONS,
+  getExampleForDateTimeDisplay,
+  isoToDateInputValue,
+  isoToDateTimeLocalValue,
+  isoToTimeInputValue,
+  timeInputValueToIso,
+  type DateTimeDisplayKind,
+} from '../lib/dateTimeConfig'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { testingPath } from '../lib/appPaths'
 import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPresetsContext'
@@ -90,6 +105,20 @@ const TYPE_LABELS: Record<FieldType, string> = {
   formula: 'Formula',
 }
 
+const FIELD_KEY_MAX_LEN = 64
+
+/** Safe field key fragment: lowercase [a-z0-9_], derived from label (for APIs / formulas). */
+function suggestFieldKeyFromLabel(label: string): string {
+  const s = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_')
+  if (!s) return 'field'
+  return s.slice(0, FIELD_KEY_MAX_LEN)
+}
+
 function normalizeCfHex(s: string): string {
   let t = s.trim().toLowerCase()
   if (!t.startsWith('#')) t = `#${t.replace(/^#/, '')}`
@@ -114,6 +143,8 @@ export function FieldEditor() {
   const { showAlert, showConfirm } = useAlertConfirm()
   const { presets: cfPresets } = useConditionalFormatPresets()
   const [keyEditable, setKeyEditable] = useState(false)
+  /** New field only: label edits sync key until user edits the key. */
+  const newFieldKeyManualRef = useRef(false)
   const [options, setOptions] = useState<string[]>([])
   const [fractionScale, setFractionScale] = useState<FractionScale>(16)
   const [fractionUnit, setFractionUnit] = useState<'in' | 'mm'>('in')
@@ -220,7 +251,44 @@ export function FieldEditor() {
     defaultValues: { key: '', label: '', type: 'text' },
   })
 
+  const keyReg = register('key')
+  const labelReg = register('label')
+
   const typeVal = watch('type')
+
+  useEffect(() => {
+    if (isNew) newFieldKeyManualRef.current = false
+  }, [isNew])
+
+  const cfStandardOpChoices = useMemo(
+    () => getCfStandardOpChoices(fieldType, dateTimeDisplay),
+    [fieldType, dateTimeDisplay]
+  )
+
+  const cfValuePh = getCfStandardValuePlaceholder(fieldType, dateTimeDisplay)
+
+  /** Which native control to use for conditional-format comparison values on datetime fields. */
+  const cfDatetimeValueKind = useMemo(() => {
+    if (fieldType !== 'datetime') return 'text' as const
+    if (dateTimeDisplay === 'shortDate' || dateTimeDisplay === 'longDate') return 'date' as const
+    if (dateTimeDisplay === 'shortTime') return 'timeShort' as const
+    if (dateTimeDisplay === 'longTime') return 'timeLong' as const
+    return 'dateTimeLocal' as const
+  }, [fieldType, dateTimeDisplay])
+
+  useEffect(() => {
+    if (fieldType !== 'datetime') return
+    const allowed = new Set(cfStandardOpChoices.map((c) => c.value))
+    setCfRules((prev) => {
+      let changed = false
+      const next = prev.map((r) => {
+        if (r.mode !== 'standard' || !r.standardOp || allowed.has(r.standardOp)) return r
+        changed = true
+        return { ...r, standardOp: 'eq' as ConditionalFormatRule['standardOp'] }
+      })
+      return changed ? next : prev
+    })
+  }, [fieldType, dateTimeDisplay, cfStandardOpChoices])
 
   useEffect(() => {
     if (typeVal) setFieldType(typeVal as FieldType)
@@ -621,10 +689,9 @@ export function FieldEditor() {
         onSubmit={handleSubmit(onSubmit)}
         className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6"
       >
-        <div>
-          {/* When opened from a Test Plan, show scope toggle (plan-specific vs global) above the key. */}
+        <>
           {navState.ownerTestPlanId && (
-            <div className="mb-2 flex items-center justify-between gap-2 text-[11px]">
+            <div className="flex items-center justify-between gap-2 text-[11px]">
               <div className="flex flex-wrap items-center gap-2">
                 {ownerPlanId && (
                   <span className="inline-flex items-center rounded-full border border-yellow-500 bg-yellow-100 px-2 py-0.5 font-semibold uppercase tracking-wide text-[10px] text-yellow-900 dark:border-yellow-400 dark:bg-yellow-500/30 dark:text-yellow-50">
@@ -660,43 +727,84 @@ export function FieldEditor() {
               </button>
             </div>
           )}
-          <div className="flex items-center justify-between gap-2">
-            <label className="block text-sm font-medium text-foreground">Key</label>
-            {!isNew && !keyEditable && (
-              <button
-                type="button"
-                onClick={async () => {
-                  const ok = await showConfirm(
-                    'Changing the key can affect existing data. Record data will be migrated to the new key when you save. Continue?',
-                    { title: 'Change field key', confirmLabel: 'Change key', variant: 'default' }
-                  )
-                  if (ok) setKeyEditable(true)
-                }}
-                className="shrink-0 text-sm text-foreground/80 hover:text-foreground hover:underline"
-              >
-                Change key
-              </button>
-            )}
-          </div>
-          <input
-            {...register('key')}
-            disabled={!isNew && !keyEditable}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-60 disabled:cursor-not-allowed"
-          />
-          {errors.key && (
-            <p className="mt-1 text-sm text-red-500">{errors.key.message}</p>
+          {isNew ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-foreground">Label</label>
+                <input
+                  {...labelReg}
+                  onChange={(e) => {
+                    labelReg.onChange(e)
+                    if (!newFieldKeyManualRef.current) {
+                      setValue('key', suggestFieldKeyFromLabel(e.target.value), {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      })
+                    }
+                  }}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                />
+                {errors.label && (
+                  <p className="mt-1 text-sm text-red-500">{errors.label.message}</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground">Key</label>
+                <input
+                  {...keyReg}
+                  onChange={(e) => {
+                    newFieldKeyManualRef.current = true
+                    keyReg.onChange(e)
+                  }}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                />
+                {errors.key && (
+                  <p className="mt-1 text-sm text-red-500">{errors.key.message}</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-sm font-medium text-foreground">Key</label>
+                  {!keyEditable && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await showConfirm(
+                          'Changing the key can affect existing data. Record data will be migrated to the new key when you save. Continue?',
+                          { title: 'Change field key', confirmLabel: 'Change key', variant: 'default' }
+                        )
+                        if (ok) setKeyEditable(true)
+                      }}
+                      className="shrink-0 text-sm text-foreground/80 hover:text-foreground hover:underline"
+                    >
+                      Change key
+                    </button>
+                  )}
+                </div>
+                <input
+                  {...keyReg}
+                  disabled={!keyEditable}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-60 disabled:cursor-not-allowed"
+                />
+                {errors.key && (
+                  <p className="mt-1 text-sm text-red-500">{errors.key.message}</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground">Label</label>
+                <input {...labelReg} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground" />
+                {errors.label && (
+                  <p className="mt-1 text-sm text-red-500">{errors.label.message}</p>
+                )}
+              </div>
+            </>
           )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground">Label</label>
-          <input
-            {...register('label')}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-          />
-          {errors.label && (
-            <p className="mt-1 text-sm text-red-500">{errors.label.message}</p>
-          )}
-        </div>
+        </>
         <Controller
           name="type"
           control={control}
@@ -1850,7 +1958,15 @@ export function FieldEditor() {
             </div>
           )}
           <div className="space-y-3">
-            {cfRules.map((rule, idx) => (
+            {cfRules.map((rule, idx) => {
+              const effectiveStandardOp: ConditionalFormatRule['standardOp'] =
+                rule.mode === 'standard'
+                  ? rule.standardOp &&
+                    cfStandardOpChoices.some((c) => c.value === rule.standardOp)
+                    ? rule.standardOp
+                    : 'eq'
+                  : 'eq'
+              return (
               <div
                 key={rule.id}
                 className="space-y-2 rounded-lg border border-border bg-card p-3 text-sm"
@@ -1930,75 +2046,248 @@ export function FieldEditor() {
                     </button>
                   </div>
                 ) : rule.mode === 'standard' ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={rule.standardOp ?? 'eq'}
-                      onChange={(e) =>
-                        setCfRules((prev) =>
-                          prev.map((r, i) =>
-                            i === idx ? { ...r, standardOp: e.target.value as ConditionalFormatRule['standardOp'] } : r
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={effectiveStandardOp}
+                        onChange={(e) =>
+                          setCfRules((prev) =>
+                            prev.map((r, i) =>
+                              i === idx ? { ...r, standardOp: e.target.value as ConditionalFormatRule['standardOp'] } : r
+                            )
                           )
-                        )
-                      }
-                      className="rounded border border-border bg-background px-2 py-1 text-foreground"
-                    >
-                      <option value="eq">equals</option>
-                      <option value="neq">not equal</option>
-                      <option value="gt">greater than</option>
-                      <option value="gte">greater or equal</option>
-                      <option value="lt">less than</option>
-                      <option value="lte">less or equal</option>
-                      <option value="between">between (numbers)</option>
-                      <option value="contains">contains text</option>
-                      <option value="not_contains">does not contain</option>
-                      <option value="begins_with">begins with</option>
-                      <option value="ends_with">ends with</option>
-                      <option value="blank">is blank</option>
-                      <option value="not_blank">is not blank</option>
-                    </select>
-                    {rule.standardOp !== 'blank' &&
-                      rule.standardOp !== 'not_blank' &&
-                      rule.standardOp !== 'between' && (
-                        <input
-                          type="text"
-                          value={rule.standardValue ?? ''}
-                          onChange={(e) =>
-                            setCfRules((prev) =>
-                              prev.map((r, i) => (i === idx ? { ...r, standardValue: e.target.value } : r))
-                            )
-                          }
-                          className="min-w-[8rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
-                          placeholder="Value"
-                        />
-                      )}
-                    {rule.standardOp === 'between' && (
-                      <>
-                        <input
-                          type="text"
-                          value={rule.standardValue ?? ''}
-                          onChange={(e) =>
-                            setCfRules((prev) =>
-                              prev.map((r, i) => (i === idx ? { ...r, standardValue: e.target.value } : r))
-                            )
-                          }
-                          className="w-20 rounded border border-border bg-background px-2 py-1 text-foreground"
-                          placeholder="Min"
-                        />
-                        <span>–</span>
-                        <input
-                          type="text"
-                          value={rule.standardValue2 ?? ''}
-                          onChange={(e) =>
-                            setCfRules((prev) =>
-                              prev.map((r, i) => (i === idx ? { ...r, standardValue2: e.target.value } : r))
-                            )
-                          }
-                          className="w-20 rounded border border-border bg-background px-2 py-1 text-foreground"
-                          placeholder="Max"
-                        />
-                      </>
+                        }
+                        className="rounded border border-border bg-background px-2 py-1 text-foreground"
+                      >
+                        {cfStandardOpChoices.map((c) => (
+                          <option key={c.value} value={c.value}>
+                            {c.label}
+                          </option>
+                        ))}
+                      </select>
+                      {effectiveStandardOp !== 'blank' &&
+                        effectiveStandardOp !== 'not_blank' &&
+                        effectiveStandardOp !== 'between' &&
+                        (cfDatetimeValueKind === 'date' ? (
+                          <input
+                            type="date"
+                            value={isoToDateInputValue(rule.standardValue ?? '')}
+                            onChange={(e) => {
+                              const iso = dateInputValueToIso(e.target.value)
+                              setCfRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                              )
+                            }}
+                            className="min-w-[9rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          />
+                        ) : cfDatetimeValueKind === 'timeShort' ? (
+                          <input
+                            type="time"
+                            step={60}
+                            value={isoToTimeInputValue(rule.standardValue ?? '', false)}
+                            onChange={(e) => {
+                              const iso = timeInputValueToIso(e.target.value, false)
+                              setCfRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                              )
+                            }}
+                            className="min-w-[7rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          />
+                        ) : cfDatetimeValueKind === 'timeLong' ? (
+                          <input
+                            type="time"
+                            step={1}
+                            value={isoToTimeInputValue(rule.standardValue ?? '', true)}
+                            onChange={(e) => {
+                              const iso = timeInputValueToIso(e.target.value, true)
+                              setCfRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                              )
+                            }}
+                            className="min-w-[8rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          />
+                        ) : cfDatetimeValueKind === 'dateTimeLocal' ? (
+                          <input
+                            type="datetime-local"
+                            value={isoToDateTimeLocalValue(rule.standardValue ?? '')}
+                            onChange={(e) => {
+                              const iso = dateTimeLocalValueToIso(e.target.value)
+                              setCfRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                              )
+                            }}
+                            className="min-w-[12rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={rule.standardValue ?? ''}
+                            onChange={(e) =>
+                              setCfRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, standardValue: e.target.value } : r))
+                              )
+                            }
+                            className="min-w-[8rem] flex-1 rounded border border-border bg-background px-2 py-1 text-foreground"
+                            placeholder={cfValuePh}
+                          />
+                        ))}
+                      {effectiveStandardOp === 'between' &&
+                        (cfDatetimeValueKind === 'date' ? (
+                          <>
+                            <input
+                              type="date"
+                              value={isoToDateInputValue(rule.standardValue ?? '')}
+                              onChange={(e) => {
+                                const iso = dateInputValueToIso(e.target.value)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                                )
+                              }}
+                              className="min-w-[9rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="Start date"
+                            />
+                            <span>–</span>
+                            <input
+                              type="date"
+                              value={isoToDateInputValue(rule.standardValue2 ?? '')}
+                              onChange={(e) => {
+                                const iso = dateInputValueToIso(e.target.value)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue2: iso } : r))
+                                )
+                              }}
+                              className="min-w-[9rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="End date"
+                            />
+                          </>
+                        ) : cfDatetimeValueKind === 'timeShort' ? (
+                          <>
+                            <input
+                              type="time"
+                              step={60}
+                              value={isoToTimeInputValue(rule.standardValue ?? '', false)}
+                              onChange={(e) => {
+                                const iso = timeInputValueToIso(e.target.value, false)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                                )
+                              }}
+                              className="min-w-[7rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="Start time"
+                            />
+                            <span>–</span>
+                            <input
+                              type="time"
+                              step={60}
+                              value={isoToTimeInputValue(rule.standardValue2 ?? '', false)}
+                              onChange={(e) => {
+                                const iso = timeInputValueToIso(e.target.value, false)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue2: iso } : r))
+                                )
+                              }}
+                              className="min-w-[7rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="End time"
+                            />
+                          </>
+                        ) : cfDatetimeValueKind === 'timeLong' ? (
+                          <>
+                            <input
+                              type="time"
+                              step={1}
+                              value={isoToTimeInputValue(rule.standardValue ?? '', true)}
+                              onChange={(e) => {
+                                const iso = timeInputValueToIso(e.target.value, true)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                                )
+                              }}
+                              className="min-w-[8rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="Start time"
+                            />
+                            <span>–</span>
+                            <input
+                              type="time"
+                              step={1}
+                              value={isoToTimeInputValue(rule.standardValue2 ?? '', true)}
+                              onChange={(e) => {
+                                const iso = timeInputValueToIso(e.target.value, true)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue2: iso } : r))
+                                )
+                              }}
+                              className="min-w-[8rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="End time"
+                            />
+                          </>
+                        ) : cfDatetimeValueKind === 'dateTimeLocal' ? (
+                          <>
+                            <input
+                              type="datetime-local"
+                              value={isoToDateTimeLocalValue(rule.standardValue ?? '')}
+                              onChange={(e) => {
+                                const iso = dateTimeLocalValueToIso(e.target.value)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue: iso } : r))
+                                )
+                              }}
+                              className="min-w-[12rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="Start"
+                            />
+                            <span>–</span>
+                            <input
+                              type="datetime-local"
+                              value={isoToDateTimeLocalValue(rule.standardValue2 ?? '')}
+                              onChange={(e) => {
+                                const iso = dateTimeLocalValueToIso(e.target.value)
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue2: iso } : r))
+                                )
+                              }}
+                              className="min-w-[12rem] rounded border border-border bg-background px-2 py-1 text-foreground"
+                              title="End"
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <input
+                              type="text"
+                              value={rule.standardValue ?? ''}
+                              onChange={(e) =>
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue: e.target.value } : r))
+                                )
+                              }
+                              className="w-20 rounded border border-border bg-background px-2 py-1 text-foreground"
+                              placeholder="Min"
+                              title={fieldType === 'datetime' ? cfValuePh : undefined}
+                            />
+                            <span>–</span>
+                            <input
+                              type="text"
+                              value={rule.standardValue2 ?? ''}
+                              onChange={(e) =>
+                                setCfRules((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, standardValue2: e.target.value } : r))
+                                )
+                              }
+                              className="w-20 rounded border border-border bg-background px-2 py-1 text-foreground"
+                              placeholder="Max"
+                              title={fieldType === 'datetime' ? cfValuePh : undefined}
+                            />
+                          </>
+                        ))}
+                    </div>
+                    {fieldType === 'datetime' && (
+                      <p className="mt-1 w-full text-xs text-foreground/60">
+                        {cfDatetimeValueKind === 'date'
+                          ? 'Dates are saved at local midnight as ISO 8601 so they match how date-only fields store values.'
+                          : cfDatetimeValueKind === 'timeShort' || cfDatetimeValueKind === 'timeLong'
+                            ? 'Times are stored as an ISO instant on 1970-01-01 local (same as time-only fields in forms).'
+                            : 'Date and time use your local values and are stored as ISO 8601, matching the data entry control.'}
+                      </p>
                     )}
-                  </div>
+                  </>
                 ) : (
                   <p className="text-xs text-foreground/70">
                     This rule has no condition. When selected as{' '}
@@ -2268,7 +2557,8 @@ export function FieldEditor() {
                   </label>
                 </div>
               </div>
-            ))}
+              )
+            })}
             <button
               type="button"
               onClick={() =>

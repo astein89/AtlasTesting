@@ -1,8 +1,9 @@
 import { formatDateTime } from '../lib/dateTimeConfig'
 import { getBasePath } from '../lib/basePath'
-import { getElapsedMs, formatTimerMs, parseTimerValue } from './timer'
-import type { TimerValue } from '../types'
+import type { DataField, TimerValue } from '../types'
 import { stripStatusAutomationMetaFromData } from './planConditionalStatus'
+import { formatFieldValue } from './formatFieldValue'
+import { getElapsedMs, formatTimerMs, parseTimerValue } from './timer'
 
 interface Record {
   id: string
@@ -23,6 +24,11 @@ export function recordsToCsv(
     fieldOrder?: string[]
     /** When provided (e.g. export from a test's data view), add a "Test" column with this value. */
     testName?: string
+    /**
+     * Field key → definition. When set, **datetime** columns use the same display format as the UI
+     * (`dateTimeDisplay` / app date-time settings) instead of raw ISO strings.
+     */
+    fieldsByKey?: Map<string, DataField>
   }
 ): string {
   if (records.length === 0) return ''
@@ -59,7 +65,7 @@ export function recordsToCsv(
       string | number | boolean | string[] | TimerValue
     >
     headers.forEach((h) => {
-      if (h === 'recordId') row.push(r.id)
+      if (h === 'recordId') row.push(escapeCsv(r.id))
       else if (h === 'planName') row.push(escapeCsv(r.planName))
       else if (h === 'Test') row.push(escapeCsv(rowTestName))
       else if (h === 'recordedAt') row.push(escapeCsv(formatDateTime(r.recordedAt)))
@@ -68,6 +74,12 @@ export function recordsToCsv(
         const val = dataForExport[h]
         if (isBlank(val)) {
           row.push('')
+          return
+        }
+        const field = options?.fieldsByKey?.get(h)
+        if (field?.type === 'datetime') {
+          const formatted = formatFieldValue(field, val)
+          row.push(escapeCsv(formatted === '—' ? '' : formatted))
           return
         }
         if (typeof val === 'object' && val !== null && 'totalElapsedMs' in val) {
@@ -91,7 +103,10 @@ export function recordsToCsv(
     return row.join(',')
   })
 
-  return [headers.join(','), ...rows].join('\n')
+  /** UTF-8 BOM + CRLF: Excel on Windows opens encoding and row breaks correctly. */
+  const CSV_UTF8_BOM = '\uFEFF'
+  const headerLine = headers.map((h) => escapeCsv(h)).join(',')
+  return `${CSV_UTF8_BOM}${[headerLine, ...rows].join('\r\n')}`
 }
 
 function isBlank(val: unknown): boolean {
@@ -102,7 +117,7 @@ function isBlank(val: unknown): boolean {
 }
 
 function escapeCsv(val: string): string {
-  if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+  if (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r')) {
     return `"${val.replace(/"/g, '""')}"`
   }
   return val

@@ -94,31 +94,36 @@ function moveRootFilesToTesting(): Map<string, string> {
   return moves
 }
 
-function migrateDatabase(moves: Map<string, string>): void {
+async function migrateDatabase(moves: Map<string, string>): Promise<void> {
   if (moves.size === 0) return
 
-  const runs = db.prepare('SELECT id, data FROM test_runs').all() as Array<{ id: string; data: string | null }>
+  const runs = (await db.prepare('SELECT id, data FROM test_runs').all()) as Array<{
+    id: string
+    data: string | null
+  }>
   let runUpdates = 0
   for (const row of runs) {
     const next = rewriteUploadPaths(row.data, moves)
     if (next !== row.data && next != null) {
       if (!dryRun) {
-        db.prepare('UPDATE test_runs SET data = ? WHERE id = ?').run(next, row.id)
+        await db.prepare('UPDATE test_runs SET data = ? WHERE id = ?').run(next, row.id)
       }
       runUpdates += 1
     }
   }
 
-  const hist = db
-    .prepare('SELECT id, old_data, new_data FROM record_history')
-    .all() as Array<{ id: string; old_data: string | null; new_data: string | null }>
+  const hist = (await db.prepare('SELECT id, old_data, new_data FROM record_history').all()) as Array<{
+    id: string
+    old_data: string | null
+    new_data: string | null
+  }>
   let histUpdates = 0
   for (const row of hist) {
     const oldD = rewriteUploadPaths(row.old_data, moves)
     const newD = rewriteUploadPaths(row.new_data, moves)
     if (oldD !== row.old_data || newD !== row.new_data) {
       if (!dryRun) {
-        db.prepare('UPDATE record_history SET old_data = ?, new_data = ? WHERE id = ?').run(
+        await db.prepare('UPDATE record_history SET old_data = ?, new_data = ? WHERE id = ?').run(
           oldD,
           newD,
           row.id
@@ -134,13 +139,13 @@ function migrateDatabase(moves: Map<string, string>): void {
   )
 }
 
-function main(): void {
+async function main(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log(`[migrate-uploads] cwd=${cwd} dryRun=${dryRun}`)
   const moves = moveRootFilesToTesting()
-  migrateDatabase(moves)
+  await migrateDatabase(moves)
   // eslint-disable-next-line no-console
   console.log('[migrate-uploads] done.')
 }
 
-main()
+void main()

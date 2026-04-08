@@ -11,7 +11,7 @@ import {
   type WikiPageListItem,
 } from '@/api/wiki'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
-import { wikiEditUrl, wikiPageUrl, wikiPath } from '@/lib/appPaths'
+import { wikiEditUrl, wikiPageUrl, wikiPath, wikiTrailFromPathname } from '@/lib/appPaths'
 import { buildWikiTree, findWikiTreeNode, sortedTreeChildren, type WikiTreeNode } from '@/lib/wikiTree'
 import { useAuthStore } from '@/store/authStore'
 import { WikiMovePageModal } from './WikiMovePageModal'
@@ -478,15 +478,11 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
    * request each time and was unnecessary; mount covers entering the wiki module. */
   useAbortableEffect((signal) => load(signal), [load])
 
+  /** Wiki path key for the current URL (view or editor); `null` on wiki home. Basename-safe. */
   const currentPagePath = useMemo(() => {
-    const p = location.pathname
-    if (!p.startsWith('/wiki')) return null
-    const rest = p.slice('/wiki'.length).replace(/^\/+|\/+$/g, '')
-    if (!rest) return null
-    if (rest.endsWith('/edit')) {
-      return rest.slice(0, -5).replace(/\/$/, '') || null
-    }
-    return rest
+    const trail = wikiTrailFromPathname(location.pathname)
+    if (!trail || trail === 'index') return null
+    return trail
   }, [location.pathname])
 
   const switchToSearch = useCallback(() => {
@@ -643,7 +639,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
       {showUploadMdToolbar ? (
         <button
           type="button"
-          onClick={() => setUploadMdModal({})}
+          onClick={() => setUploadMdModal(currentPagePath ? { under: currentPagePath } : {})}
           aria-label="Upload markdown file"
           title="Upload markdown file"
           className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
@@ -655,7 +651,12 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
         <>
           <button
             type="button"
-            onClick={() => setNewPathModal({ kind: 'section' })}
+            onClick={() =>
+              setNewPathModal({
+                kind: 'section',
+                ...(currentPagePath ? { under: currentPagePath } : {}),
+              })
+            }
             aria-label="New section"
             title="New section (folder with index page)"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"
@@ -664,7 +665,12 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
           </button>
           <button
             type="button"
-            onClick={() => setNewPathModal({ kind: 'page' })}
+            onClick={() =>
+              setNewPathModal({
+                kind: 'page',
+                ...(currentPagePath ? { under: currentPagePath } : {}),
+              })
+            }
             aria-label="New page"
             title="New page"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-foreground/45 transition-colors hover:bg-foreground/[0.045] hover:text-foreground/80 md:min-h-0 md:min-w-0 dark:hover:bg-foreground/[0.07]"

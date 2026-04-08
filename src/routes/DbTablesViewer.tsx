@@ -17,11 +17,12 @@ export function DbTablesViewer() {
     void api
       .get<string[]>('/admin/tables', { signal })
       .then((r) => {
-        setTables(r.data)
+        const list = Array.isArray(r.data) ? r.data : []
+        setTables(list)
         setSelected((cur) => {
-          if (r.data.length === 0) return ''
-          if (cur && r.data.includes(cur)) return cur
-          return r.data[0]
+          if (list.length === 0) return ''
+          if (cur && list.includes(cur)) return cur
+          return list[0]
         })
       })
       .catch((e) => {
@@ -35,7 +36,7 @@ export function DbTablesViewer() {
       setLoading(true)
       void api
         .get<Record<string, unknown>[]>(`/admin/tables/${selected}`, { signal })
-        .then((r) => setRows(r.data))
+        .then((r) => setRows(Array.isArray(r.data) ? r.data : []))
         .catch((e) => {
           if (!isAbortLikeError(e)) setRows([])
         })

@@ -1,12 +1,16 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PopupSelect } from '../ui/PopupSelect'
 import type { DataField, TestPlan } from '../../types'
 import { api } from '../../api/client'
 import { finalizeRecordDataAfterImportOrBulk } from '../../utils/planConditionalStatus'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
-import { getDefaultValueForField } from '../../utils/fieldDefaults'
+import { DATETIME_PLAN_DEFAULT_ROW_CREATED, getDefaultValueForField } from '../../utils/fieldDefaults'
 import { parseImportFile, type ParsedImportFile } from '../../utils/parseImportFile'
 import { coerceCell, coerceRecordedAt } from '../../utils/importCoercion'
+import {
+  autoMapImportFieldsToColumns,
+  autoMapRecordedAtColumn,
+} from '../../utils/importColumnAutoMap'
 
 const DONT_MAP = ''
 
@@ -72,16 +76,37 @@ export function ImportDataModal({
     return headers.map((h) => ({ value: h, label: h }))
   }, [parsed?.headers])
 
+  const visibleFieldKeysSig = useMemo(() => visibleFields.map((f) => f.key).join('\0'), [visibleFields])
+
+  /** Run auto-map once per (file headers + importable field set); reset when choosing a new file. */
+  const autoMappedKeyRef = useRef<string>('')
+
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
     setFile(f)
     setParseError(null)
     setParsed(null)
+    setFieldToColumn({})
+    setRecordedAtColumn(DONT_MAP)
+    autoMappedKeyRef.current = ''
     parseImportFile(f)
       .then(setParsed)
       .catch((err) => setParseError(err?.message || 'Failed to parse file'))
   }, [])
+
+  useEffect(() => {
+    if (!parsed?.headers.length) return
+    const autoKey = `${parsed.headers.join('\0')}||${visibleFieldKeysSig}`
+    if (autoMappedKeyRef.current === autoKey) return
+    autoMappedKeyRef.current = autoKey
+
+    const mapping = autoMapImportFieldsToColumns(parsed.headers, visibleFields)
+    setFieldToColumn(mapping)
+    const used = new Set(Object.values(mapping))
+    const rec = autoMapRecordedAtColumn(parsed.headers, used)
+    setRecordedAtColumn(rec || DONT_MAP)
+  }, [parsed, visibleFields, visibleFieldKeysSig])
 
   const hasAnyMapping = useMemo(() => {
     const hasField = visibleFields.some((f) => fieldToColumn[f.key])
@@ -113,7 +138,12 @@ export function ImportDataModal({
           if (coerced !== undefined) {
             data[field.key] = coerced
           } else if (plan.fieldDefaults?.[field.key] !== undefined) {
-            data[field.key] = plan.fieldDefaults[field.key] as string | number | boolean | string[]
+            const rawDef = plan.fieldDefaults[field.key]
+            if (field.type === 'datetime' && rawDef === DATETIME_PLAN_DEFAULT_ROW_CREATED) {
+              data[field.key] = new Date().toISOString()
+            } else {
+              data[field.key] = rawDef as string | number | boolean | string[]
+            }
           } else {
             const def = getDefaultValueForField(field, plan.fieldDefaults)
             if (def !== undefined && def !== null && def !== '') {
@@ -251,6 +281,10 @@ export function ImportDataModal({
               </div>
               <div className="mb-4">
                 <h3 className="mb-2 text-sm font-medium text-foreground">Map plan fields to file columns</h3>
+                <p className="mb-2 text-xs text-foreground/70">
+                  Columns are auto-matched when headers match a field&apos;s key or label (including files exported from
+                  this app). Change any mapping below if needed.
+                </p>
                 <div className="grid grid-cols-[minmax(120px,280px)_240px] items-center gap-x-4 gap-y-2">
                   {visibleFields.map((field) => (
                     <div key={field.id} className="contents">

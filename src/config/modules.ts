@@ -30,7 +30,7 @@ export const appModules: AppModule[] = [
   {
     id: 'testing',
     path: 'testing',
-    title: 'Testing',
+    title: 'Test Plans',
     description: 'Test plans, data entry, results, and data fields.',
     to: TESTING_PREFIX,
   },

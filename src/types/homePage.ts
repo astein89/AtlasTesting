@@ -26,8 +26,17 @@ export interface HomePageConfig {
    * direct URLs; only the home hub cards are affected.
    */
   modulesHiddenFromHome?: string[]
-  /** When true, show `public/logo.png` beside the welcome Markdown (left on wide viewports). */
+  /** When true, show the welcome logo beside the Markdown (left on wide viewports). */
   showWelcomeLogo?: boolean
   /** Max width of the welcome logo in `rem` (clamped server-side; default 16). */
   welcomeLogoMaxRem?: number
+  /**
+   * Path under server `uploads/` (e.g. `home/welcome-logo.png`), served at `/api/uploads/...`.
+   * Omitted or null = use `public/logo.png`.
+   */
+  welcomeLogoPath?: string | null
+  /** Same for the browser tab / PWA icon; null = `public/icon.png`. */
+  siteFaviconPath?: string | null
+  /** Server-incremented when branding images change (cache bust). */
+  homeBrandingRevision?: number
 }

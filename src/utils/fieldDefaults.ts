@@ -1,6 +1,9 @@
 import type { DataField, TimerValue } from '../types'
+import { DATETIME_PLAN_DEFAULT_ROW_CREATED } from '../lib/fieldDefaultSentinels'
 import { getStatusOptions } from '../types'
 import { evaluateFormula } from './formulaEvaluator'
+
+export { DATETIME_PLAN_DEFAULT_ROW_CREATED } from '../lib/fieldDefaultSentinels'
 
 /**
  * Returns the default value for a single field, using plan fieldDefaults when present and valid.
@@ -36,6 +39,10 @@ export function getDefaultValueForField(
       if (typeof t.totalElapsedMs === 'number' && t.totalElapsedMs >= 0) {
         return { totalElapsedMs: t.totalElapsedMs, startedAt: typeof t.startedAt === 'string' ? t.startedAt : undefined }
       }
+    }
+    if (field.type === 'datetime' && typeof planDefault === 'string') {
+      if (planDefault === DATETIME_PLAN_DEFAULT_ROW_CREATED) return new Date().toISOString()
+      return planDefault
     }
     return typeof planDefault === 'string' ? planDefault : String(planDefault)
   }

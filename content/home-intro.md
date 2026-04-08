@@ -1,10 +1,11 @@
 # Welcome to DC Automation
 
-Use the **modules** on this page to open **Testing** (test plans, results, fields, and related admin tools) or **Locations**. Sign in when prompted if an area requires it.
+Pick a **module** below to get started. Some areas ask you to **sign in** first, depending on your account and permissions.
 
-- **Testing** — Design and run test workflows, capture results (including from mobile), and export data.
-- **Locations** — Maintain location records used across the app.
+- **Test Plans** — Test plans, structured data entry, results, custom fields, imports/exports, and conditional formatting.
+- **Locations** — Schemas, zones, and location records used across the app.
+- **Wiki** — Internal documentation in Markdown (with previews, diagrams, and search where enabled).
+- **Files** — Shared file library: upload, organize in folders, and download with role-based access where configured.
+- **Administration** — Users, roles, settings, and database/admin tools (restricted to administrators).
 
-If you have the **home page** permission, you can replace this text with your own (including links and formatting) from the editor on the home screen.
-
-Default copy lives in **`content/home-intro.md`** in the project; you can edit that file before first deploy or keep using the in-app editor after launch.
+If you can **edit the home page**, use **Edit home page** on this screen to change this welcome text, module cards, extra links, and optional **logo** / **site icon** (favicon). Until the server stores custom content, new installs show this file from **`content/home-intro.md`** in the project.

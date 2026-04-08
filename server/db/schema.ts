@@ -14,6 +14,19 @@ export interface DbWrapper {
   exec(sql: string): void
 }
 
+/** Async DB surface used by routes and PostgreSQL (pg is promise-based). */
+export interface AsyncPreparedStatement {
+  run(...params: unknown[]): Promise<{ changes: number }>
+  get(...params: unknown[]): Promise<Record<string, string | number | null> | undefined>
+  all(...params: unknown[]): Promise<Record<string, unknown>[]>
+}
+
+export interface AsyncDbWrapper {
+  prepare(sql: string): AsyncPreparedStatement
+  run(sql: string, params?: unknown[] | unknown): Promise<void>
+  exec(sql: string): Promise<void>
+}
+
 /** PRAGMA table_info column names. `table` must be a trusted identifier (migration-only). */
 function tableColumnNames(db: DbWrapper, table: string): string[] {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>

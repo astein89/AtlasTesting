@@ -66,6 +66,9 @@ export async function ensureAccessToken(): Promise<boolean> {
 }
 
 api.interceptors.request.use((config) => {
+  if (config.data instanceof FormData) {
+    delete (config.headers as { 'Content-Type'?: string })['Content-Type']
+  }
   const token = useAuthStore.getState().accessToken
   if (token) {
     setAuthHeader(config, token)

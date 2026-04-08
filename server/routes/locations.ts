@@ -1,7 +1,9 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../db/index.js'
+import { db, isUsingPostgres } from '../db/index.js'
+import { sqlUtcNowExpr } from '../lib/timestamps.js'
 import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
+import { asyncRoute } from '../utils/asyncRoute.js'
 import {
   normalizeLocationMixedGeneratePartOrNull,
   validateLocationPatternMask,
@@ -159,16 +161,16 @@ function normalizeLocationFieldValue(
 }
 
 /** Merge request fieldValues with previous row; omitted keys keep previous values; explicit empty clears. */
-function mergeFieldValuesForUpdate(
+async function mergeFieldValuesForUpdate(
   schemaId: string,
   input: Record<string, unknown> | undefined,
   prev: Record<string, unknown>
-): { ok: true; merged: Record<string, string | number> } | { ok: false; error: string } {
-  const defs = db
+): Promise<{ ok: true; merged: Record<string, string | number> } | { ok: false; error: string }> {
+  const defs = (await db
     .prepare(
       `SELECT key, label, type, config FROM location_schema_fields WHERE schema_id = ? ORDER BY order_index`
     )
-    .all(schemaId) as Array<{ key: string; label: string; type: string; config: string | null }>
+    .all(schemaId)) as Array<{ key: string; label: string; type: string; config: string | null }>
 
   const merged: Record<string, string | number> = {}
   const inputObj = input && typeof input === 'object' ? input : {}
@@ -187,15 +189,15 @@ function mergeFieldValuesForUpdate(
 }
 
 /** Optional field defaults for generate: only keys present in input are applied. */
-function validateFieldValuesFromInput(
+async function validateFieldValuesFromInput(
   schemaId: string,
   input: Record<string, unknown> | undefined
-): { ok: true; merged: Record<string, string | number> } | { ok: false; error: string } {
-  const defs = db
+): Promise<{ ok: true; merged: Record<string, string | number> } | { ok: false; error: string }> {
+  const defs = (await db
     .prepare(
       `SELECT key, label, type, config FROM location_schema_fields WHERE schema_id = ? ORDER BY order_index`
     )
-    .all(schemaId) as Array<{ key: string; label: string; type: string; config: string | null }>
+    .all(schemaId)) as Array<{ key: string; label: string; type: string; config: string | null }>
 
   const merged: Record<string, string | number> = {}
   const inputObj = input && typeof input === 'object' ? input : {}
@@ -213,18 +215,23 @@ function validateFieldValuesFromInput(
 
 // ----- Schemas -----
 
-router.get('/schemas', (_req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT id, name, description, created_at as createdAt, updated_at as updatedAt
+router.get(
+  '/schemas',
+  asyncRoute(async (_req, res) => {
+    const rows = await db
+      .prepare(
+        `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schemas
        ORDER BY name`
-    )
-    .all()
-  res.json(rows)
-})
+      )
+      .all()
+    res.json(rows)
+  })
+)
 
-router.post('/schemas', (req: AuthRequest, res) => {
+router.post(
+  '/schemas',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { name, description } = req.body as {
     name?: string
     description?: string
@@ -233,23 +240,26 @@ router.post('/schemas', (req: AuthRequest, res) => {
     return res.status(400).json({ error: 'Name is required' })
   }
   const id = uuidv4()
-  db.prepare(
+  await db.prepare(
     `INSERT INTO location_schemas (id, name, description) VALUES (?, ?, ?)`
   ).run(id, name.trim(), description ?? null)
-  const row = db
+  const row = await db
     .prepare(
-      `SELECT id, name, description, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schemas WHERE id = ?`
     )
     .get(id)
   res.status(201).json(row)
-})
+  })
+)
 
-router.put('/schemas/:schemaId', (req: AuthRequest, res) => {
+router.put(
+  '/schemas/:schemaId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const existing = db
+  const existing = (await db
     .prepare(`SELECT id FROM location_schemas WHERE id = ?`)
-    .get(schemaId) as { id: string } | undefined
+    .get(schemaId)) as { id: string } | undefined
   if (!existing) return res.status(404).json({ error: 'Schema not found' })
 
   const { name, description } = req.body as {
@@ -257,11 +267,11 @@ router.put('/schemas/:schemaId', (req: AuthRequest, res) => {
     description?: string
   }
 
-  db.prepare(
+  await db.prepare(
     `UPDATE location_schemas
      SET name = COALESCE(?, name),
          description = COALESCE(?, description),
-         updated_at = datetime('now')
+         updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ?`
   ).run(
     name != null ? String(name).trim() : null,
@@ -269,20 +279,23 @@ router.put('/schemas/:schemaId', (req: AuthRequest, res) => {
     schemaId
   )
 
-  const row = db
+  const row = await db
     .prepare(
-      `SELECT id, name, description, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schemas WHERE id = ?`
     )
     .get(schemaId)
   res.json(row)
-})
+  })
+)
 
-router.delete('/schemas/:schemaId', (req: AuthRequest, res) => {
+router.delete(
+  '/schemas/:schemaId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const zoneRows = db
-    .prepare(`SELECT name FROM zones WHERE schema_id = ? ORDER BY name COLLATE NOCASE`)
-    .all(schemaId) as Array<{ name: string }>
+  const zoneRows = (await db
+    .prepare(`SELECT name FROM zones WHERE schema_id = ? ORDER BY LOWER(name)`)
+    .all(schemaId)) as Array<{ name: string }>
   if (zoneRows.length > 0) {
     const maxList = 12
     const names = zoneRows.map((z) => z.name)
@@ -295,33 +308,39 @@ router.delete('/schemas/:schemaId', (req: AuthRequest, res) => {
       error: `Cannot delete this schema: it is still assigned to ${n} ${zoneWord} (${list}). Remove those zones or change each zone to use a different schema first.`,
     })
   }
-  db.prepare(`DELETE FROM location_schema_components WHERE schema_id = ?`).run(schemaId)
-  db.prepare(`DELETE FROM location_schema_fields WHERE schema_id = ?`).run(schemaId)
-  db.prepare(`DELETE FROM location_schemas WHERE id = ?`).run(schemaId)
+  await db.prepare(`DELETE FROM location_schema_components WHERE schema_id = ?`).run(schemaId)
+  await db.prepare(`DELETE FROM location_schema_fields WHERE schema_id = ?`).run(schemaId)
+  await db.prepare(`DELETE FROM location_schemas WHERE id = ?`).run(schemaId)
   res.status(204).end()
-})
+  })
+)
 
 // ----- Schema components -----
 
-router.get('/schemas/:schemaId/components', (req: AuthRequest, res) => {
+router.get(
+  '/schemas/:schemaId/components',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const components = db
+  const components = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+              pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
     )
     .all(schemaId)
   res.json(components)
-})
+  })
+)
 
-router.post('/schemas/:schemaId/components', (req: AuthRequest, res) => {
+router.post(
+  '/schemas/:schemaId/components',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const schema = db
+  const schema = (await db
     .prepare(`SELECT id FROM location_schemas WHERE id = ?`)
-    .get(schemaId) as { id: string } | undefined
+    .get(schemaId)) as { id: string } | undefined
   if (!schema) return res.status(404).json({ error: 'Schema not found' })
 
   const body = req.body as {
@@ -379,22 +398,22 @@ router.post('/schemas/:schemaId/components', (req: AuthRequest, res) => {
   }
 
   const id = uuidv4()
-  const maxOrder = db
+  const maxOrder = (await db
     .prepare(
-      `SELECT COALESCE(MAX(order_index), 0) as maxOrder FROM location_schema_components WHERE schema_id = ?`
+      `SELECT COALESCE(MAX(order_index), 0) AS "maxOrder" FROM location_schema_components WHERE schema_id = ?`
     )
-    .get(schemaId) as { maxOrder: number }
+    .get(schemaId)) as { maxOrder: number }
   const orderIndex = maxOrder.maxOrder + 1
 
   const keyStr = String(body.key).trim()
-  const fieldCollision = db
+  const fieldCollision = (await db
     .prepare(`SELECT id FROM location_schema_fields WHERE schema_id = ? AND key = ?`)
-    .get(schemaId, keyStr) as { id: string } | undefined
+    .get(schemaId, keyStr)) as { id: string } | undefined
   if (fieldCollision) {
     return res.status(400).json({ error: `Key "${keyStr}" is already used by a schema field` })
   }
 
-  db.prepare(
+  await db.prepare(
     `INSERT INTO location_schema_components
        (id, schema_id, key, display_name, type, width, pattern_mask, min_value, max_value, order_index)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -411,23 +430,26 @@ router.post('/schemas/:schemaId/components', (req: AuthRequest, res) => {
     orderIndex
   )
 
-  const row = db
+  const row = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+              pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components WHERE id = ?`
     )
     .get(id)
   res.status(201).json(row)
-})
+  })
+)
 
-router.put('/schemas/:schemaId/components/reorder', (req: AuthRequest, res) => {
+router.put(
+  '/schemas/:schemaId/components/reorder',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
   const body = req.body as { orderedIds?: unknown }
 
-  const existing = db
+  const existing = (await db
     .prepare(`SELECT id FROM location_schema_components WHERE schema_id = ?`)
-    .all(schemaId) as Array<{ id: string }>
+    .all(schemaId)) as Array<{ id: string }>
   const existingIds = existing.map((r) => r.id)
 
   const requested = Array.isArray(body.orderedIds)
@@ -443,33 +465,36 @@ router.put('/schemas/:schemaId/components/reorder', (req: AuthRequest, res) => {
 
   const update = db.prepare(
     `UPDATE location_schema_components
-     SET order_index = ?, updated_at = datetime('now')
+     SET order_index = ?, updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ? AND schema_id = ?`
   )
   for (let i = 0; i < finalOrder.length; i++) {
-    update.run(i + 1, finalOrder[i], schemaId)
+    await update.run(i + 1, finalOrder[i], schemaId)
   }
 
-  const components = db
+  const components = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+              pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
     )
     .all(schemaId)
   res.json(components)
-})
+  })
+)
 
-router.put('/schemas/:schemaId/components/:componentId', (req: AuthRequest, res) => {
+router.put(
+  '/schemas/:schemaId/components/:componentId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId, componentId } = req.params
-  const existing = db
+  const existing = (await db
     .prepare(
-      `SELECT id, schema_id as schemaId, type, width, pattern_mask as patternMask, min_value as minValue, max_value as maxValue
+      `SELECT id, schema_id AS "schemaId", type, width, pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue"
        FROM location_schema_components WHERE id = ?`
     )
-    .get(componentId) as
+    .get(componentId)) as
     | {
         id: string
         schemaId: string
@@ -554,7 +579,7 @@ router.put('/schemas/:schemaId/components/:componentId', (req: AuthRequest, res)
     }
   }
 
-  db.prepare(
+  await db.prepare(
     `UPDATE location_schema_components
      SET display_name = COALESCE(?, display_name),
          type = COALESCE(?, type),
@@ -562,7 +587,7 @@ router.put('/schemas/:schemaId/components/:componentId', (req: AuthRequest, res)
          pattern_mask = ?,
          min_value = ?,
          max_value = ?,
-         updated_at = datetime('now')
+         updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ?`
   ).run(
     body.displayName != null ? String(body.displayName) : null,
@@ -574,49 +599,57 @@ router.put('/schemas/:schemaId/components/:componentId', (req: AuthRequest, res)
     componentId
   )
 
-  const row = db
+  const row = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+              pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components WHERE id = ?`
     )
     .get(componentId)
   res.json(row)
-})
+  })
+)
 
-router.delete('/schemas/:schemaId/components/:componentId', (req: AuthRequest, res) => {
+router.delete(
+  '/schemas/:schemaId/components/:componentId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId, componentId } = req.params
-  const existing = db
+  const existing = (await db
     .prepare(`SELECT id FROM location_schema_components WHERE id = ? AND schema_id = ?`)
-    .get(componentId, schemaId) as { id: string } | undefined
+    .get(componentId, schemaId)) as { id: string } | undefined
   if (!existing) {
     return res.status(404).json({ error: 'Schema item not found' })
   }
-  db.prepare(`DELETE FROM location_schema_components WHERE id = ?`).run(componentId)
-  const remaining = db
+  await db.prepare(`DELETE FROM location_schema_components WHERE id = ?`).run(componentId)
+  const remaining = (await db
     .prepare(
       `SELECT id FROM location_schema_components WHERE schema_id = ? ORDER BY order_index`
     )
-    .all(schemaId) as Array<{ id: string }>
+    .all(schemaId)) as Array<{ id: string }>
   const update = db.prepare(
-    `UPDATE location_schema_components SET order_index = ?, updated_at = datetime('now') WHERE id = ? AND schema_id = ?`
+    `UPDATE location_schema_components SET order_index = ?, updated_at = ${sqlUtcNowExpr(isUsingPostgres())} WHERE id = ? AND schema_id = ?`
   )
   for (let i = 0; i < remaining.length; i++) {
-    update.run(i + 1, remaining[i].id, schemaId)
+    await update.run(i + 1, remaining[i].id, schemaId)
   }
   res.status(204).end()
-})
+  })
+)
 
 // ----- Schema custom fields (number / text / select) -----
 
-router.get('/schemas/:schemaId/fields', (req: AuthRequest, res) => {
+router.get(
+  '/schemas/:schemaId/fields',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const schema = db.prepare(`SELECT id FROM location_schemas WHERE id = ?`).get(schemaId) as { id: string } | undefined
+  const schema = (await db.prepare(`SELECT id FROM location_schemas WHERE id = ?`).get(schemaId)) as
+    | { id: string }
+    | undefined
   if (!schema) return res.status(404).json({ error: 'Schema not found' })
-  const rows = db
+  const rows = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, label, type, config, order_index as orderIndex,
-              created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id AS "schemaId", key, label, type, config, order_index AS "orderIndex",
+              created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schema_fields
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -627,11 +660,16 @@ router.get('/schemas/:schemaId/fields', (req: AuthRequest, res) => {
     config: safeParseJson(r.config as string) ?? {},
   }))
   res.json(out)
-})
+  })
+)
 
-router.post('/schemas/:schemaId/fields', (req: AuthRequest, res) => {
+router.post(
+  '/schemas/:schemaId/fields',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const schema = db.prepare(`SELECT id FROM location_schemas WHERE id = ?`).get(schemaId) as { id: string } | undefined
+  const schema = (await db.prepare(`SELECT id FROM location_schemas WHERE id = ?`).get(schemaId)) as
+    | { id: string }
+    | undefined
   if (!schema) return res.status(404).json({ error: 'Schema not found' })
 
   const body = req.body as {
@@ -650,16 +688,16 @@ router.post('/schemas/:schemaId/fields', (req: AuthRequest, res) => {
   const keyStr = String(body.key).trim()
   if (!keyStr) return res.status(400).json({ error: 'key is required' })
 
-  const compCollision = db
+  const compCollision = (await db
     .prepare(`SELECT id FROM location_schema_components WHERE schema_id = ? AND key = ?`)
-    .get(schemaId, keyStr) as { id: string } | undefined
+    .get(schemaId, keyStr)) as { id: string } | undefined
   if (compCollision) {
     return res.status(400).json({ error: `Key "${keyStr}" is already used by a code component` })
   }
 
-  const maxOrder = db
-    .prepare(`SELECT COALESCE(MAX(order_index), 0) as maxOrder FROM location_schema_fields WHERE schema_id = ?`)
-    .get(schemaId) as { maxOrder: number }
+  const maxOrder = (await db
+    .prepare(`SELECT COALESCE(MAX(order_index), 0) AS "maxOrder" FROM location_schema_fields WHERE schema_id = ?`)
+    .get(schemaId)) as { maxOrder: number }
   const orderIndex = maxOrder.maxOrder + 1
   const id = uuidv4()
   const configJson =
@@ -672,7 +710,7 @@ router.post('/schemas/:schemaId/fields', (req: AuthRequest, res) => {
       : null
 
   try {
-    db.prepare(
+    await db.prepare(
       `INSERT INTO location_schema_fields (id, schema_id, key, label, type, config, order_index)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(id, schemaId, keyStr, String(body.label).trim(), type, configJson, orderIndex)
@@ -684,28 +722,33 @@ router.post('/schemas/:schemaId/fields', (req: AuthRequest, res) => {
     throw e
   }
 
-  const row = db
+  const row = (await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, label, type, config, order_index as orderIndex,
-              created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id AS "schemaId", key, label, type, config, order_index AS "orderIndex",
+              created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schema_fields WHERE id = ?`
     )
-    .get(id) as Record<string, unknown>
+    .get(id)) as Record<string, unknown>
   res.status(201).json({
     ...row,
     config: safeParseJson(row.config as string) ?? {},
   })
-})
+  })
+)
 
-router.put('/schemas/:schemaId/fields/reorder', (req: AuthRequest, res) => {
+router.put(
+  '/schemas/:schemaId/fields/reorder',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId } = req.params
-  const schema = db.prepare(`SELECT id FROM location_schemas WHERE id = ?`).get(schemaId) as { id: string } | undefined
+  const schema = (await db.prepare(`SELECT id FROM location_schemas WHERE id = ?`).get(schemaId)) as
+    | { id: string }
+    | undefined
   if (!schema) return res.status(404).json({ error: 'Schema not found' })
 
   const body = req.body as { orderedIds?: unknown }
-  const existing = db
+  const existing = (await db
     .prepare(`SELECT id FROM location_schema_fields WHERE schema_id = ?`)
-    .all(schemaId) as Array<{ id: string }>
+    .all(schemaId)) as Array<{ id: string }>
   const existingIds = existing.map((r) => r.id)
 
   const requested = Array.isArray(body.orderedIds)
@@ -721,17 +764,17 @@ router.put('/schemas/:schemaId/fields/reorder', (req: AuthRequest, res) => {
 
   const update = db.prepare(
     `UPDATE location_schema_fields
-     SET order_index = ?, updated_at = datetime('now')
+     SET order_index = ?, updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ? AND schema_id = ?`
   )
   for (let i = 0; i < finalOrder.length; i++) {
-    update.run(i + 1, finalOrder[i], schemaId)
+    await update.run(i + 1, finalOrder[i], schemaId)
   }
 
-  const rows = db
+  const rows = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, label, type, config, order_index as orderIndex,
-              created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id AS "schemaId", key, label, type, config, order_index AS "orderIndex",
+              created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schema_fields
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -742,13 +785,16 @@ router.put('/schemas/:schemaId/fields/reorder', (req: AuthRequest, res) => {
     config: safeParseJson(r.config as string) ?? {},
   }))
   res.json(out)
-})
+  })
+)
 
-router.put('/schemas/:schemaId/fields/:fieldId', (req: AuthRequest, res) => {
+router.put(
+  '/schemas/:schemaId/fields/:fieldId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId, fieldId } = req.params
-  const existing = db
-    .prepare(`SELECT id, schema_id as schemaId FROM location_schema_fields WHERE id = ?`)
-    .get(fieldId) as { id: string; schemaId: string } | undefined
+  const existing = (await db
+    .prepare(`SELECT id, schema_id AS "schemaId" FROM location_schema_fields WHERE id = ?`)
+    .get(fieldId)) as { id: string; schemaId: string } | undefined
   if (!existing || existing.schemaId !== schemaId) {
     return res.status(404).json({ error: 'Field not found' })
   }
@@ -762,9 +808,9 @@ router.put('/schemas/:schemaId/fields/:fieldId', (req: AuthRequest, res) => {
   const typeVal =
     body.type === 'number' || body.type === 'text' || body.type === 'select' ? body.type : null
 
-  const cur = db
+  const cur = (await db
     .prepare(`SELECT label, type, config FROM location_schema_fields WHERE id = ?`)
-    .get(fieldId) as { label: string; type: string; config: string | null }
+    .get(fieldId)) as { label: string; type: string; config: string | null }
 
   const newLabel = body.label !== undefined ? String(body.label).trim() : cur.label
   const newType = typeVal ?? cur.type
@@ -779,57 +825,66 @@ router.put('/schemas/:schemaId/fields/:fieldId', (req: AuthRequest, res) => {
         : null
       : cur.config
 
-  db.prepare(
+  await db.prepare(
     `UPDATE location_schema_fields
-     SET label = ?, type = ?, config = ?, updated_at = datetime('now')
+     SET label = ?, type = ?, config = ?, updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ?`
   ).run(newLabel, newType, newConfig, fieldId)
 
-  const row = db
+  const row = (await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, label, type, config, order_index as orderIndex,
-              created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id AS "schemaId", key, label, type, config, order_index AS "orderIndex",
+              created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schema_fields WHERE id = ?`
     )
-    .get(fieldId) as Record<string, unknown>
+    .get(fieldId)) as Record<string, unknown>
   res.json({
     ...row,
     config: safeParseJson(row.config as string) ?? {},
   })
-})
+  })
+)
 
-router.delete('/schemas/:schemaId/fields/:fieldId', (req: AuthRequest, res) => {
+router.delete(
+  '/schemas/:schemaId/fields/:fieldId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { schemaId, fieldId } = req.params
-  const existing = db
+  const existing = (await db
     .prepare(`SELECT id FROM location_schema_fields WHERE id = ? AND schema_id = ?`)
-    .get(fieldId, schemaId) as { id: string } | undefined
+    .get(fieldId, schemaId)) as { id: string } | undefined
   if (!existing) return res.status(404).json({ error: 'Field not found' })
-  db.prepare(`DELETE FROM location_schema_fields WHERE id = ?`).run(fieldId)
+  await db.prepare(`DELETE FROM location_schema_fields WHERE id = ?`).run(fieldId)
   res.status(204).end()
-})
+  })
+)
 
 // ----- Zones -----
 
-router.get('/zones', (_req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT z.id,
+router.get(
+  '/zones',
+  asyncRoute(async (_req, res) => {
+    const rows = await db
+      .prepare(
+        `SELECT z.id,
               z.name,
               z.description,
-              z.schema_id as schemaId,
-              s.name as schemaName,
-              z.created_at as createdAt,
-              z.updated_at as updatedAt,
-              (SELECT COUNT(*) FROM locations l WHERE l.zone_id = z.id) as locationCount
+              z.schema_id AS "schemaId",
+              s.name AS "schemaName",
+              z.created_at AS "createdAt",
+              z.updated_at AS "updatedAt",
+              (SELECT COUNT(*) FROM locations l WHERE l.zone_id = z.id) AS "locationCount"
        FROM zones z
        JOIN location_schemas s ON s.id = z.schema_id
        ORDER BY z.name`
-    )
-    .all()
-  res.json(rows)
-})
+      )
+      .all()
+    res.json(rows)
+  })
+)
 
-router.post('/zones', (req: AuthRequest, res) => {
+router.post(
+  '/zones',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { name, description, schemaId } = req.body as {
     name?: string
     description?: string
@@ -838,87 +893,96 @@ router.post('/zones', (req: AuthRequest, res) => {
   if (!name || !schemaId) {
     return res.status(400).json({ error: 'name and schemaId are required' })
   }
-  const schema = db
+  const schema = (await db
     .prepare(`SELECT id FROM location_schemas WHERE id = ?`)
-    .get(schemaId) as { id: string } | undefined
+    .get(schemaId)) as { id: string } | undefined
   if (!schema) return res.status(400).json({ error: 'Invalid schemaId' })
   const id = uuidv4()
-  db.prepare(
+  await db.prepare(
     `INSERT INTO zones (id, name, description, schema_id)
      VALUES (?, ?, ?, ?)`
   ).run(id, name.trim(), description ?? null, schemaId)
 
-  const row = db
+  const row = await db
     .prepare(
       `SELECT z.id,
               z.name,
               z.description,
-              z.schema_id as schemaId,
-              s.name as schemaName,
-              z.created_at as createdAt,
-              z.updated_at as updatedAt,
-              (SELECT COUNT(*) FROM locations l WHERE l.zone_id = z.id) as locationCount
+              z.schema_id AS "schemaId",
+              s.name AS "schemaName",
+              z.created_at AS "createdAt",
+              z.updated_at AS "updatedAt",
+              (SELECT COUNT(*) FROM locations l WHERE l.zone_id = z.id) AS "locationCount"
        FROM zones z
        JOIN location_schemas s ON s.id = z.schema_id
        WHERE z.id = ?`
     )
     .get(id)
   res.status(201).json(row)
-})
+  })
+)
 
-router.put('/zones/:zoneId', (req: AuthRequest, res) => {
+router.put(
+  '/zones/:zoneId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { zoneId } = req.params
-  const existing = db
+  const existing = (await db
     .prepare(`SELECT id FROM zones WHERE id = ?`)
-    .get(zoneId) as { id: string } | undefined
+    .get(zoneId)) as { id: string } | undefined
   if (!existing) return res.status(404).json({ error: 'Zone not found' })
 
   const { name, description } = req.body as { name?: string; description?: string }
-  db.prepare(
+  await db.prepare(
     `UPDATE zones
      SET name = COALESCE(?, name),
          description = COALESCE(?, description),
-         updated_at = datetime('now')
+         updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ?`
   ).run(name != null ? String(name).trim() : null, description ?? null, zoneId)
 
-  const row = db
+  const row = await db
     .prepare(
       `SELECT z.id,
               z.name,
               z.description,
-              z.schema_id as schemaId,
-              s.name as schemaName,
-              z.created_at as createdAt,
-              z.updated_at as updatedAt,
-              (SELECT COUNT(*) FROM locations l WHERE l.zone_id = z.id) as locationCount
+              z.schema_id AS "schemaId",
+              s.name AS "schemaName",
+              z.created_at AS "createdAt",
+              z.updated_at AS "updatedAt",
+              (SELECT COUNT(*) FROM locations l WHERE l.zone_id = z.id) AS "locationCount"
        FROM zones z
        JOIN location_schemas s ON s.id = z.schema_id
        WHERE z.id = ?`
     )
     .get(zoneId)
   res.json(row)
-})
+  })
+)
 
-router.delete('/zones/:zoneId', (req: AuthRequest, res) => {
+router.delete(
+  '/zones/:zoneId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { zoneId } = req.params
-  db.prepare(`DELETE FROM locations WHERE zone_id = ?`).run(zoneId)
-  db.prepare(`DELETE FROM zones WHERE id = ?`).run(zoneId)
+  await db.prepare(`DELETE FROM locations WHERE zone_id = ?`).run(zoneId)
+  await db.prepare(`DELETE FROM zones WHERE id = ?`).run(zoneId)
   res.status(204).end()
-})
+  })
+)
 
 // ----- Locations: list & generate -----
 
-router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
+router.get(
+  '/zones/:zoneId/locations',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { zoneId } = req.params
-  const zone = db
-    .prepare(`SELECT id, schema_id as schemaId, name FROM zones WHERE id = ?`)
-    .get(zoneId) as { id: string; schemaId: string; name: string } | undefined
+  const zone = (await db
+    .prepare(`SELECT id, schema_id AS "schemaId", name FROM zones WHERE id = ?`)
+    .get(zoneId)) as { id: string; schemaId: string; name: string } | undefined
   if (!zone) return res.status(404).json({ error: 'Zone not found' })
 
-  const rows = db
+  const rows = await db
     .prepare(
-      `SELECT id, schema_id as schemaId, zone_id as zoneId, location, components, field_values, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id AS "schemaId", zone_id AS "zoneId", location, components, field_values, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM locations
        WHERE zone_id = ?
        ORDER BY location`
@@ -940,20 +1004,20 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${csvName}"`)
     const lines: string[] = []
     // Header: location plus schema component keys in schema order, then custom field keys
-    const schemaComponents = db
+    const schemaComponents = (await db
       .prepare(
         `SELECT key
          FROM location_schema_components
          WHERE schema_id = ?
          ORDER BY order_index`
       )
-      .all(zone.schemaId) as Array<{ key: string }>
+      .all(zone.schemaId)) as Array<{ key: string }>
     const componentKeys = schemaComponents.map((r) => r.key)
-    const schemaFieldKeys = db
+    const schemaFieldKeys = (await db
       .prepare(
         `SELECT key FROM location_schema_fields WHERE schema_id = ? ORDER BY order_index`
       )
-      .all(zone.schemaId) as Array<{ key: string }>
+      .all(zone.schemaId)) as Array<{ key: string }>
     const fieldKeys = schemaFieldKeys.map((r) => r.key)
     lines.push(['location', ...componentKeys, ...fieldKeys].join(','))
     for (const row of out as any[]) {
@@ -972,12 +1036,15 @@ router.get('/zones/:zoneId/locations', (req: AuthRequest, res) => {
   }
 
   res.json(out)
-})
+  })
+)
 
 /** Delete many locations in this zone in one round-trip (batched SQL; avoids N sequential HTTP deletes). */
-router.post('/zones/:zoneId/locations/bulk-delete', (req: AuthRequest, res) => {
+router.post(
+  '/zones/:zoneId/locations/bulk-delete',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { zoneId } = req.params
-  const zone = db.prepare(`SELECT id FROM zones WHERE id = ?`).get(zoneId) as { id: string } | undefined
+  const zone = (await db.prepare(`SELECT id FROM zones WHERE id = ?`).get(zoneId)) as { id: string } | undefined
   if (!zone) return res.status(404).json({ error: 'Zone not found' })
 
   const body = req.body as { ids?: unknown }
@@ -996,27 +1063,30 @@ router.post('/zones/:zoneId/locations/bulk-delete', (req: AuthRequest, res) => {
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize)
     const ph = chunk.map(() => '?').join(',')
-    const info = db
+    const info = await db
       .prepare(`DELETE FROM locations WHERE zone_id = ? AND id IN (${ph})`)
       .run(zoneId, ...chunk)
     deleted += info.changes
   }
 
   res.json({ deleted })
-})
+  })
+)
 
-router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
+router.put(
+  '/zones/:zoneId/locations/:locationId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { zoneId, locationId } = req.params
-  const zone = db
-    .prepare(`SELECT id, schema_id as schemaId FROM zones WHERE id = ?`)
-    .get(zoneId) as { id: string; schemaId: string } | undefined
+  const zone = (await db
+    .prepare(`SELECT id, schema_id AS "schemaId" FROM zones WHERE id = ?`)
+    .get(zoneId)) as { id: string; schemaId: string } | undefined
   if (!zone) return res.status(404).json({ error: 'Zone not found' })
 
-  const existing = db
+  const existing = (await db
     .prepare(
-      `SELECT id, zone_id as zoneId, components, field_values FROM locations WHERE id = ?`
+      `SELECT id, zone_id AS "zoneId", components, field_values FROM locations WHERE id = ?`
     )
-    .get(locationId) as {
+    .get(locationId)) as {
     id: string
     zoneId: string
     components: string | null
@@ -1026,14 +1096,14 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
     return res.status(404).json({ error: 'Location not found' })
   }
 
-  const schemaComponents = db
+  const schemaComponents = (await db
     .prepare(
-      `SELECT key, display_name as displayName, type, width, pattern_mask as patternMask, min_value as minValue
+      `SELECT key, display_name AS "displayName", type, width, pattern_mask AS "patternMask", min_value AS "minValue"
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
     )
-    .all(zone.schemaId) as Array<{
+    .all(zone.schemaId)) as Array<{
       key: string
       displayName: string
       type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
@@ -1054,7 +1124,7 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
   const prevComps = (safeParseJson(existing.components) as Record<string, string> | null) ?? {}
   const prevFieldVals = (safeParseJson(existing.field_values) as Record<string, unknown> | null) ?? {}
 
-  const mergedFv = mergeFieldValuesForUpdate(zone.schemaId, body.fieldValues, prevFieldVals)
+  const mergedFv = await mergeFieldValuesForUpdate(zone.schemaId, body.fieldValues, prevFieldVals)
   if (!mergedFv.ok) {
     return res.status(400).json({ error: mergedFv.error })
   }
@@ -1132,11 +1202,11 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
 
   const locationValue = schemaComponents.map((c) => next[c.key]).join('')
 
-  const conflict = db
+  const conflict = (await db
     .prepare(
       `SELECT id FROM locations WHERE zone_id = ? AND location = ? AND id != ?`
     )
-    .get(zoneId, locationValue, locationId) as { id: string } | undefined
+    .get(zoneId, locationValue, locationId)) as { id: string } | undefined
   if (conflict) {
     return res.status(409).json({ error: 'Another location in this zone already uses this value' })
   }
@@ -1144,37 +1214,41 @@ router.put('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
   const fvJson =
     Object.keys(mergedFv.merged).length > 0 ? JSON.stringify(mergedFv.merged) : null
 
-  db.prepare(
+  await db.prepare(
     `UPDATE locations
-     SET location = ?, components = ?, field_values = ?, updated_at = datetime('now')
+     SET location = ?, components = ?, field_values = ?, updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ? AND zone_id = ?`
   ).run(locationValue, JSON.stringify(next), fvJson, locationId, zoneId)
 
-  const row = db
+  const row = (await db
     .prepare(
-      `SELECT id, schema_id as schemaId, zone_id as zoneId, location, components, field_values, created_at as createdAt, updated_at as updatedAt
+      `SELECT id, schema_id AS "schemaId", zone_id AS "zoneId", location, components, field_values, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM locations WHERE id = ?`
     )
-    .get(locationId) as any
+    .get(locationId)) as any
   const { field_values: _omitFv, ...rowOut } = row as any
   res.json({
     ...rowOut,
     components: safeParseJson(row.components),
     fieldValues: safeParseJson(row.field_values) ?? {},
   })
-})
+  })
+)
 
-router.delete('/zones/:zoneId/locations/:locationId', (req: AuthRequest, res) => {
+router.delete(
+  '/zones/:zoneId/locations/:locationId',
+  asyncRoute(async (req: AuthRequest, res) => {
   const { zoneId, locationId } = req.params
-  const existing = db
-    .prepare(`SELECT id, zone_id as zoneId FROM locations WHERE id = ?`)
-    .get(locationId) as { id: string; zoneId: string } | undefined
+  const existing = (await db
+    .prepare(`SELECT id, zone_id AS "zoneId" FROM locations WHERE id = ?`)
+    .get(locationId)) as { id: string; zoneId: string } | undefined
   if (!existing || existing.zoneId !== zoneId) {
     return res.status(404).json({ error: 'Location not found' })
   }
-  db.prepare(`DELETE FROM locations WHERE id = ?`).run(locationId)
+  await db.prepare(`DELETE FROM locations WHERE id = ?`).run(locationId)
   res.status(204).end()
-})
+  })
+)
 
 function safeParseJson(val: string | null): unknown {
   if (!val) return null
@@ -1478,30 +1552,32 @@ function yieldEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
-router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) => {
+router.post(
+  '/zones/:zoneId/locations/generate',
+  asyncRoute(async (req: AuthRequest, res) => {
   try {
   const { zoneId } = req.params
-  const zone = db
-    .prepare(`SELECT id, schema_id as schemaId FROM zones WHERE id = ?`)
-    .get(zoneId) as { id: string; schemaId: string } | undefined
+  const zone = (await db
+    .prepare(`SELECT id, schema_id AS "schemaId" FROM zones WHERE id = ?`)
+    .get(zoneId)) as { id: string; schemaId: string } | undefined
   if (!zone) return res.status(404).json({ error: 'Zone not found' })
 
-  const components = db
+  const components = (await db
     .prepare(
-      `SELECT id, schema_id as schemaId, key, display_name as displayName, type, width,
-              pattern_mask as patternMask, min_value as minValue, max_value as maxValue, order_index as orderIndex
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+              pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
     )
-    .all(zone.schemaId) as unknown as SchemaComponent[]
+    .all(zone.schemaId)) as unknown as SchemaComponent[]
 
   if (components.length === 0) {
     return res.status(400).json({ error: 'Schema has no components defined' })
   }
 
   const rangesInput = (req.body?.components ?? {}) as Record<string, string>
-  const fieldValsResult = validateFieldValuesFromInput(
+  const fieldValsResult = await validateFieldValuesFromInput(
     zone.schemaId,
     (req.body as { fieldValues?: Record<string, unknown> }).fieldValues
   )
@@ -1611,11 +1687,11 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
         locationValue,
         'Duplicate in this generation (the same code appears more than once in the requested ranges)'
       )
-    } else if (existsStmt.get(zoneId, locationValue)) {
+    } else if (await existsStmt.get(zoneId, locationValue)) {
       recordFailure(locationValue, 'Already exists in this zone')
     } else {
       try {
-        insertStmt.run(
+        await insertStmt.run(
           id,
           zone.schemaId,
           zoneId,
@@ -1680,10 +1756,13 @@ router.post('/zones/:zoneId/locations/generate', async (req: AuthRequest, res) =
       }
     }
   }
-})
+  }
+))
 
 // Export all locations for selected zones as CSV (simple aggregate).
-router.get('/export', (req: AuthRequest, res) => {
+router.get(
+  '/export',
+  asyncRoute(async (req: AuthRequest, res) => {
   const idsParam = (req.query.zoneIds as string | undefined) ?? ''
   const zoneIds = idsParam
     .split(',')
@@ -1694,24 +1773,24 @@ router.get('/export', (req: AuthRequest, res) => {
   }
 
   const placeholders = zoneIds.map(() => '?').join(',')
-  const zoneMeta = db
+  const zoneMeta = (await db
     .prepare(`SELECT id, name FROM zones WHERE id IN (${placeholders})`)
-    .all(...zoneIds) as Array<{ id: string; name: string }>
+    .all(...zoneIds)) as Array<{ id: string; name: string }>
   const nameById = new Map(zoneMeta.map((z) => [z.id, z.name]))
   const exportFilename = buildMultiZoneExportFilename(zoneIds, nameById)
 
-  const rows = db
+  const rows = (await db
     .prepare(
       `SELECT l.location,
               l.components,
-              z.name as zoneName,
-              z.id as zoneId
+              z.name AS "zoneName",
+              z.id AS "zoneId"
        FROM locations l
        JOIN zones z ON z.id = l.zone_id
        WHERE l.zone_id IN (${placeholders})
        ORDER BY z.name, l.location`
     )
-    .all(...zoneIds) as Array<{
+    .all(...zoneIds)) as Array<{
       location: string
       components: string | null
       zoneName: string
@@ -1728,23 +1807,23 @@ router.get('/export', (req: AuthRequest, res) => {
 
   // Use schema order. If multiple schemas are included, union keys in a stable order:
   // first by schema's order_index, then remaining keys alphabetically.
-  const zoneSchemas = db
+  const zoneSchemas = (await db
     .prepare(
-      `SELECT id as zoneId, schema_id as schemaId
+      `SELECT id AS "zoneId", schema_id AS "schemaId"
        FROM zones
        WHERE id IN (${placeholders})`
     )
-    .all(...zoneIds) as Array<{ zoneId: string; schemaId: string }>
+    .all(...zoneIds)) as Array<{ zoneId: string; schemaId: string }>
   const schemaIds = Array.from(new Set(zoneSchemas.map((z) => z.schemaId)))
   const schemaKeyRows = schemaIds.length
-    ? (db
+    ? ((await db
         .prepare(
-          `SELECT schema_id as schemaId, key, order_index as orderIndex
+          `SELECT schema_id AS "schemaId", key, order_index AS "orderIndex"
            FROM location_schema_components
            WHERE schema_id IN (${schemaIds.map(() => '?').join(',')})
            ORDER BY schema_id, order_index`
         )
-        .all(...schemaIds) as Array<{ schemaId: string; key: string; orderIndex: number }>)
+        .all(...schemaIds)) as Array<{ schemaId: string; key: string; orderIndex: number }>)
     : []
   const orderedKeys: string[] = []
   for (const r of schemaKeyRows) {
@@ -1767,7 +1846,8 @@ router.get('/export', (req: AuthRequest, res) => {
     lines.push([r.zoneName, r.zoneId, r.location, ...vals].join(','))
   }
   res.send(lines.join('\n'))
-})
+  })
+)
 
 export { router as locationsRouter }
 
