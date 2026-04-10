@@ -612,24 +612,86 @@ export function SimpleDataTable<Row>({
           >
             {pagingActive && totalFiltered > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
-                    className="rounded border border-border bg-background px-2 py-1 text-sm hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={showAllRows || pageIndex <= 0}
+                    aria-label="First page"
+                    onClick={() => setPageIndex(0)}
+                  >
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M18.75 19.5L11.25 12l7.5-7.5M11.25 19.5L3.75 12l7.5-7.5"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={showAllRows || pageIndex <= 0}
                     aria-label="Previous page"
                     onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
                   >
-                    Previous
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                    </svg>
                   </button>
                   <button
                     type="button"
-                    className="rounded border border-border bg-background px-2 py-1 text-sm hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={showAllRows || pageIndex >= maxPageIndex}
                     aria-label="Next page"
                     onClick={() => setPageIndex((i) => Math.min(maxPageIndex, i + 1))}
                   >
-                    Next
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={showAllRows || pageIndex >= maxPageIndex}
+                    aria-label="Last page"
+                    onClick={() => setPageIndex(maxPageIndex)}
+                  >
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M5.25 4.5l7.5 7.5-7.5 7.5M13.25 4.5l7.5 7.5-7.5 7.5"
+                      />
+                    </svg>
                   </button>
                   {!showAllRows && totalPages > 1 && (
                     <span className="text-foreground/80">
