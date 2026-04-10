@@ -312,7 +312,7 @@ export function LocationZoneDetail() {
   )
   /** After a successful run: optionally clear inputs and/or close the dialog. */
   const [generateCloseAfterRun, setGenerateCloseAfterRun] = useState(false)
-  const [generateClearAfterRun, setGenerateClearAfterRun] = useState(true)
+  const [generateClearAfterRun, setGenerateClearAfterRun] = useState(false)
   /** Shown after a generate run when some rows were skipped (with reasons from the server). */
   const [generateFailureReport, setGenerateFailureReport] = useState<{
     created: number
@@ -1026,7 +1026,7 @@ export function LocationZoneDetail() {
                   setGenerateError(null)
                   setGenerateFailureReport(null)
                   setGenerateCloseAfterRun(false)
-                  setGenerateClearAfterRun(true)
+                  setGenerateClearAfterRun(false)
                   setGenerateOpen(true)
                 }}
                 disabled={components.length === 0}
@@ -1939,16 +1939,7 @@ export function LocationZoneDetail() {
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        className="mr-auto rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background disabled:opacity-50"
-                        onClick={clearGenerateInputs}
-                        disabled={generating}
-                        title="Clear range inputs and optional attributes"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
+                        className="mr-auto rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
                         onClick={() => {
                           setGenerateError(null)
                           setGenerateOpen(false)
@@ -1956,6 +1947,15 @@ export function LocationZoneDetail() {
                         disabled={generating}
                       >
                         Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background disabled:opacity-50"
+                        onClick={clearGenerateInputs}
+                        disabled={generating}
+                        title="Clear range inputs and optional attributes"
+                      >
+                        Clear
                       </button>
                       <button
                         type="submit"
