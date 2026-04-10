@@ -299,6 +299,8 @@ export function LocationZoneDetail() {
   const { zoneId } = useParams<{ zoneId: string }>()
   const [zone, setZone] = useState<Zone | null>(null)
   const [locations, setLocations] = useState<LocationRow[]>([])
+  /** True while fetching `/locations/zones/:id/locations` (large lists can take noticeable time). */
+  const [locationsLoading, setLocationsLoading] = useState(true)
   const [components, setComponents] = useState<SchemaComponent[]>([])
   const [schemaFields, setSchemaFields] = useState<LocationSchemaField[]>([])
   const [ranges, setRanges] = useState<Record<string, string>>({})
@@ -356,7 +358,12 @@ export function LocationZoneDetail() {
     mutationProgress !== null || singleMutation !== null || savingBulkLocations
 
   useEffect(() => {
-    if (!zoneId) return
+    if (!zoneId) {
+      setLocationsLoading(false)
+      return
+    }
+    setLocations([])
+    setSelectedLocationIds(new Set())
     void loadZoneAndSchema(zoneId)
     void refreshLocations(zoneId)
   }, [zoneId])
@@ -399,6 +406,7 @@ export function LocationZoneDetail() {
   }
 
   const refreshLocations = useCallback(async (id: string) => {
+    setLocationsLoading(true)
     setError(null)
     try {
       const { data } = await api.get<LocationRow[]>(`/locations/zones/${id}/locations`)
@@ -419,6 +427,8 @@ export function LocationZoneDetail() {
       setError('Failed to load locations')
       setLocations([])
       setSelectedLocationIds(new Set())
+    } finally {
+      setLocationsLoading(false)
     }
   }, [])
 
@@ -1042,7 +1052,7 @@ export function LocationZoneDetail() {
               type="button"
               className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
               onClick={openBulkLocationsModal}
-              disabled={mutationBusy || selectedLocationIds.size <= 1}
+              disabled={mutationBusy || locationsLoading || selectedLocationIds.size <= 1}
               title={
                 selectedLocationIds.size <= 1
                   ? 'Select at least two locations to use bulk edit'
@@ -1056,7 +1066,7 @@ export function LocationZoneDetail() {
               type="button"
               className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
               onClick={handleExportSelected}
-              disabled={mutationBusy || selectedLocationIds.size === 0}
+              disabled={mutationBusy || locationsLoading || selectedLocationIds.size === 0}
               title={selectedLocationIds.size === 0 ? 'Select one or more locations first' : 'Export selected locations (CSV)'}
             >
               Export selected
@@ -1066,7 +1076,7 @@ export function LocationZoneDetail() {
               type="button"
               className="rounded border border-red-500/50 bg-background px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10 disabled:opacity-50"
               onClick={() => void handleDeleteSelectedLocations()}
-              disabled={mutationBusy || selectedLocationIds.size === 0}
+              disabled={mutationBusy || locationsLoading || selectedLocationIds.size === 0}
               title={selectedLocationIds.size === 0 ? 'Select one or more locations first' : 'Delete selected locations'}
             >
               Delete selected
@@ -1076,27 +1086,41 @@ export function LocationZoneDetail() {
             type="button"
             className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-card disabled:opacity-50"
             onClick={handleExportCsvClick}
-            disabled={!zoneId}
+            disabled={!zoneId || locationsLoading}
           >
             Export CSV
           </button>
         </div>
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <SimpleDataTable
-            fillViewportHeight
-            pagination
-            preferenceKey={`atlas-locations-zone-${zoneId ?? 'unknown'}-locations`}
-            rows={locations}
-            getRowKey={getLocationRowKey}
-            enableSelection
-            selectedKeys={selectedLocationIds}
-            onSelectedKeysChange={setSelectedLocationIds}
-            onFilterSnapshotChange={onLocationsFilterSnapshot}
-            showFooterRowCount
-            columns={tableColumnsWithActions}
-          />
+          fillViewportHeight
+          pagination
+          preferenceKey={`atlas-locations-zone-${zoneId ?? 'unknown'}-locations`}
+          rows={locations}
+          getRowKey={getLocationRowKey}
+          enableSelection
+          selectedKeys={selectedLocationIds}
+          onSelectedKeysChange={setSelectedLocationIds}
+          onFilterSnapshotChange={onLocationsFilterSnapshot}
+          showFooterRowCount
+          columns={tableColumnsWithActions}
+        />
+        {locationsLoading && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/55 backdrop-blur-[1px]"
+            aria-busy="true"
+            aria-live="polite"
+            role="status"
+          >
+            <div
+              className="h-10 w-10 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
+              aria-hidden
+            />
+            <span className="text-sm text-foreground/85">Loading locations…</span>
+          </div>
+        )}
       </div>
       {canWriteLocations && bulkLocationsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">

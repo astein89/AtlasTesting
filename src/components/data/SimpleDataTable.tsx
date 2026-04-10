@@ -1,4 +1,12 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from 'react'
 import { ColumnFilterDropdown } from './ColumnFilterDropdown'
 import { useUserPreference } from '../../hooks/useUserPreference'
 
@@ -125,6 +133,8 @@ export function SimpleDataTable<Row>({
 }: SimpleDataTableProps<Row>) {
   const pagingActive = !!pagination && !enableRowReorder
   const [pageIndex, setPageIndex] = useState(0)
+  /** True while React is applying a paginated slice (large filtered sets can make this noticeable). */
+  const [isPagePending, startPageTransition] = useTransition()
   const [pageSize, setPageSize] = useUserPreference<number>(
     `${preferenceKey}-page-size`,
     500,
@@ -379,15 +389,29 @@ export function SimpleDataTable<Row>({
       </div>
       )}
 
-      <div className={tableShellClass}>
+      <div className={`${tableShellClass}${pagingActive ? ' relative' : ''}`}>
         <div
           className={
             fillViewportHeight
-              ? 'min-h-0 flex-1 overflow-auto overscroll-contain'
-              : 'contents'
+              ? 'relative min-h-0 flex-1 overflow-auto overscroll-contain'
+              : 'relative w-full min-w-0 overflow-x-auto'
           }
         >
-        <table className="w-full">
+          {pagingActive && isPagePending && (
+            <div
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/50 backdrop-blur-[1px]"
+              aria-busy="true"
+              aria-live="polite"
+              role="status"
+            >
+              <div
+                className="h-9 w-9 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                aria-hidden
+              />
+              <span className="text-xs text-foreground/80">Updating page…</span>
+            </div>
+          )}
+        <table className={`w-full ${pagingActive && isPagePending ? 'pointer-events-none opacity-60' : ''}`}>
           <colgroup>
             {enableSelection && <col style={{ width: '2.5rem' }} />}
             {enableRowReorder && <col style={{ width: '2rem' }} />}
@@ -616,9 +640,9 @@ export function SimpleDataTable<Row>({
                   <button
                     type="button"
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={showAllRows || pageIndex <= 0}
+                    disabled={showAllRows || pageIndex <= 0 || isPagePending}
                     aria-label="First page"
-                    onClick={() => setPageIndex(0)}
+                    onClick={() => startPageTransition(() => setPageIndex(0))}
                   >
                     <svg
                       className="h-5 w-5"
@@ -638,9 +662,11 @@ export function SimpleDataTable<Row>({
                   <button
                     type="button"
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={showAllRows || pageIndex <= 0}
+                    disabled={showAllRows || pageIndex <= 0 || isPagePending}
                     aria-label="Previous page"
-                    onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
+                    onClick={() =>
+                      startPageTransition(() => setPageIndex((i) => Math.max(0, i - 1)))
+                    }
                   >
                     <svg
                       className="h-5 w-5"
@@ -656,9 +682,13 @@ export function SimpleDataTable<Row>({
                   <button
                     type="button"
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={showAllRows || pageIndex >= maxPageIndex}
+                    disabled={showAllRows || pageIndex >= maxPageIndex || isPagePending}
                     aria-label="Next page"
-                    onClick={() => setPageIndex((i) => Math.min(maxPageIndex, i + 1))}
+                    onClick={() =>
+                      startPageTransition(() =>
+                        setPageIndex((i) => Math.min(maxPageIndex, i + 1))
+                      )
+                    }
                   >
                     <svg
                       className="h-5 w-5"
@@ -674,9 +704,9 @@ export function SimpleDataTable<Row>({
                   <button
                     type="button"
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border border-border bg-background text-foreground hover:bg-background/80 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={showAllRows || pageIndex >= maxPageIndex}
+                    disabled={showAllRows || pageIndex >= maxPageIndex || isPagePending}
                     aria-label="Last page"
-                    onClick={() => setPageIndex(maxPageIndex)}
+                    onClick={() => startPageTransition(() => setPageIndex(maxPageIndex))}
                   >
                     <svg
                       className="h-5 w-5"
@@ -718,13 +748,16 @@ export function SimpleDataTable<Row>({
                   <label className="flex items-center gap-2 text-foreground/80">
                     <span className="whitespace-nowrap">Rows per page</span>
                     <select
-                      className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                      className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                       value={effectivePageSize === PAGE_SIZE_ALL ? 'all' : String(effectivePageSize)}
                       aria-label="Rows per page"
+                      disabled={isPagePending}
                       onChange={(e) => {
                         const v = e.target.value
-                        goToFirstPage()
-                        setPageSize(v === 'all' ? PAGE_SIZE_ALL : Number(v))
+                        startPageTransition(() => {
+                          setPageIndex(0)
+                          setPageSize(v === 'all' ? PAGE_SIZE_ALL : Number(v))
+                        })
                       }}
                     >
                       {PAGE_SIZE_OPTIONS.map((n) => (
