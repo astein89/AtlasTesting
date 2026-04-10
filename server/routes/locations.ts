@@ -15,10 +15,46 @@ const FIXED_COMPONENT_VALUE_MAX_LEN = 32
 
 /** Legacy API/clients may still send `mix`; DB stores `mixed` after migration. */
 function normalizeLocationComponentType(raw: unknown): 'alpha' | 'numeric' | 'mixed' | 'fixed' | null {
-  const t = typeof raw === 'string' ? raw : ''
+  const t = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
   if (t === 'mix') return 'mixed'
   if (t === 'alpha' || t === 'numeric' || t === 'mixed' || t === 'fixed') return t
   return null
+}
+
+/**
+ * Schema component rows use `type AS "componentType"` in SELECTs: PostgreSQL + node-pg can omit or
+ * mishandle a result column literally named `type`, breaking fixed segments in UI and generation.
+ * Also accept lowercase variants some drivers return.
+ */
+function rowComponentType(row: Record<string, unknown>): string {
+  const v = row.componentType ?? row.componenttype ?? row.type ?? row.Type
+  return typeof v === 'string' ? v : ''
+}
+
+function rowMinValueString(row: Record<string, unknown>): string {
+  const v = row.minValue ?? row.minvalue ?? row.min_value
+  if (v == null) return ''
+  return String(v).trim()
+}
+
+/**
+ * True when this part is a fixed literal: explicit `fixed` type, or unknown/missing type but the row
+ * matches the fixed shape (literal length = width, no pattern mask). Prevents falling through to range
+ * expansion when `type` was not read from the DB — e.g. first segment showing "1" from the next field's range.
+ */
+function componentIsFixedLiteral(row: Record<string, unknown>): boolean {
+  const kindRaw = rowComponentType(row)
+  const kind = normalizeLocationComponentType(kindRaw) ?? kindRaw.trim()
+  if (kind === 'fixed') return true
+  const lit = rowMinValueString(row)
+  const pm = getComponentPatternMask(row as { patternMask?: string | null; pattern_mask?: string | null })
+  if (!lit || pm) return false
+  const w = Number(row.width)
+  if (!Number.isFinite(w) || w !== lit.length) return false
+  if (lit.length > FIXED_COMPONENT_VALUE_MAX_LEN) return false
+  if (/[\r\n]/.test(lit)) return false
+  if (kind === 'alpha' || kind === 'numeric' || kind === 'mixed') return false
+  return true
 }
 
 /** DB / JSON may expose `pattern_mask`; expansion must see the mask for mixed+pattern components. */
@@ -323,7 +359,7 @@ router.get(
   const { schemaId } = req.params
   const components = await db
     .prepare(
-      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type AS "componentType", width,
               pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components
        WHERE schema_id = ?
@@ -406,6 +442,14 @@ router.post(
   const orderIndex = maxOrder.maxOrder + 1
 
   const keyStr = String(body.key).trim()
+  const componentKeyCollision = (await db
+    .prepare(`SELECT id FROM location_schema_components WHERE schema_id = ? AND key = ?`)
+    .get(schemaId, keyStr)) as { id: string } | undefined
+  if (componentKeyCollision) {
+    return res.status(400).json({
+      error: `Key "${keyStr}" is already used by another code part in this schema`,
+    })
+  }
   const fieldCollision = (await db
     .prepare(`SELECT id FROM location_schema_fields WHERE schema_id = ? AND key = ?`)
     .get(schemaId, keyStr)) as { id: string } | undefined
@@ -432,7 +476,7 @@ router.post(
 
   const row = await db
     .prepare(
-      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type AS "componentType", width,
               pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components WHERE id = ?`
     )
@@ -474,7 +518,7 @@ router.put(
 
   const components = await db
     .prepare(
-      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type AS "componentType", width,
               pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components
        WHERE schema_id = ?
@@ -491,14 +535,14 @@ router.put(
   const { schemaId, componentId } = req.params
   const existing = (await db
     .prepare(
-      `SELECT id, schema_id AS "schemaId", type, width, pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue"
+      `SELECT id, schema_id AS "schemaId", type AS "componentType", width, pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue"
        FROM location_schema_components WHERE id = ?`
     )
     .get(componentId)) as
     | {
         id: string
         schemaId: string
-        type: string
+        componentType: string
         width: number
         patternMask: string | null
         minValue: string | null
@@ -523,8 +567,8 @@ router.put(
     return res.status(400).json({ error: 'type must be alpha, numeric, mixed, or fixed' })
   }
   const mergedType = (typeVal ??
-    normalizeLocationComponentType(existing.type) ??
-    existing.type) as 'alpha' | 'numeric' | 'mixed' | 'fixed'
+    normalizeLocationComponentType(rowComponentType(existing)) ??
+    rowComponentType(existing)) as 'alpha' | 'numeric' | 'mixed' | 'fixed'
 
   let nextPattern: string | null = existing.patternMask
   let nextWidth = existing.width
@@ -601,7 +645,7 @@ router.put(
 
   const row = await db
     .prepare(
-      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type AS "componentType", width,
               pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components WHERE id = ?`
     )
@@ -1098,7 +1142,7 @@ router.put(
 
   const schemaComponents = (await db
     .prepare(
-      `SELECT key, display_name AS "displayName", type, width, pattern_mask AS "patternMask", min_value AS "minValue"
+      `SELECT key, display_name AS "displayName", type AS "componentType", width, pattern_mask AS "patternMask", min_value AS "minValue"
        FROM location_schema_components
        WHERE schema_id = ?
        ORDER BY order_index`
@@ -1106,7 +1150,7 @@ router.put(
     .all(zone.schemaId)) as Array<{
       key: string
       displayName: string
-      type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
+      componentType: string
       width: number
       patternMask: string | null
       minValue: string | null
@@ -1131,9 +1175,9 @@ router.put(
 
   const next: Record<string, string> = {}
   for (const comp of schemaComponents) {
-    const compType = normalizeLocationComponentType(comp.type) ?? comp.type
-    if (compType === 'fixed') {
-      const lit = String(comp.minValue ?? '').trim()
+    const row = comp as unknown as Record<string, unknown>
+    if (componentIsFixedLiteral(row)) {
+      const lit = rowMinValueString(row)
       if (!lit) {
         return res.status(400).json({
           error: `Schema component ${comp.displayName} (${comp.key}) has no fixed value configured`,
@@ -1142,6 +1186,7 @@ router.put(
       next[comp.key] = lit
       continue
     }
+    const compType = normalizeLocationComponentType(rowComponentType(row)) ?? rowComponentType(row)
     const raw =
       input[comp.key] !== undefined ? input[comp.key] : prevComps[comp.key]
     const s = raw != null ? String(raw).trim() : ''
@@ -1264,7 +1309,9 @@ interface SchemaComponent {
   schemaId: string
   key: string
   displayName: string
-  type: 'alpha' | 'numeric' | 'mixed' | 'fixed'
+  /** From SQL `type AS "componentType"`; avoid bare `type` in pg result rows. */
+  componentType: string
+  type?: 'alpha' | 'numeric' | 'mixed' | 'fixed'
   width: number
   patternMask: string | null
   minValue: string | null
@@ -1564,7 +1611,7 @@ router.post(
 
   const components = (await db
     .prepare(
-      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type, width,
+      `SELECT id, schema_id AS "schemaId", key, display_name AS "displayName", type AS "componentType", width,
               pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
        FROM location_schema_components
        WHERE schema_id = ?
@@ -1574,6 +1621,22 @@ router.post(
 
   if (components.length === 0) {
     return res.status(400).json({ error: 'Schema has no components defined' })
+  }
+
+  const seenKeys = new Set<string>()
+  for (const c of components) {
+    const k = String(c.key ?? '').trim()
+    if (!k) {
+      return res.status(400).json({
+        error: `Schema component "${c.displayName}" has an empty key; fix it in the schema editor`,
+      })
+    }
+    if (seenKeys.has(k)) {
+      return res.status(400).json({
+        error: `Duplicate component key "${k}" in this schema; each part must have a unique key`,
+      })
+    }
+    seenKeys.add(k)
   }
 
   const rangesInput = (req.body?.components ?? {}) as Record<string, string>
@@ -1587,51 +1650,58 @@ router.post(
   const optionalFieldValuesJson =
     Object.keys(fieldValsResult.merged).length > 0 ? JSON.stringify(fieldValsResult.merged) : null
 
-  const expandedPerKey = new Map<string, string[]>()
-  for (const comp of components) {
-    const compType = normalizeLocationComponentType(comp.type) ?? comp.type
-    if (compType === 'fixed') {
-      const lit = String(comp.minValue ?? '').trim()
+  /** One expanded list per schema slot, in `order_index` order (same as `components`). */
+  const expandedBySlot: string[][] = []
+  for (let slot = 0; slot < components.length; slot++) {
+    const comp = components[slot]!
+    const row = comp as unknown as Record<string, unknown>
+    if (componentIsFixedLiteral(row)) {
+      const lit = rowMinValueString(row)
       if (!lit) {
         return res.status(400).json({
           error: `Fixed component ${comp.displayName} has no literal value configured`,
         })
       }
-      expandedPerKey.set(comp.key, [lit])
+      expandedBySlot[slot] = [lit]
       continue
     }
+    const compType = normalizeLocationComponentType(rowComponentType(row)) ?? rowComponentType(row)
     const raw = (rangesInput[comp.key] ?? '').trim()
     if (!raw) {
       return res.status(400).json({ error: `Missing range for component ${comp.displayName}` })
     }
-    const expanded = expandRange(raw, compType, comp.width, getComponentPatternMask(comp), null)
+    const expanded = expandRange(
+      raw,
+      compType as 'alpha' | 'numeric' | 'mixed' | 'fixed',
+      comp.width,
+      getComponentPatternMask(comp),
+      null
+    )
     if (expanded.error) {
       return res.status(400).json({ error: `${comp.displayName}: ${expanded.error}` })
     }
     if (expanded.values.length === 0) {
       return res.status(400).json({ error: `No values produced for component ${comp.displayName}` })
     }
-    expandedPerKey.set(comp.key, expanded.values)
+    expandedBySlot[slot] = expanded.values
   }
 
-  // Build cartesian product with a simple recursive generator
-  const keys = components.map((c) => c.key)
-  const rows: Record<string, string>[] = []
+  // Cartesian product by slot index (not keyed by `comp.key`) so duplicate or empty keys cannot
+  // merge two parts into one expansion list.
+  const rows: string[][] = []
 
-  function build(idx: number, acc: Record<string, string>) {
-    if (idx >= keys.length) {
-      rows.push({ ...acc })
+  function build(idx: number, acc: string[]) {
+    if (idx >= components.length) {
+      rows.push(acc)
       return
     }
-    const key = keys[idx]
-    const values = expandedPerKey.get(key) ?? []
+    const values = expandedBySlot[idx] ?? []
     for (const v of values) {
-      acc[key] = v
-      build(idx + 1, acc)
+      build(idx + 1, [...acc, v])
     }
   }
 
-  build(0, {})
+  build(0, [])
 
   const maxRows = getMaxGenerateRows()
   if (rows.length > maxRows) {
@@ -1678,9 +1748,10 @@ router.post(
   }
 
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]!
+    const parts = rows[i]!
     const id = uuidv4()
-    const locationValue = components.map((c) => r[c.key]).join('')
+    const locationValue = parts.join('')
+    const r = Object.fromEntries(components.map((c, j) => [c.key, parts[j] ?? '']))
 
     if (insertedThisBatch.has(locationValue)) {
       recordFailure(

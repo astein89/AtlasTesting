@@ -23,8 +23,11 @@ export function normalizeLocationSchemaComponent(
   c: NormalizedLocationSchemaComponent | Record<string, unknown>
 ): NormalizedLocationSchemaComponent {
   const r = c as Record<string, unknown>
-  const typeVal = pick<string | undefined>(r, 'type')
-  const typeRaw = typeVal === 'mix' ? 'mixed' : typeVal
+  const typeVal = pick<string | undefined>(r, 'componentType', 'componenttype', 'type', 'Type')
+  const lowered = typeof typeVal === 'string' ? typeVal.trim().toLowerCase() : ''
+  let normalized: 'alpha' | 'numeric' | 'mixed' | 'fixed' | undefined
+  if (lowered === 'mix' || lowered === 'mixed') normalized = 'mixed'
+  else if (lowered === 'alpha' || lowered === 'numeric' || lowered === 'fixed') normalized = lowered
   const pm = pick(r, 'patternMask', 'pattern_mask', 'patternmask')
   const mv = pick(r, 'minValue', 'min_value', 'minvalue')
   const patternMask =
@@ -47,7 +50,7 @@ export function normalizeLocationSchemaComponent(
     schemaId,
     key,
     displayName,
-    type: typeRaw as NormalizedLocationSchemaComponent['type'],
+    type: (normalized ?? typeVal) as NormalizedLocationSchemaComponent['type'],
     width,
     patternMask,
     minValue,

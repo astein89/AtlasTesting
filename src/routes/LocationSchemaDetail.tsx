@@ -1,8 +1,24 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { api, isAbortLikeError } from '../api/client'
 import { useAbortableEffect } from '../hooks/useAbortableEffect'
-import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { LocationSchemaFieldsEditor } from '../components/locations/LocationSchemaFieldsEditor'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
@@ -33,6 +49,197 @@ function suggestComponentKeyFromDisplayName(displayName: string): string {
     .replace(/_+/g, '_')
   if (!s) return 'part'
   return s.slice(0, COMPONENT_KEY_MAX_LEN)
+}
+
+/** Suggested key that is not already used by another code part (same rules as server UNIQUE per schema). */
+function suggestUniqueComponentKey(displayName: string, taken: Set<string>): string {
+  let base = suggestComponentKeyFromDisplayName(displayName)
+  if (!taken.has(base)) return base
+  let n = 2
+  while (taken.has(`${base}_${n}`)) n += 1
+  return `${base}_${n}`.slice(0, COMPONENT_KEY_MAX_LEN)
+}
+
+function SchemaDragHandle() {
+  return (
+    <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
+    </svg>
+  )
+}
+
+function SchemaComponentsTableHead() {
+  return (
+    <thead>
+      <tr className="border-b border-border text-left text-xs font-medium text-foreground/65">
+        <th className="w-px px-1 py-2" aria-hidden />
+        <th className="px-2 py-2">Display name</th>
+        <th className="px-2 py-2">Key</th>
+        <th className="px-2 py-2">Type</th>
+        <th className="px-2 py-2">Fixed</th>
+        <th className="px-2 py-2">Pattern</th>
+        <th className="px-2 py-2 text-center">Chars</th>
+        <th className="px-2 py-2 text-right">Actions</th>
+      </tr>
+    </thead>
+  )
+}
+
+function SchemaComponentCells({
+  c,
+  canWrite,
+  dragHandle,
+  onOpenEdit,
+  onDelete,
+}: {
+  c: SchemaComponent
+  canWrite: boolean
+  dragHandle?: ReactNode
+  onOpenEdit: () => void
+  onDelete: () => void
+}) {
+  const fixedText =
+    c.type === 'fixed' && (c.minValue ?? '').trim() ? (c.minValue ?? '').trim() : null
+  const patternText = c.patternMask?.trim() ? c.patternMask.trim() : null
+  return (
+    <>
+      <td className="w-px whitespace-nowrap px-1 py-2 align-middle">
+        <div className="flex items-center justify-center">
+          {dragHandle ?? <span className="inline-block w-9 shrink-0" aria-hidden />}
+        </div>
+      </td>
+      <td className="px-2 py-2 align-top text-sm font-medium text-foreground">
+        <span className="break-words" title={c.displayName}>
+          {c.displayName}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-2 py-2 align-middle font-mono text-xs text-foreground/90" title={c.key}>
+        {c.key}
+      </td>
+      <td className="whitespace-nowrap px-2 py-2 align-middle text-xs text-foreground/90">{c.type}</td>
+      <td
+        className="px-2 py-2 align-top font-mono text-xs text-foreground/90"
+        title={fixedText ?? undefined}
+      >
+        <span className="break-all">{fixedText ?? '—'}</span>
+      </td>
+      <td
+        className="px-2 py-2 align-top font-mono text-xs text-foreground/90"
+        title={patternText ?? undefined}
+      >
+        <span className="break-all">{patternText ?? '—'}</span>
+      </td>
+      <td className="whitespace-nowrap px-2 py-2 text-center align-middle text-xs tabular-nums text-foreground/90">
+        {String(c.width)}
+      </td>
+      <td className="w-px whitespace-nowrap px-2 py-2 text-right align-middle" onClick={(e) => e.stopPropagation()}>
+        {canWrite ? (
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+              onClick={onOpenEdit}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
+              onClick={onDelete}
+            >
+              Delete
+            </button>
+          </div>
+        ) : (
+          <span className="text-xs text-foreground/50">View only</span>
+        )}
+      </td>
+    </>
+  )
+}
+
+function SortableSchemaComponentRow({
+  c,
+  canWrite,
+  onOpenEdit,
+  onDelete,
+}: {
+  c: SchemaComponent
+  canWrite: boolean
+  onOpenEdit: () => void
+  onDelete: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: c.id,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`border-t border-border bg-background/40 ${isDragging ? 'opacity-60' : ''} ${
+        canWrite ? 'cursor-pointer hover:bg-background/60' : ''
+      }`}
+      onClick={
+        canWrite
+          ? (e) => {
+              if ((e.target as HTMLElement).closest('button')) return
+              onOpenEdit()
+            }
+          : undefined
+      }
+    >
+      <SchemaComponentCells
+        c={c}
+        canWrite={canWrite}
+        dragHandle={
+          <button
+            type="button"
+            className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+            aria-label="Drag to reorder schema item"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SchemaDragHandle />
+          </button>
+        }
+        onOpenEdit={onOpenEdit}
+        onDelete={onDelete}
+      />
+    </tr>
+  )
+}
+
+function StaticSchemaComponentRow({
+  c,
+  canWrite,
+  onOpenEdit,
+  onDelete,
+}: {
+  c: SchemaComponent
+  canWrite: boolean
+  onOpenEdit: () => void
+  onDelete: () => void
+}) {
+  return (
+    <tr
+      className={`border-t border-border bg-background/40 ${canWrite ? 'cursor-pointer hover:bg-background/60' : ''}`}
+      onClick={
+        canWrite
+          ? (e) => {
+              if ((e.target as HTMLElement).closest('button')) return
+              onOpenEdit()
+            }
+          : undefined
+      }
+    >
+      <SchemaComponentCells c={c} canWrite={canWrite} onOpenEdit={onOpenEdit} onDelete={onDelete} />
+    </tr>
+  )
 }
 
 export function LocationSchemaDetail() {
@@ -103,6 +310,7 @@ export function LocationSchemaDetail() {
     setNewComponentWidth(2)
     setNewComponentPatternMask('')
     setNewComponentFixedValue('')
+    setError(null)
     setNewComponentOpen(true)
   }
 
@@ -120,9 +328,15 @@ export function LocationSchemaDetail() {
         return
       }
     }
+    const keyStr = newComponentKey.trim()
+    const takenKeys = new Set(components.map((c) => c.key.trim()))
+    if (takenKeys.has(keyStr)) {
+      setError(`Key "${keyStr}" is already used by another code part`)
+      return
+    }
     try {
       const body: Record<string, unknown> = {
-        key: newComponentKey.trim(),
+        key: keyStr,
         displayName: newComponentName.trim(),
         type: newComponentType,
       }
@@ -144,14 +358,23 @@ export function LocationSchemaDetail() {
       setNewComponentPatternMask('')
       setNewComponentFixedValue('')
       setNewComponentOpen(false)
-    } catch {
-      setError('Failed to add schema item')
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to add schema item'
+      setError(msg)
     }
   }
 
   const sortedComponents = useMemo(() => {
     return [...components].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0))
   }, [components])
+
+  const sortableComponentIds = useMemo(() => sortedComponents.map((c) => c.id), [sortedComponents])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   const [reordering, setReordering] = useState(false)
   const [reorderError, setReorderError] = useState<string | null>(null)
@@ -182,15 +405,15 @@ export function LocationSchemaDetail() {
     }
   }
 
-  function moveComponent(id: string, direction: 'up' | 'down') {
-    const current = sortedComponents.map((c) => c.id)
-    const index = current.indexOf(id)
-    if (index === -1) return
-    const target = direction === 'up' ? index - 1 : index + 1
-    if (target < 0 || target >= current.length) return
-    const next = [...current]
-    const [moved] = next.splice(index, 1)
-    next.splice(target, 0, moved)
+  function handleComponentDragEnd(event: DragEndEvent) {
+    if (reordering || !canWrite) return
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = sortedComponents.map((c) => c.id)
+    const oldIndex = ids.indexOf(String(active.id))
+    const newIndex = ids.indexOf(String(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    const next = arrayMove(ids, oldIndex, newIndex)
     void persistOrder(next)
   }
 
@@ -342,78 +565,49 @@ export function LocationSchemaDetail() {
       {reorderError && <p className="text-sm text-red-500">{reorderError}</p>}
 
       <p className="text-xs text-foreground/65">
-        {canWrite ? 'Drag ⋮⋮ to reorder parts of the location code.' : 'View only — reordering and edits require location write access.'}
+        {canWrite
+          ? 'Drag the handle to reorder parts of the location code.'
+          : 'View only — reordering and edits require location write access.'}
       </p>
-      <SimpleDataTable
-        preferenceKey={`atlas-locations-schema-${schemaId ?? 'unknown'}-components`}
-        rows={sortedComponents}
-        getRowKey={(c) => c.id}
-        onRowClick={canWrite ? (c) => openEdit(c) : undefined}
-        enableRowReorder={canWrite}
-        disableSort
-        disableSearchAndFilters
-        onReorder={(orderedIds) => {
-          if (!canWrite || reordering) return
-          void persistOrder(orderedIds)
-        }}
-        columns={[
-          { key: 'displayName', label: 'Display name', getValue: (c) => c.displayName, width: '18rem' },
-          { key: 'key', label: 'Key', getValue: (c) => c.key, width: '10rem' },
-          { key: 'type', label: 'Type', getValue: (c) => c.type, width: '10rem' },
-          {
-            key: 'fixedValue',
-            label: 'Fixed',
-            getValue: (c) => (c.type === 'fixed' ? (c.minValue ?? '').trim() : ''),
-            width: '10rem',
-            render: (c) => (
-              <span className="font-mono text-xs text-foreground/90">
-                {c.type === 'fixed' && (c.minValue ?? '').trim() ? (c.minValue ?? '').trim() : '—'}
-              </span>
-            ),
-          },
-          {
-            key: 'patternMask',
-            label: 'Pattern',
-            getValue: (c) => c.patternMask?.trim() ?? '',
-            width: '12rem',
-            render: (c) => (
-              <span className="font-mono text-xs text-foreground/90">
-                {c.patternMask?.trim() ? c.patternMask.trim() : '—'}
-              </span>
-            ),
-          },
-          { key: 'width', label: 'Chars', getValue: (c) => String(c.width), width: '6rem' },
-          {
-            key: 'actions',
-            label: '',
-            width: '11rem',
-            getValue: () => '',
-            render: (c) => {
-              if (!canWrite) {
-                return <span className="text-xs text-foreground/50">View only</span>
-              }
-              return (
-              <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-                  onClick={() => openEdit(c as SchemaComponent)}
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
-                  onClick={() => void handleDeleteComponent(c as SchemaComponent)}
-                >
-                  Delete
-                </button>
-              </div>
-              )
-            },
-          },
-        ]}
-      />
+      <div className="w-full min-w-0 overflow-x-auto rounded-lg border border-border bg-card p-3">
+        {sortedComponents.length === 0 ? (
+          <p className="text-sm text-foreground/60">No schema items yet.</p>
+        ) : canWrite ? (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleComponentDragEnd}>
+            <table className="w-full border-collapse text-sm table-auto">
+              <SchemaComponentsTableHead />
+              <tbody className={reordering ? 'pointer-events-none opacity-60' : undefined}>
+                <SortableContext items={sortableComponentIds} strategy={verticalListSortingStrategy}>
+                  {sortedComponents.map((c) => (
+                    <SortableSchemaComponentRow
+                      key={c.id}
+                      c={c}
+                      canWrite={canWrite}
+                      onOpenEdit={() => openEdit(c)}
+                      onDelete={() => void handleDeleteComponent(c)}
+                    />
+                  ))}
+                </SortableContext>
+              </tbody>
+            </table>
+          </DndContext>
+        ) : (
+          <table className="w-full border-collapse text-sm table-auto">
+            <SchemaComponentsTableHead />
+            <tbody>
+              {sortedComponents.map((c) => (
+                <StaticSchemaComponentRow
+                  key={c.id}
+                  c={c}
+                  canWrite={canWrite}
+                  onOpenEdit={() => openEdit(c)}
+                  onDelete={() => void handleDeleteComponent(c)}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       {schemaId && <LocationSchemaFieldsEditor schemaId={schemaId} onError={(msg) => setError(msg)} />}
 
@@ -501,7 +695,8 @@ export function LocationSchemaDetail() {
                     const v = e.target.value
                     setNewComponentName(v)
                     if (!newComponentKeyManualRef.current) {
-                      setNewComponentKey(suggestComponentKeyFromDisplayName(v))
+                      const taken = new Set(components.map((c) => c.key.trim()))
+                      setNewComponentKey(suggestUniqueComponentKey(v, taken))
                     }
                   }}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
@@ -522,6 +717,9 @@ export function LocationSchemaDetail() {
                     spellCheck={false}
                     autoCapitalize="off"
                   />
+                  <p className="mt-1 text-xs text-foreground/60">
+                    Must be unique in this schema (not the same as another code part or attribute field key).
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground">Type</label>

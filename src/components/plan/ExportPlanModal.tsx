@@ -280,6 +280,7 @@ export function ExportPlanModal({
       : testName
         ? `${planNameSlug}-${sanitizeForFilename(testName)}`
         : planNameSlug
+  const csvExportFilename = `${exportBaseName}-export-${dateStr}.csv`
 
   const uploadsPath = getBasePath() + '/api/uploads/'
   const hasPhotos = sortedForExport.some((r) =>
@@ -313,7 +314,7 @@ export function ExportPlanModal({
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
           a.href = url
-          a.download = `${exportBaseName}-export-${dateStr}.csv`
+          a.download = csvExportFilename
           a.click()
           URL.revokeObjectURL(url)
           onClose()
@@ -347,7 +348,7 @@ export function ExportPlanModal({
       } else {
         const zip = new JSZip()
         if (includeCsv) {
-          zip.file('data.csv', recordsToCsv(sortedForExport, csvExportOptions))
+          zip.file(csvExportFilename, recordsToCsv(sortedForExport, csvExportOptions))
         }
         if (includePhotos && hasPhotos) {
           const usedPaths = new Set<string>()
