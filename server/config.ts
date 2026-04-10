@@ -3,7 +3,14 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const projectRoot = path.resolve(__dirname, '..')
+/**
+ * Repo root: `server/config.ts` → one `..`; compiled `dist/server/config.js` → two `..` (not `dist/`,
+ * or `config.json` at project root was never found in production).
+ */
+const projectRoot = path.resolve(
+  __dirname,
+  ...Array(__dirname.includes(`${path.sep}dist${path.sep}`) ? 2 : 1).fill('..' as const)
+)
 const defaultConfigPath = path.join(projectRoot, 'config.default.json')
 const localConfigPath = path.join(projectRoot, 'config.json')
 
