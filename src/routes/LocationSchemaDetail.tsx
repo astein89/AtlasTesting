@@ -609,7 +609,13 @@ export function LocationSchemaDetail() {
         )}
       </div>
 
-      {schemaId && <LocationSchemaFieldsEditor schemaId={schemaId} onError={(msg) => setError(msg)} />}
+      {schemaId && (
+        <LocationSchemaFieldsEditor
+          schemaId={schemaId}
+          reservedComponentKeys={components.map((c) => c.key)}
+          onError={(msg) => setError(msg)}
+        />
+      )}
 
       {canWrite && editSchemaOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">

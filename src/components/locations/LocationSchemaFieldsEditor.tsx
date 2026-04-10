@@ -1,6 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { api } from '../../api/client'
-import { SimpleDataTable } from '../data/SimpleDataTable'
 import type { LocationSchemaField, LocationSchemaFieldConfig, LocationSchemaFieldType } from '../../types/locationSchemaFields'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
 import { useAuthStore } from '../../store/authStore'
@@ -54,12 +70,210 @@ function summarizeConfig(type: LocationSchemaFieldType, config: LocationSchemaFi
   return '—'
 }
 
+function SchemaDragHandle() {
+  return (
+    <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
+    </svg>
+  )
+}
+
+function SchemaFieldsTableHead() {
+  return (
+    <thead>
+      <tr className="border-b border-border text-left text-xs font-medium text-foreground/65">
+        <th className="w-px px-1 py-2" aria-hidden />
+        <th className="px-2 py-2">Label</th>
+        <th className="px-2 py-2">Key</th>
+        <th className="px-2 py-2">Type</th>
+        <th className="px-2 py-2">Details</th>
+        <th className="px-2 py-2 text-right">Actions</th>
+      </tr>
+    </thead>
+  )
+}
+
+function FieldCells({
+  f,
+  canWrite,
+  dragHandle,
+  onOpenEdit,
+  onDelete,
+}: {
+  f: LocationSchemaField
+  canWrite: boolean
+  dragHandle?: ReactNode
+  onOpenEdit: () => void
+  onDelete: () => void
+}) {
+  const details = summarizeConfig(f.type, f.config)
+  return (
+    <>
+      <td className="w-px whitespace-nowrap px-1 py-2 align-middle">
+        <div className="flex items-center justify-center">
+          {dragHandle ?? <span className="inline-block w-9 shrink-0" aria-hidden />}
+        </div>
+      </td>
+      <td className="px-2 py-2 align-top text-sm font-medium text-foreground">
+        <span className="break-words" title={f.label}>
+          {f.label}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-2 py-2 align-middle font-mono text-xs text-foreground/90" title={f.key}>
+        {f.key}
+      </td>
+      <td className="whitespace-nowrap px-2 py-2 align-middle text-xs text-foreground/90">{f.type}</td>
+      <td className="px-2 py-2 align-top text-xs text-foreground/90">
+        <span className="break-words" title={details !== '—' ? details : undefined}>
+          {details}
+        </span>
+      </td>
+      <td className="w-px whitespace-nowrap px-2 py-2 text-right align-middle" onClick={(e) => e.stopPropagation()}>
+        {canWrite ? (
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
+              onClick={onOpenEdit}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
+              onClick={onDelete}
+            >
+              Delete
+            </button>
+          </div>
+        ) : (
+          <span className="text-xs text-foreground/50">View only</span>
+        )}
+      </td>
+    </>
+  )
+}
+
+function SortableFieldRow({
+  f,
+  canWrite,
+  onOpenEdit,
+  onDelete,
+}: {
+  f: LocationSchemaField
+  canWrite: boolean
+  onOpenEdit: () => void
+  onDelete: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: f.id,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`border-t border-border bg-background/40 ${isDragging ? 'opacity-60' : ''} ${
+        canWrite ? 'cursor-pointer hover:bg-background/60' : ''
+      }`}
+      onClick={
+        canWrite
+          ? (e) => {
+              if ((e.target as HTMLElement).closest('button')) return
+              onOpenEdit()
+            }
+          : undefined
+      }
+    >
+      <FieldCells
+        f={f}
+        canWrite={canWrite}
+        dragHandle={
+          <button
+            type="button"
+            className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+            aria-label="Drag to reorder field"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SchemaDragHandle />
+          </button>
+        }
+        onOpenEdit={onOpenEdit}
+        onDelete={onDelete}
+      />
+    </tr>
+  )
+}
+
+function StaticFieldRow({
+  f,
+  canWrite,
+  onOpenEdit,
+  onDelete,
+}: {
+  f: LocationSchemaField
+  canWrite: boolean
+  onOpenEdit: () => void
+  onDelete: () => void
+}) {
+  return (
+    <tr
+      className={`border-t border-border bg-background/40 ${canWrite ? 'cursor-pointer hover:bg-background/60' : ''}`}
+      onClick={
+        canWrite
+          ? (e) => {
+              if ((e.target as HTMLElement).closest('button')) return
+              onOpenEdit()
+            }
+          : undefined
+      }
+    >
+      <FieldCells f={f} canWrite={canWrite} onOpenEdit={onOpenEdit} onDelete={onDelete} />
+    </tr>
+  )
+}
+
+const FIELD_KEY_MAX_LEN = 64
+
+/** Safe field key: lowercase [a-z0-9_], derived from label (for APIs / JSON). */
+function suggestFieldKeyFromLabel(label: string): string {
+  const s = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_')
+  if (!s) return 'field'
+  return s.slice(0, FIELD_KEY_MAX_LEN)
+}
+
+/** Picks a key not present in `taken` (other fields + reserved code-part keys). */
+function suggestUniqueFieldKey(label: string, taken: Set<string>): string {
+  let base = suggestFieldKeyFromLabel(label)
+  if (!base) base = 'field'
+  if (!taken.has(base)) return base
+  let n = 2
+  while (taken.has(`${base}_${n}`)) n += 1
+  return `${base}_${n}`.slice(0, FIELD_KEY_MAX_LEN)
+}
+
 interface LocationSchemaFieldsEditorProps {
   schemaId: string
+  /** Code-part keys in this schema — new field keys must not collide with these */
+  reservedComponentKeys?: string[]
   onError?: (message: string) => void
 }
 
-export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchemaFieldsEditorProps) {
+export function LocationSchemaFieldsEditor({
+  schemaId,
+  reservedComponentKeys = [],
+  onError,
+}: LocationSchemaFieldsEditorProps) {
   const canWrite = useAuthStore((s) => s.canEditLocationSchemas())
   const { showConfirm } = useAlertConfirm()
   const [fields, setFields] = useState<LocationSchemaField[]>([])
@@ -79,6 +293,18 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
   const [reordering, setReordering] = useState(false)
   /** Shown inside the field modal — parent `onError` is above the fold and hidden behind z-[100] overlay. */
   const [editorError, setEditorError] = useState<string | null>(null)
+  /** When false, label edits update the key; set true when the user edits key directly. */
+  const formKeyManualRef = useRef(false)
+
+  const takenFieldKeys = useMemo(() => {
+    const s = new Set<string>()
+    for (const f of fields) s.add(f.key.trim())
+    for (const k of reservedComponentKeys) {
+      const t = k.trim()
+      if (t) s.add(t)
+    }
+    return s
+  }, [fields, reservedComponentKeys])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -104,6 +330,7 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
   }
 
   function openCreate() {
+    formKeyManualRef.current = false
     setEditingId(null)
     setFormKey('')
     setFormLabel('')
@@ -248,6 +475,25 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
     [fields]
   )
 
+  const sortableFieldIds = useMemo(() => sorted.map((f) => f.id), [sorted])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  function handleFieldDragEnd(event: DragEndEvent) {
+    if (reordering || !canWrite) return
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = sorted.map((f) => f.id)
+    const oldIndex = ids.indexOf(String(active.id))
+    const newIndex = ids.indexOf(String(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    const next = arrayMove(ids, oldIndex, newIndex)
+    void persistFieldOrder(next)
+  }
+
   function handleSelectDragStart(e: React.DragEvent, index: number) {
     setDraggedSelectIndex(index)
     e.dataTransfer.effectAllowed = 'move'
@@ -298,9 +544,7 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
         <div>
           <h2 className="text-xl font-semibold text-foreground">Fields</h2>
           <p className="mt-1 text-sm text-foreground/70">
-            {canWrite
-              ? 'Drag ⋮⋮ to reorder. Order is used in zone forms and tables.'
-              : 'View only — editing fields requires location write access.'}
+            Custom attributes for locations in zones that use this schema.
           </p>
         </div>
         {canWrite && (
@@ -317,56 +561,52 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
       {loading ? (
         <p className="text-sm text-foreground/60">Loading…</p>
       ) : (
-        <SimpleDataTable
-          preferenceKey={`atlas-locations-schema-${schemaId}-custom-fields`}
-          rows={sorted}
-          getRowKey={(f) => f.id}
-          onRowClick={canWrite ? (f) => openEdit(f) : undefined}
-          enableRowReorder={canWrite}
-          onReorder={(orderedIds) => {
-            if (!canWrite || reordering) return
-            void persistFieldOrder(orderedIds)
-          }}
-          disableSort
-          disableSearchAndFilters
-          columns={[
-            { key: 'label', label: 'Label', getValue: (f) => f.label, width: '14rem' },
-            { key: 'key', label: 'Key', getValue: (f) => f.key, width: '10rem' },
-            { key: 'type', label: 'Type', getValue: (f) => f.type, width: '8rem' },
-            {
-              key: 'summary',
-              label: 'Details',
-              getValue: (f) => summarizeConfig(f.type, f.config),
-            },
-            {
-              key: 'actions',
-              label: '',
-              width: '11rem',
-              getValue: () => '',
-              render: (f) =>
-                canWrite ? (
-                  <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background"
-                      onClick={() => openEdit(f)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"
-                      onClick={() => void handleDelete(f.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ) : (
-                  <span className="text-xs text-foreground/50">View only</span>
-                ),
-            },
-          ]}
-        />
+        <>
+          <p className="text-xs text-foreground/65">
+            {canWrite
+              ? 'Drag the handle to reorder. Order is used in zone forms and tables.'
+              : 'View only — editing fields requires location write access.'}
+          </p>
+          <div className="w-full min-w-0 overflow-x-auto rounded-lg border border-border bg-card p-3">
+            {sorted.length === 0 ? (
+              <p className="text-sm text-foreground/60">No fields yet.</p>
+            ) : canWrite ? (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFieldDragEnd}>
+                <table className="w-full border-collapse text-sm table-auto">
+                  <SchemaFieldsTableHead />
+                  <tbody className={reordering ? 'pointer-events-none opacity-60' : undefined}>
+                    <SortableContext items={sortableFieldIds} strategy={verticalListSortingStrategy}>
+                      {sorted.map((f) => (
+                        <SortableFieldRow
+                          key={f.id}
+                          f={f}
+                          canWrite={canWrite}
+                          onOpenEdit={() => openEdit(f)}
+                          onDelete={() => void handleDelete(f.id)}
+                        />
+                      ))}
+                    </SortableContext>
+                  </tbody>
+                </table>
+              </DndContext>
+            ) : (
+              <table className="w-full border-collapse text-sm table-auto">
+                <SchemaFieldsTableHead />
+                <tbody>
+                  {sorted.map((f) => (
+                    <StaticFieldRow
+                      key={f.id}
+                      f={f}
+                      canWrite={canWrite}
+                      onOpenEdit={() => openEdit(f)}
+                      onDelete={() => void handleDelete(f.id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
       )}
 
       {canWrite && editorOpen && (
@@ -404,34 +644,52 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
               </div>
             )}
             <form onSubmit={handleSave} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground">Label</label>
+                <input
+                  type="text"
+                  value={formLabel}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFormLabel(v)
+                    if (!editingId && !formKeyManualRef.current) {
+                      const taken = new Set(takenFieldKeys)
+                      const current = formKey.trim()
+                      if (current) taken.delete(current)
+                      setFormKey(suggestUniqueFieldKey(v, taken))
+                    }
+                  }}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  autoFocus={!editingId}
+                />
+              </div>
               {!editingId && (
                 <div>
                   <label className="block text-sm font-medium text-foreground">Key</label>
                   <input
                     type="text"
                     value={formKey}
-                    onChange={(e) => setFormKey(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                    autoFocus
-                    disabled={!!editingId}
+                    onChange={(e) => {
+                      formKeyManualRef.current = true
+                      setFormKey(e.target.value)
+                    }}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
+                    spellCheck={false}
+                    autoCapitalize="off"
                   />
+                  <p className="mt-1 text-xs text-foreground/60">
+                    Auto-generated from the label; edit only if you need a different API key. Must be unique in this
+                    schema (including code parts).
+                  </p>
                 </div>
               )}
               {editingId && (
                 <div>
                   <label className="block text-sm font-medium text-foreground">Key</label>
                   <p className="mt-1 font-mono text-sm text-foreground/80">{formKey}</p>
+                  <p className="mt-1 text-xs text-foreground/60">Key cannot be changed after the field is created.</p>
                 </div>
               )}
-              <div>
-                <label className="block text-sm font-medium text-foreground">Label</label>
-                <input
-                  type="text"
-                  value={formLabel}
-                  onChange={(e) => setFormLabel(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-                />
-              </div>
               <div>
                 <label className="block text-sm font-medium text-foreground">Type</label>
                 <select
@@ -583,7 +841,7 @@ export function LocationSchemaFieldsEditor({ schemaId, onError }: LocationSchema
                   disabled={!formKey.trim() || !formLabel.trim() || saving}
                   title={
                     !formKey.trim() || !formLabel.trim()
-                      ? 'Enter a key and label first'
+                      ? 'Enter a label (key is generated from it)'
                       : undefined
                   }
                 >
