@@ -15,7 +15,17 @@ import {
   normalizeWikiRecycleRetentionDaysBody,
   setWikiRecycleRetentionDays,
 } from '../lib/wikiRecycleSettings.js'
-import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
+import {
+  getAdminerUrl,
+  normalizeAdminerUrlBody,
+  setAdminerUrl,
+} from '../lib/adminerSettings.js'
+import {
+  authMiddleware,
+  requireAnyPermission,
+  requirePermission,
+  type AuthRequest,
+} from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
 
 const router = Router()
@@ -92,6 +102,30 @@ router.put(
     }
     await setWikiRecycleRetentionDays(normalized.days)
     res.json({ retentionDays: normalized.days })
+  })
+)
+
+router.get(
+  '/adminer-url',
+  authMiddleware,
+  requireAnyPermission('admin.db', 'settings.access'),
+  asyncRoute(async (_req: AuthRequest, res) => {
+    const url = await getAdminerUrl()
+    res.json({ url })
+  })
+)
+
+router.put(
+  '/adminer-url',
+  authMiddleware,
+  requirePermission('settings.access'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const normalized = normalizeAdminerUrlBody(req.body)
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error })
+    }
+    await setAdminerUrl(normalized.url)
+    res.json({ url: normalized.url })
   })
 )
 

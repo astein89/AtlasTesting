@@ -1,6 +1,9 @@
-import { NavLink } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { api } from '@/api/client'
 import { useAuthStore } from '@/store/authStore'
-import { adminPath } from '@/lib/appPaths'
+import { adminPath, normalizeAppPathname } from '@/lib/appPaths'
+import { getAdminerHref, resolveAdminerHref } from '@/lib/basePath'
 
 const baseLink =
   'block rounded-lg px-3 py-2 text-sm transition-colors min-h-[44px] flex items-center'
@@ -11,7 +14,34 @@ interface AdminModuleSidebarProps {
 }
 
 export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSidebarProps) {
+  const { pathname } = useLocation()
   const hasPermission = useAuthStore((s) => s.hasPermission)
+  const canAdminDb = useAuthStore((s) => s.hasPermission('admin.db'))
+  const [adminerHref, setAdminerHref] = useState(() => getAdminerHref())
+  const appPath = normalizeAppPathname(pathname)
+  const onDbTablesPage = appPath === adminPath('db')
+
+  useEffect(() => {
+    if (!canAdminDb || !onDbTablesPage) return
+    let cancelled = false
+    const load = () => {
+      void api
+        .get<{ url: string | null }>('/settings/adminer-url')
+        .then((r) => {
+          if (!cancelled) setAdminerHref(resolveAdminerHref(r.data?.url ?? null))
+        })
+        .catch(() => {
+          if (!cancelled) setAdminerHref(getAdminerHref())
+        })
+    }
+    load()
+    const onSaved = () => load()
+    window.addEventListener('dc:adminer-url-saved', onSaved)
+    return () => {
+      cancelled = true
+      window.removeEventListener('dc:adminer-url-saved', onSaved)
+    }
+  }, [canAdminDb, onDbTablesPage])
 
   return (
     <aside
@@ -86,17 +116,33 @@ export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSideba
           </NavLink>
         )}
         {hasPermission('admin.db') && (
-          <NavLink
-            to={adminPath('db')}
-            onClick={onClose}
-            className={({ isActive }) =>
-              `${baseLink} ${
-                isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'
-              }`
-            }
-          >
-            DB tables
-          </NavLink>
+          <div className="flex flex-col gap-0.5">
+            <NavLink
+              to={adminPath('db')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              DB tables
+            </NavLink>
+            {onDbTablesPage ? (
+              <div className="ml-2 border-l border-border pl-3">
+                <a
+                  href={adminerHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={onClose}
+                  className={`${baseLink} text-foreground/90 hover:bg-background`}
+                  title="Adminer web console on this server (install per docs; opens in a new tab)"
+                >
+                  Adminer
+                </a>
+              </div>
+            ) : null}
+          </div>
         )}
       </nav>
     </aside>

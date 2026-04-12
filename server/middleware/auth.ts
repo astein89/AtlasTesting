@@ -102,6 +102,19 @@ export function requirePermission(key: string) {
   }
 }
 
+/** Allow the request if the user has at least one of the given permissions. */
+export function requireAnyPermission(...keys: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!keys.some((k) => roleHasPermission(req.user!.permissions, k))) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    next()
+  }
+}
+
 /** Full admin / wildcard (replaces legacy role string check for privileged routes). */
 export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction) {
   if (!req.user) {

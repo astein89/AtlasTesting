@@ -16,3 +16,19 @@ export function publicAsset(file: string): string {
   const name = file.replace(/^\/+/, '')
   return `${import.meta.env.BASE_URL ?? '/'}${name}`
 }
+
+/**
+ * Root-relative path to [Adminer](https://www.adminer.org/) when installed on the host (e.g. Pi + Caddy).
+ * Override with `VITE_ADMINER_URL` at build time if your reverse proxy serves it elsewhere.
+ */
+export function getAdminerHref(): string {
+  const v = import.meta.env.VITE_ADMINER_URL
+  if (typeof v === 'string' && v.trim() !== '') return v.trim()
+  return '/adminer'
+}
+
+/** Prefer server-stored URL from settings; then build-time `VITE_ADMINER_URL`; then `/adminer`. */
+export function resolveAdminerHref(serverUrl: string | null | undefined): string {
+  if (serverUrl != null && serverUrl.trim() !== '') return serverUrl.trim()
+  return getAdminerHref()
+}

@@ -428,6 +428,113 @@ function PasswordPolicySection() {
   )
 }
 
+function AdminerUrlSection() {
+  const { showAlert } = useAlertConfirm()
+  const [draft, setDraft] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saveNotice, setSaveNotice] = useState(false)
+  const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<{ url: string | null }>('/settings/adminer-url')
+      .then((r) => {
+        if (!cancelled) {
+          setDraft(r.data?.url ?? '')
+          setLoadError('')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load Adminer URL.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!saveNotice) return
+    const t = window.setTimeout(() => setSaveNotice(false), SAVE_NOTICE_MS)
+    return () => window.clearTimeout(t)
+  }, [saveNotice])
+
+  const save = async () => {
+    setSaving(true)
+    setSaveNotice(false)
+    try {
+      const trimmed = draft.trim()
+      const { data } = await api.put<{ url: string | null }>('/settings/adminer-url', {
+        url: trimmed === '' ? null : trimmed,
+      })
+      setDraft(data.url ?? '')
+      setSaveNotice(true)
+      window.dispatchEvent(new Event('dc:adminer-url-saved'))
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to save'
+      showAlert(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      {loadError ? <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p> : null}
+      {loading ? (
+        <p className="text-sm text-foreground/60">Loading…</p>
+      ) : (
+        <>
+          <p className="mb-4 text-sm text-foreground/80">
+            Target for the <strong className="font-medium text-foreground">Adminer</strong> link in the Admin sidebar. Use a path on this site (e.g.{' '}
+            <code className="rounded bg-background px-1">/adminer</code>) or a full <code className="rounded bg-background px-1">https://…</code> URL. Leave
+            empty to use the build default (<code className="rounded bg-background px-1">VITE_ADMINER_URL</code> or{' '}
+            <code className="rounded bg-background px-1">/adminer</code>). See Raspberry Pi setup docs for installing Adminer behind Caddy.
+          </p>
+          <div className="mb-4 max-w-xl">
+            <label htmlFor="adminer-url" className="mb-1 block text-sm font-medium text-foreground">
+              Adminer URL
+            </label>
+            <input
+              id="adminer-url"
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="/adminer"
+              autoComplete="off"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-foreground/40"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            {saveNotice ? (
+              <span
+                className="text-sm font-medium text-emerald-600 dark:text-emerald-400"
+                role="status"
+                aria-live="polite"
+              >
+                Saved
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
 function CfPresetRowEditor({
   row,
   index,
@@ -523,6 +630,13 @@ export function Settings() {
             <WikiRecycleRetentionSection />
           </div>
         </div>
+      </SettingsCollapsible>
+
+      <SettingsCollapsible
+        title="Adminer"
+        subtitle="Optional URL for the Admin database console link in the Admin sidebar."
+      >
+        <AdminerUrlSection />
       </SettingsCollapsible>
 
       <SettingsCollapsible
