@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3'
-import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import pg from 'pg'
@@ -17,15 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const levelsUp = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
 const projectRoot = path.resolve(__dirname, ...Array(levelsUp).fill('..'))
 const defaultDbPath = path.join(projectRoot, 'dc-automation.db')
-const legacyUnderscoreDbPath = path.join(projectRoot, 'dc_automation.db')
-
-function resolveDefaultDbPath(): string {
-  if (fs.existsSync(defaultDbPath)) return defaultDbPath
-  if (fs.existsSync(legacyUnderscoreDbPath)) return legacyUnderscoreDbPath
-  return defaultDbPath
-}
-
-const dbPath = process.env.DB_PATH || resolveDefaultDbPath()
+const dbPath = process.env.DB_PATH || defaultDbPath
 
 function createSqliteSyncWrapper(sqlite: Database.Database): DbWrapper {
   return {

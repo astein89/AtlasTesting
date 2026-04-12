@@ -20,7 +20,7 @@ This file mirrors the canonical doc [docs/sqlite_to_postgresql_migration_9ee7d22
 
 ## Current State (as of this repo)
 
-- **Database**: SQLite via [better-sqlite3](../server/db/index.ts) (native), default file **`dc-automation.db`** (legacy fallback **`dc_automation.db`**), `DB_PATH`, WAL, `busy_timeout`.
+- **Database**: SQLite via [better-sqlite3](../server/db/index.ts) (native), default file **`dc-automation.db`**, `DB_PATH`, WAL, `busy_timeout`.
 - **API surface (routes expect)**: `db.prepare(sql).run/get/all(...params)` with **`?` placeholders** today; `db.exec(sql)`; `run()` returns `{ changes }`.
 - **Schema**: [server/db/schema.ts](../server/db/schema.ts) runs **`initSchema`** — a large `CREATE TABLE IF NOT EXISTS` block plus **many incremental `migrate*()` functions** (`PRAGMA table_info`, `ALTER`, `sqlite_master`, etc.). This is **SQLite-specific** and encodes years of drift; it is **not** what PostgreSQL should run on every app boot.
 - **Scope**: Many tables (users, roles, user_roles, fields, test_plans, tests, test_runs, refresh_tokens, locations stack, record_history, user_preferences, app_kv, home_links, …). **Wiki page content** lives under **`content/wiki/`** (files), not in SQLite — copy that separately for deployments.

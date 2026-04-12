@@ -1,10 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type ChangeEvent,
+  type ComponentType,
+  type DragEvent,
   type ReactNode,
 } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -17,15 +20,20 @@ import {
   type SortOrder,
   type StoredFileRow,
   createFolder,
+  deleteFolder,
+  deleteStoredFile,
   downloadFolderArchive,
   downloadStoredFile,
   fetchFileViewBlob,
+  getFolderDeleteImpact,
   getFolderTree,
   listChildFolders,
   listStoredFiles,
   previewCategory,
+  searchLibraryFiles,
   uploadStoredFile,
 } from '@/api/files'
+import { isAbortLikeError } from '@/api/client'
 import { useUserPreference } from '@/hooks/useUserPreference'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { formatDateTime } from '@/lib/dateTimeConfig'
@@ -33,17 +41,41 @@ import { useAuthStore } from '@/store/authStore'
 import { filesPathWithFolder, folderIdFromSearch } from '@/lib/filesUrl'
 import { useFilesModuleHost } from '@/contexts/FilesModuleHostContext'
 import { FILES_TREE_REFRESH_EVENT, requestFilesTreeRefresh } from '@/lib/filesTreeRefresh'
+import { ColumnFilterDropdown } from '@/components/data/ColumnFilterDropdown'
 import { findPathToFolder } from '@/components/files/FolderTreeNav'
+import { BulkFileUploadApplyModal } from '@/components/files/BulkFileUploadApplyModal'
 import { FileEditModal } from '@/components/files/FileEditModal'
 import { FolderEditModal } from '@/components/files/FolderEditModal'
 import { NewFolderModal, type NewFolderSubmitPayload } from '@/components/files/NewFolderModal'
 
 const EXPLORER_PREF_KEY = 'files_explorer'
-type ExplorerPref = { viewMode: 'list' | 'grid'; sortBy: FileSortBy; sortOrder: SortOrder }
+
+/** Preset max width (px) for grid thumbnails; `lg` uses the full grid cell width. */
+type GridThumbSizePreset = 'sm' | 'md' | 'lg'
+
+type ExplorerPref = {
+  viewMode: 'list' | 'grid'
+  sortBy: FileSortBy
+  sortOrder: SortOrder
+  gridThumbSize: GridThumbSizePreset
+}
+
 const defaultExplorerPref: ExplorerPref = {
   viewMode: 'list',
-  sortBy: 'date',
-  sortOrder: 'desc',
+  sortBy: 'name',
+  sortOrder: 'asc',
+  gridThumbSize: 'md',
+}
+
+const GRID_THUMB_SIZE_OPTIONS: { value: GridThumbSizePreset; label: string; maxPx: number }[] = [
+  { value: 'sm', label: 'Small', maxPx: 160 },
+  { value: 'md', label: 'Medium', maxPx: 220 },
+  { value: 'lg', label: 'Large', maxPx: 0 },
+]
+
+function gridThumbPresetWidthPx(preset: GridThumbSizePreset): number {
+  const row = GRID_THUMB_SIZE_OPTIONS.find((o) => o.value === preset)
+  return row?.maxPx ?? 220
 }
 
 function FolderGlyph({ className }: { className?: string }) {
@@ -104,6 +136,68 @@ function ClosePanelIcon({ className }: { className?: string }) {
   )
 }
 
+/** 16:10 frame, smallest — grid thumbnail size control */
+function ThumbSizeSmIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+      <rect x="8" y="5" width="8" height="5" rx="1" />
+    </svg>
+  )
+}
+
+function ThumbSizeMdIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+      <rect x="6" y="5" width="12" height="7.5" rx="1" />
+    </svg>
+  )
+}
+
+/** Large = full cell width — Heroicons-style “arrows pointing out” */
+function ThumbSizeLgIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M20.25 3.75v4.5m0-4.5h-4.5m4.5 0L15 9m0 6l3.75 3.75v-4.5m0 4.5h-4.5m4.5 0L15 15M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15"
+      />
+    </svg>
+  )
+}
+
+const GRID_THUMB_SIZE_ICONS: Record<GridThumbSizePreset, ComponentType<{ className?: string }>> = {
+  sm: ThumbSizeSmIcon,
+  md: ThumbSizeMdIcon,
+  lg: ThumbSizeLgIcon,
+}
+
+/** List layout — rows with bullets (Heroicons-style outline). */
+function ViewListIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.007h-.007V6.75zm0 5.25h.007v.007h-.007v-.007zm0 5.25h.007v.007h-.007v-.007z"
+      />
+    </svg>
+  )
+}
+
+/** Grid layout — 2×2 squares (Heroicons-style outline). */
+function ViewGridIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75a2.25 2.25 0 012.25-2.25h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25v-2.25zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25a2.25 2.25 0 01-2.25-2.25v-2.25z"
+      />
+    </svg>
+  )
+}
+
 function FileActionIconButton({
   label,
   onClick,
@@ -139,6 +233,12 @@ function canEditStoredFileMeta(
   return file.uploaded_by === userId
 }
 
+function parseListSelectionKey(key: string): { kind: 'file' | 'folder'; id: string } | null {
+  if (key.startsWith('file:')) return { kind: 'file', id: key.slice(5) }
+  if (key.startsWith('folder:')) return { kind: 'folder', id: key.slice(7) }
+  return null
+}
+
 /** Inline preview panel supports image, PDF, text, markdown, CSV — not arbitrary binaries. */
 function fileSupportsInlinePreview(mime: string | null): boolean {
   return previewCategory(mime) !== 'other'
@@ -149,6 +249,196 @@ function fileExtensionFromName(filename: string): string | null {
   const i = base.lastIndexOf('.')
   if (i <= 0 || i >= base.length - 1) return null
   return base.slice(i + 1).toLowerCase()
+}
+
+type FileTypeGlyphKind =
+  | 'pdf'
+  | 'text'
+  | 'markdown'
+  | 'csv'
+  | 'archive'
+  | 'video'
+  | 'audio'
+  | 'officeWord'
+  | 'officeSheet'
+  | 'officeSlides'
+  | 'code'
+  | 'generic'
+
+function fileTypeGlyphKind(mime: string | null, filename: string): FileTypeGlyphKind {
+  const cat = previewCategory(mime)
+  if (cat === 'pdf') return 'pdf'
+  if (cat === 'markdown') return 'markdown'
+  if (cat === 'csv') return 'csv'
+  if (cat === 'text') return 'text'
+  const m = (mime || '').toLowerCase()
+  const ext = (fileExtensionFromName(filename) || '').toLowerCase()
+
+  if (m.startsWith('video/')) return 'video'
+  if (m.startsWith('audio/')) return 'audio'
+
+  if (
+    m.includes('zip') ||
+    m.includes('compressed') ||
+    m.includes('x-rar') ||
+    m.includes('x-7z') ||
+    m.includes('tar') ||
+    m.includes('gzip') ||
+    ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'].includes(ext)
+  ) {
+    return 'archive'
+  }
+
+  if (m.includes('wordprocessingml') || m.includes('msword') || ext === 'doc' || ext === 'docx' || ext === 'odt') {
+    return 'officeWord'
+  }
+  if (
+    m.includes('spreadsheetml') ||
+    m.includes('ms-excel') ||
+    ext === 'xls' ||
+    ext === 'xlsx' ||
+    ext === 'ods'
+  ) {
+    return 'officeSheet'
+  }
+  if (m.includes('presentationml') || m.includes('powerpoint') || ext === 'ppt' || ext === 'pptx' || ext === 'odp') {
+    return 'officeSlides'
+  }
+
+  if (
+    m.includes('javascript') ||
+    m.includes('json') ||
+    m.includes('xml') ||
+    m.includes('html') ||
+    m.includes('yaml') ||
+    ext === 'js' ||
+    ext === 'mjs' ||
+    ext === 'cjs' ||
+    ext === 'ts' ||
+    ext === 'tsx' ||
+    ext === 'jsx' ||
+    ext === 'py' ||
+    ext === 'rs' ||
+    ext === 'go' ||
+    ext === 'java' ||
+    ext === 'c' ||
+    ext === 'cpp' ||
+    ext === 'h' ||
+    ext === 'hpp' ||
+    ext === 'html' ||
+    ext === 'htm' ||
+    ext === 'css' ||
+    ext === 'json' ||
+    ext === 'xml' ||
+    ext === 'yaml' ||
+    ext === 'yml' ||
+    ext === 'sh' ||
+    ext === 'ps1' ||
+    ext === 'bat' ||
+    ext === 'cmd'
+  ) {
+    return 'code'
+  }
+
+  return 'generic'
+}
+
+/** Outline glyph for grid / list when there is no inline preview thumbnail. */
+function FileTypeGlyphIcon({
+  mime,
+  filename,
+  className,
+}: {
+  mime: string | null
+  filename: string
+  className?: string
+}) {
+  const k = fileTypeGlyphKind(mime, filename)
+  const stroke = 1.5
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={stroke}
+      aria-hidden
+    >
+      {k === 'pdf' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+        />
+      ) : k === 'text' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+        />
+      ) : k === 'markdown' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 18H5.625c-.621 0-1.125-.504-1.125-1.125V4.125c0-.621.504-1.125 1.125-1.125h12.75c.621 0 1.125.504 1.125 1.125V11.25a9 9 0 0 1-9 9Zm-3.75-8.25v5.25m3.75-3.75h3"
+        />
+      ) : k === 'csv' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125V5.625m17.25 13.875a1.125 1.125 0 0 0 1.125-1.125M3.375 19.5c0 .621.504 1.125 1.125 1.125m17.25-13.875v13.875m0-13.875a1.125 1.125 0 0 0-1.125-1.125m-17.25 0A1.125 1.125 0 0 0 2.25 5.625m17.25 0c0-.621-.504-1.125-1.125-1.125M3.375 5.625h17.25m-12 3.75h.008v.008H8.375V9.375Zm0 3h.008v.008H8.375V12.375Zm0 3h.008v.008H8.375V15.375Zm4.5-6h.008v.008H12.875V9.375Zm0 3h.008v.008H12.875V12.375Zm0 3h.008v.008H12.875V15.375Zm4.5-6h.008v.008H17.375V9.375Zm0 3h.008v.008H17.375V12.375Zm0 3h.008v.008H17.375V15.375Z"
+        />
+      ) : k === 'archive' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"
+        />
+      ) : k === 'video' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25Z"
+        />
+      ) : k === 'audio' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="m9 9 10.5-3v21m-9-3v-3.75a2.25 2.25 0 0 1 2.25-2.25h.75a2.25 2.25 0 0 1 2.25 2.25V18m-9-9v9m0-9c0-1.657 1.343-3 3-3s3 1.343 3 3v9"
+        />
+      ) : k === 'officeWord' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h4.5m-4.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+        />
+      ) : k === 'officeSheet' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125V5.625m17.25 13.875a1.125 1.125 0 0 0 1.125-1.125M3.375 19.5c0 .621.504 1.125 1.125 1.125m17.25-13.875v13.875m0-13.875a1.125 1.125 0 0 0-1.125-1.125m-17.25 0A1.125 1.125 0 0 0 2.25 5.625m17.25 0c0-.621-.504-1.125-1.125-1.125M3.375 5.625h8.25m-8.25 0c-.621 0-1.125.504-1.125 1.125v3.75m9-4.875h8.25m-8.25 0c-.621 0-1.125.504-1.125 1.125v3.75m-9 3.75h17.25"
+        />
+      ) : k === 'officeSlides' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3"
+        />
+      ) : k === 'code' ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"
+        />
+      ) : (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 18H5.625c-.621 0-1.125-.504-1.125-1.125V4.125c0-.621.504-1.125 1.125-1.125h12.75c.621 0 1.125.504 1.125 1.125V11.25a9 9 0 0 1-9 9Z"
+        />
+      )}
+    </svg>
+  )
 }
 
 /** Type column: short category for previewable files; otherwise filename extension (not full MIME). */
@@ -186,7 +476,145 @@ function formatSize(n: number | null): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function GridThumb({ fileId, mime }: { fileId: string; mime: string | null }) {
+/** List table on narrow viewports: cap visible filename length (see `title` on button for full name). */
+function truncateTableFilename(name: string, maxChars = 40): string {
+  if (name.length <= maxChars) return name
+  return `${name.slice(0, maxChars)}…`
+}
+
+type ExplorerColumnKey = 'name' | 'type' | 'size' | 'uploader' | 'date'
+
+const EXPLORER_COLUMN_KEYS: ExplorerColumnKey[] = ['name', 'type', 'size', 'uploader', 'date']
+
+function explorerItemFilterValues(
+  item: { kind: 'folder'; row: FileFolderRow } | { kind: 'file'; row: StoredFileRow }
+): Record<ExplorerColumnKey, string> {
+  if (item.kind === 'folder') {
+    return {
+      name: item.row.name,
+      type: 'Folder',
+      size: '—',
+      uploader: '—',
+      date: '—',
+    }
+  }
+  const f = item.row
+  return {
+    name: f.original_filename,
+    type: fileTypeDisplayLabel(f),
+    size: formatSize(f.size_bytes),
+    uploader: f.uploaded_by_username?.trim() || '—',
+    date: f.created_at ? formatDateTime(f.created_at) : '—',
+  }
+}
+
+/** Search matches folder/file rows using the same visible fields as the table (name, type, …; files also MIME). */
+function explorerRowMatchesSearch(
+  searchLower: string,
+  item: { kind: 'folder'; row: FileFolderRow } | { kind: 'file'; row: StoredFileRow }
+): boolean {
+  if (!searchLower) return true
+  const v = explorerItemFilterValues(item)
+  const parts = [v.name, v.type, v.size, v.uploader, v.date]
+  if (item.kind === 'file') {
+    parts.push(item.row.mime_type?.trim() || '')
+  }
+  return parts.some((p) => p.toLowerCase().includes(searchLower))
+}
+
+function buildDistinctColumnValues(
+  folders: FileFolderRow[],
+  fileRows: StoredFileRow[]
+): Record<ExplorerColumnKey, string[]> {
+  const name = new Set<string>()
+  const type = new Set<string>()
+  const size = new Set<string>()
+  const uploader = new Set<string>()
+  const date = new Set<string>()
+  for (const row of folders) {
+    const v = explorerItemFilterValues({ kind: 'folder', row })
+    name.add(v.name)
+    type.add(v.type)
+    size.add(v.size)
+    uploader.add(v.uploader)
+    date.add(v.date)
+  }
+  for (const row of fileRows) {
+    const v = explorerItemFilterValues({ kind: 'file', row })
+    name.add(v.name)
+    type.add(v.type)
+    size.add(v.size)
+    uploader.add(v.uploader)
+    date.add(v.date)
+  }
+  const sortStr = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+  return {
+    name: [...name].sort(sortStr),
+    type: [...type].sort(sortStr),
+    size: [...size].sort(sortStr),
+    uploader: [...uploader].sort(sortStr),
+    date: [...date].sort(sortStr),
+  }
+}
+
+function passesExplorerColumnFilters(
+  vals: Record<ExplorerColumnKey, string>,
+  columnFilters: Partial<Record<ExplorerColumnKey, string[]>>,
+  distinct: Record<ExplorerColumnKey, string[]>
+): boolean {
+  for (const key of EXPLORER_COLUMN_KEYS) {
+    const allowed = columnFilters[key]
+    if (!allowed || allowed.length === 0) continue
+    const universe = distinct[key]
+    if (universe.length === 0) continue
+    if (allowed.length >= universe.length && universe.every((u) => allowed.includes(u))) continue
+    if (!allowed.includes(vals[key])) return false
+  }
+  return true
+}
+
+function isExplorerColumnFilterActive(
+  key: ExplorerColumnKey,
+  filters: Partial<Record<ExplorerColumnKey, string[]>>,
+  distinct: Record<ExplorerColumnKey, string[]>
+): boolean {
+  const sel = filters[key]
+  const universe = distinct[key]
+  if (!sel?.length || !universe.length) return false
+  if (sel.length < universe.length) return true
+  return !universe.every((x) => sel.includes(x))
+}
+
+function GridThumbFrame({
+  thumbMaxPx,
+  children,
+}: {
+  thumbMaxPx: number
+  children: ReactNode
+}) {
+  return (
+    <div className="flex w-full shrink-0 justify-center">
+      <div
+        className="relative aspect-[16/10] w-full overflow-hidden rounded border border-border bg-muted/30"
+        style={thumbMaxPx > 0 ? { maxWidth: `${thumbMaxPx}px` } : undefined}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function GridThumb({
+  fileId,
+  mime,
+  filename,
+  thumbMaxPx,
+}: {
+  fileId: string
+  mime: string | null
+  filename: string
+  thumbMaxPx: number
+}) {
   const [url, setUrl] = useState<string | null>(null)
   const urlRef = useRef<string | null>(null)
   useEffect(() => {
@@ -212,19 +640,27 @@ function GridThumb({ fileId, mime }: { fileId: string; mime: string | null }) {
   }, [fileId, mime])
   if (previewCategory(mime) !== 'image') {
     return (
-      <div className="flex h-20 w-full items-center justify-center rounded border border-border bg-muted/30 text-foreground/50">
-        <span className="text-xs">File</span>
-      </div>
+      <GridThumbFrame thumbMaxPx={thumbMaxPx}>
+        <div className="absolute inset-0 flex items-center justify-center text-foreground/55">
+          <FileTypeGlyphIcon mime={mime} filename={filename} className="h-11 w-11" />
+        </div>
+      </GridThumbFrame>
     )
   }
   if (!url) {
     return (
-      <div className="flex h-20 w-full items-center justify-center rounded border border-border bg-muted/20 text-xs text-foreground/50">
-        …
-      </div>
+      <GridThumbFrame thumbMaxPx={thumbMaxPx}>
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-foreground/50">
+          …
+        </div>
+      </GridThumbFrame>
     )
   }
-  return <img src={url} alt="" className="h-20 w-full rounded border border-border object-cover" />
+  return (
+    <GridThumbFrame thumbMaxPx={thumbMaxPx}>
+      <img src={url} alt="" className="absolute inset-0 h-full w-full object-contain" />
+    </GridThumbFrame>
+  )
 }
 
 function FilePreviewPanel({
@@ -272,7 +708,7 @@ function FilePreviewPanel({
           url: null,
           mime: m,
           text: null,
-          error: 'No inline preview for this type. Use Download.',
+          error: 'no-preview',
         })
       } catch {
         if (!cancelled) setState({ url: null, mime: '', text: null, error: 'Could not load file.' })
@@ -319,8 +755,39 @@ function FilePreviewPanel({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        {state.error ? (
-          <p className="text-sm text-foreground/70">{state.error}</p>
+        {state.error === 'no-preview' ? (
+          <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
+            <FileTypeGlyphIcon
+              mime={state.mime || file.mime_type}
+              filename={file.original_filename}
+              className="h-16 w-16 text-foreground/50"
+            />
+            <p className="max-w-sm text-sm text-foreground/80">
+              No preview is available for this file type. Download the file to open it on your device.
+            </p>
+            <button
+              type="button"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              onClick={() =>
+                void downloadStoredFile(file.id).catch(() => showAlert('Download failed.', 'Files'))
+              }
+            >
+              Download
+            </button>
+          </div>
+        ) : state.error ? (
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <p className="text-sm text-foreground/70">{state.error}</p>
+            <button
+              type="button"
+              className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-muted"
+              onClick={() =>
+                void downloadStoredFile(file.id).catch(() => showAlert('Download failed.', 'Files'))
+              }
+            >
+              Try download
+            </button>
+          </div>
         ) : cat === 'image' && state.url ? (
           <div className="flex min-h-0 justify-center py-1">
             <img
@@ -358,7 +825,7 @@ export function FilesExplorer() {
   const userId = useAuthStore((s) => s.user?.id)
   const canManage = hasPermission('files.manage')
   const canManageAcl = canManage || hasPermission('*')
-  const { showAlert } = useAlertConfirm()
+  const { showAlert, showConfirm } = useAlertConfirm()
   const { setFilesModuleHandlers } = useFilesModuleHost()
   const [searchParams, setSearchParams] = useSearchParams()
   const folderId = folderIdFromSearch(searchParams)
@@ -368,11 +835,16 @@ export function FilesExplorer() {
     JSON.stringify,
     (s) => {
       try {
-        const v = JSON.parse(s) as ExplorerPref
+        const v = JSON.parse(s) as ExplorerPref & { gridThumbSize?: string }
+        let gridThumbSize: GridThumbSizePreset = 'md'
+        const g = v.gridThumbSize
+        if (g === 'sm' || g === 'md' || g === 'lg') gridThumbSize = g
+        else if (g === 'full') gridThumbSize = 'lg'
         return {
           viewMode: v.viewMode === 'grid' ? 'grid' : 'list',
-          sortBy: ['name', 'date', 'size', 'type'].includes(v.sortBy) ? v.sortBy : 'date',
+          sortBy: ['name', 'date', 'size', 'type'].includes(v.sortBy) ? v.sortBy : 'name',
           sortOrder: v.sortOrder === 'asc' ? 'asc' : 'desc',
+          gridThumbSize,
         }
       } catch {
         return defaultExplorerPref
@@ -380,15 +852,47 @@ export function FilesExplorer() {
     }
   )
 
+  const gridThumbMaxPx = useMemo(
+    () => gridThumbPresetWidthPx(prefs.gridThumbSize),
+    [prefs.gridThumbSize]
+  )
+
+  /** More columns + tighter gap for Small/Medium so tiles shrink; Large matches the original roomy grid. */
+  const gridLayoutClassName = useMemo(() => {
+    switch (prefs.gridThumbSize) {
+      case 'sm':
+        return 'grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7'
+      case 'md':
+        return 'grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6'
+      case 'lg':
+      default:
+        return 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4'
+    }
+  }, [prefs.gridThumbSize])
+
   const [tree, setTree] = useState<FileFolderTreeNode[]>([])
   const [childFolders, setChildFolders] = useState<FileFolderRow[]>([])
   const [files, setFiles] = useState<StoredFileRow[]>([])
   const [loading, setLoading] = useState(true)
   const [previewFile, setPreviewFile] = useState<StoredFileRow | null>(null)
   const [editTarget, setEditTarget] = useState<StoredFileRow | null>(null)
+  const [bulkApplyTargets, setBulkApplyTargets] = useState<StoredFileRow[] | null>(null)
+  /** List view only: `file:${id}` | `folder:${id}` */
+  const searchInputId = useId()
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [globalSearchFolders, setGlobalSearchFolders] = useState<FileFolderRow[]>([])
+  const [globalSearchFiles, setGlobalSearchFiles] = useState<StoredFileRow[]>([])
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false)
+  const [searchRefreshNonce, setSearchRefreshNonce] = useState(0)
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<ExplorerColumnKey, string[]>>>({})
+  const [openFilterColumn, setOpenFilterColumn] = useState<ExplorerColumnKey | null>(null)
+  const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
+  const [listSelection, setListSelection] = useState<Set<string>>(new Set())
   const [folderEditTarget, setFolderEditTarget] = useState<FileFolderRow | null>(null)
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listSelectAllRef = useRef<HTMLInputElement>(null)
 
   const goFolder = useCallback(
     (id: string | null) => {
@@ -429,6 +933,46 @@ export function FilesExplorer() {
     }
   }, [folderId, prefs.sortBy, prefs.sortOrder, showAlert])
 
+  const refreshGlobalSearchIfActive = useCallback(() => {
+    if (debouncedSearch.trim()) setSearchRefreshNonce((n) => n + 1)
+  }, [debouncedSearch])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchQuery), 300)
+    return () => window.clearTimeout(t)
+  }, [searchQuery])
+
+  useEffect(() => {
+    const q = debouncedSearch.trim()
+    if (!q) {
+      setGlobalSearchFolders([])
+      setGlobalSearchFiles([])
+      setGlobalSearchLoading(false)
+      return
+    }
+    const ac = new AbortController()
+    setGlobalSearchLoading(true)
+    void (async () => {
+      try {
+        const r = await searchLibraryFiles({
+          q,
+          sortBy: prefs.sortBy,
+          order: prefs.sortOrder,
+          signal: ac.signal,
+        })
+        if (!ac.signal.aborted) {
+          setGlobalSearchFolders(r.folders)
+          setGlobalSearchFiles(r.files)
+        }
+      } catch (e) {
+        if (!isAbortLikeError(e)) showAlert('Could not search library.', 'Files')
+      } finally {
+        if (!ac.signal.aborted) setGlobalSearchLoading(false)
+      }
+    })()
+    return () => ac.abort()
+  }, [debouncedSearch, prefs.sortBy, prefs.sortOrder, searchRefreshNonce, showAlert])
+
   useEffect(() => {
     void loadTree()
   }, [loadTree])
@@ -457,12 +1001,83 @@ export function FilesExplorer() {
     }
   }, [previewFile])
 
+  useEffect(() => {
+    setListSelection(new Set())
+    setSearchQuery('')
+    setColumnFilters({})
+    setOpenFilterColumn(null)
+  }, [folderId])
+
+  const searchLower = searchQuery.trim().toLowerCase()
+  const isGlobalSearchMode = debouncedSearch.trim().length > 0
+
+  const effectiveFolders = isGlobalSearchMode ? globalSearchFolders : childFolders
+  const effectiveFiles = isGlobalSearchMode ? globalSearchFiles : files
+
+  const searchFilteredFolders = useMemo(() => {
+    if (isGlobalSearchMode) return effectiveFolders
+    if (!searchLower) return childFolders
+    return childFolders.filter((f) => explorerRowMatchesSearch(searchLower, { kind: 'folder', row: f }))
+  }, [isGlobalSearchMode, effectiveFolders, childFolders, searchLower])
+
+  const searchFilteredFiles = useMemo(() => {
+    if (isGlobalSearchMode) return effectiveFiles
+    if (!searchLower) return files
+    return files.filter((f) => explorerRowMatchesSearch(searchLower, { kind: 'file', row: f }))
+  }, [isGlobalSearchMode, effectiveFiles, files, searchLower])
+
+  const distinctColumnValues = useMemo(
+    () => buildDistinctColumnValues(searchFilteredFolders, searchFilteredFiles),
+    [searchFilteredFolders, searchFilteredFiles]
+  )
+
+  const displayFolders = useMemo(() => {
+    return searchFilteredFolders.filter((row) =>
+      passesExplorerColumnFilters(
+        explorerItemFilterValues({ kind: 'folder', row }),
+        columnFilters,
+        distinctColumnValues
+      )
+    )
+  }, [searchFilteredFolders, columnFilters, distinctColumnValues])
+
+  const displayFiles = useMemo(() => {
+    return searchFilteredFiles.filter((row) =>
+      passesExplorerColumnFilters(
+        explorerItemFilterValues({ kind: 'file', row }),
+        columnFilters,
+        distinctColumnValues
+      )
+    )
+  }, [searchFilteredFiles, columnFilters, distinctColumnValues])
+
+  const hasActiveExplorerFilters =
+    searchQuery.trim() !== '' ||
+    EXPLORER_COLUMN_KEYS.some((k) => isExplorerColumnFilterActive(k, columnFilters, distinctColumnValues))
+
+  const clearExplorerFilters = useCallback(() => {
+    setSearchQuery('')
+    setColumnFilters({})
+    setOpenFilterColumn(null)
+  }, [])
+
+  const onHeaderSort = useCallback((sortBy: FileSortBy) => {
+    setPrefs((p) => {
+      if (p.sortBy !== sortBy) return { ...p, sortBy, sortOrder: 'asc' }
+      return { ...p, sortOrder: p.sortOrder === 'asc' ? 'desc' : 'asc' }
+    })
+  }, [])
+
+  useEffect(() => {
+    if (prefs.viewMode !== 'list') setListSelection(new Set())
+  }, [prefs.viewMode])
+
   const mergedItems = useCallback(() => {
     type Item = { kind: 'folder'; row: FileFolderRow } | { kind: 'file'; row: StoredFileRow }
-    const out: Item[] = childFolders.map((row) => ({ kind: 'folder' as const, row }))
-    for (const row of files) out.push({ kind: 'file', row })
+    const out: Item[] = displayFolders.map((row) => ({ kind: 'folder' as const, row }))
+    for (const row of displayFiles) out.push({ kind: 'file', row })
     return out
-  }, [childFolders, files])
+  }, [displayFolders, displayFiles])
 
   const onOpenItem = async (item: ReturnType<typeof mergedItems>[number]) => {
     if (item.kind === 'folder') {
@@ -472,6 +1087,16 @@ export function FilesExplorer() {
     const row = item.row
     const cat = previewCategory(row.mime_type)
     if (cat === 'other') {
+      const ok = await showConfirm(
+        `No preview is available for this file type. Download "${row.original_filename}"?`,
+        {
+          title: 'Download file',
+          confirmLabel: 'Download',
+          cancelLabel: 'Cancel',
+          variant: 'default',
+        }
+      )
+      if (!ok) return
       try {
         await downloadStoredFile(row.id)
       } catch {
@@ -482,27 +1107,78 @@ export function FilesExplorer() {
     setPreviewFile(row)
   }
 
+  const uploadFilesFromList = useCallback(
+    async (fileArray: File[]) => {
+      if (!canManage || fileArray.length === 0) return
+      const uploaded: StoredFileRow[] = []
+      try {
+        for (let i = 0; i < fileArray.length; i++) {
+          uploaded.push(await uploadStoredFile(fileArray[i], { folderId }))
+        }
+        await loadListing()
+        refreshGlobalSearchIfActive()
+        requestFilesTreeRefresh()
+        setPreviewFile(null)
+        const allEditable = uploaded.every((r) => canEditStoredFileMeta(r, userId, canManageAcl))
+        if (uploaded.length >= 2 && allEditable) {
+          setBulkApplyTargets(uploaded)
+        } else if (uploaded.length === 1 && allEditable) {
+          setEditTarget(uploaded[0])
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Upload failed'
+        showAlert(msg, 'Upload')
+      }
+    },
+    [canManage, folderId, loadListing, refreshGlobalSearchIfActive, userId, canManageAcl, showAlert]
+  )
+
   const onPickFiles = async (e: ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files
     if (!picked?.length) return
-    let lastUploaded: StoredFileRow | null = null
-    try {
-      for (let i = 0; i < picked.length; i++) {
-        const row = await uploadStoredFile(picked[i], { folderId })
-        lastUploaded = row
-      }
-      await loadListing()
-      requestFilesTreeRefresh()
-      if (lastUploaded && canEditStoredFileMeta(lastUploaded, userId, canManageAcl)) {
-        setPreviewFile(null)
-        setEditTarget(lastUploaded)
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Upload failed'
-      showAlert(msg, 'Upload')
-    } finally {
-      e.target.value = ''
+    await uploadFilesFromList(Array.from(picked))
+    e.target.value = ''
+  }
+
+  const [dropActive, setDropActive] = useState(false)
+
+  const hasFileDrag = (e: DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes('Files')
+
+  const onExplorerDragEnter = (e: DragEvent) => {
+    if (!canManage || !hasFileDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropActive(true)
+  }
+
+  const onExplorerDragLeave = (e: DragEvent) => {
+    if (!canManage) return
+    e.preventDefault()
+    e.stopPropagation()
+    const related = e.relatedTarget as Node | null
+    const el = e.currentTarget
+    if (related && el instanceof Element && el.contains(related)) {
+      return
     }
+    setDropActive(false)
+  }
+
+  const onExplorerDragOver = (e: DragEvent) => {
+    if (!canManage || !hasFileDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  const onExplorerDrop = (e: DragEvent) => {
+    if (!canManage) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropActive(false)
+    const dt = e.dataTransfer.files
+    if (!dt?.length) return
+    void uploadFilesFromList(Array.from(dt))
   }
 
   const createNewFolderFromModal = useCallback(
@@ -514,6 +1190,7 @@ export function FilesExplorer() {
             : {}),
         })
         await loadListing()
+        refreshGlobalSearchIfActive()
         requestFilesTreeRefresh()
         return true
       } catch {
@@ -521,7 +1198,7 @@ export function FilesExplorer() {
         return false
       }
     },
-    [canManageAcl, loadListing, showAlert]
+    [canManageAcl, loadListing, refreshGlobalSearchIfActive, showAlert]
   )
 
   const openNewFolderModal = useCallback(() => {
@@ -545,6 +1222,236 @@ export function FilesExplorer() {
   }, [setFilesModuleHandlers, openNewFolderModal, openUploadPicker])
 
   const items = mergedItems()
+  const rawListingEmpty = isGlobalSearchMode
+    ? globalSearchFolders.length === 0 && globalSearchFiles.length === 0
+    : childFolders.length === 0 && files.length === 0
+  const showListingSpinner = isGlobalSearchMode ? globalSearchLoading : loading
+  const filtersExcludedEverything =
+    !rawListingEmpty && items.length === 0 && hasActiveExplorerFilters
+
+  const listSelectKeys = useMemo(
+    () => displayFolders.map((r) => `folder:${r.id}`).concat(displayFiles.map((r) => `file:${r.id}`)),
+    [displayFolders, displayFiles]
+  )
+
+  const allListSelected =
+    listSelectKeys.length > 0 && listSelectKeys.every((k) => listSelection.has(k))
+  const someListSelected = listSelectKeys.some((k) => listSelection.has(k))
+
+  useEffect(() => {
+    const el = listSelectAllRef.current
+    if (!el) return
+    el.indeterminate = someListSelected && !allListSelected
+  }, [someListSelected, allListSelected])
+
+  const clearListSelection = useCallback(() => setListSelection(new Set()), [])
+
+  const toggleListKey = useCallback((key: string) => {
+    setListSelection((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const onListSelectAllClick = useCallback(() => {
+    setListSelection((prev) => {
+      const next = new Set(prev)
+      if (listSelectKeys.every((k) => prev.has(k))) {
+        for (const k of listSelectKeys) next.delete(k)
+      } else {
+        for (const k of listSelectKeys) next.add(k)
+      }
+      return next
+    })
+  }, [listSelectKeys])
+
+  const handleListDownloadSelected = useCallback(async () => {
+    const keys = Array.from(listSelection)
+    for (let i = 0; i < keys.length; i++) {
+      const p = parseListSelectionKey(keys[i])
+      if (!p) continue
+      try {
+        if (p.kind === 'folder') await downloadFolderArchive(p.id)
+        else await downloadStoredFile(p.id)
+      } catch {
+        showAlert('Download failed.', 'Files')
+      }
+      if (i < keys.length - 1) await new Promise((r) => setTimeout(r, 200))
+    }
+  }, [listSelection, showAlert])
+
+  const handleListEditSelected = useCallback(() => {
+    const parsed = Array.from(listSelection)
+      .map(parseListSelectionKey)
+      .filter((x): x is NonNullable<typeof x> => x != null)
+    if (parsed.length === 0) return
+    const fileRows = parsed
+      .filter((p) => p.kind === 'file')
+      .map((p) => displayFiles.find((f) => f.id === p.id))
+      .filter((x): x is StoredFileRow => x != null)
+    const folderRows = parsed
+      .filter((p) => p.kind === 'folder')
+      .map((p) => displayFolders.find((f) => f.id === p.id))
+      .filter((x): x is FileFolderRow => x != null)
+
+    if (fileRows.length + folderRows.length < parsed.length) {
+      showAlert('Some items are no longer in this folder.', 'Files')
+      return
+    }
+
+    if (fileRows.length && folderRows.length) {
+      showAlert('Select only files or only folders to edit.', 'Files')
+      return
+    }
+    if (folderRows.length) {
+      if (folderRows.length > 1) {
+        showAlert('Edit one folder at a time.', 'Files')
+        return
+      }
+      if (!canManage) {
+        showAlert('You do not have permission to edit folders.', 'Files')
+        return
+      }
+      setFolderEditTarget(folderRows[0])
+      return
+    }
+    if (fileRows.length === 1) {
+      const f = fileRows[0]
+      if (!canEditStoredFileMeta(f, userId, canManageAcl)) {
+        showAlert('You do not have permission to edit this file.', 'Files')
+        return
+      }
+      setEditTarget(f)
+      return
+    }
+    if (fileRows.length >= 2) {
+      const allEditable = fileRows.every((f) => canEditStoredFileMeta(f, userId, canManageAcl))
+      if (!allEditable) {
+        showAlert('Some selected files cannot be edited.', 'Files')
+        return
+      }
+      setBulkApplyTargets(fileRows)
+    }
+  }, [listSelection, displayFiles, displayFolders, canManage, canManageAcl, userId, showAlert])
+
+  const handleListDeleteSelected = useCallback(async () => {
+    if (!canManage) return
+    const parsed = Array.from(listSelection)
+      .map(parseListSelectionKey)
+      .filter((x): x is NonNullable<typeof x> => x != null)
+    if (parsed.length === 0) return
+
+    let confirmMessage: string
+    if (parsed.length === 1 && parsed[0].kind === 'folder') {
+      const folderId = parsed[0].id
+      const row = displayFolders.find((c) => c.id === folderId)
+      const name = row?.name ?? 'folder'
+      let fileCount = 0
+      let subfolderCount = 0
+      try {
+        const impact = await getFolderDeleteImpact(folderId)
+        fileCount = impact.fileCount
+        subfolderCount = impact.subfolderCount
+      } catch {
+        showAlert('Could not check folder contents.', 'Files')
+        return
+      }
+      const parts: string[] = []
+      if (fileCount > 0) parts.push(`${fileCount} file${fileCount === 1 ? '' : 's'}`)
+      if (subfolderCount > 0) parts.push(`${subfolderCount} subfolder${subfolderCount === 1 ? '' : 's'}`)
+      const detail =
+        fileCount === 0 && subfolderCount === 0
+          ? 'This folder is empty.'
+          : `This will permanently delete ${parts.join(' and ')} (including all nested items).`
+      confirmMessage = `Delete folder “${name}”? ${detail} This cannot be undone.`
+    } else if (parsed.some((p) => p.kind === 'folder')) {
+      confirmMessage = `Delete ${parsed.length} item(s)? Folders will be removed with all nested files and subfolders. This cannot be undone.`
+    } else {
+      confirmMessage = `Delete ${parsed.length} file(s)? This cannot be undone.`
+    }
+
+    const ok = await showConfirm(confirmMessage, {
+      title: 'Delete items',
+      variant: 'danger',
+      confirmLabel: 'Delete',
+    })
+    if (!ok) return
+
+    const deletedFileIds = new Set<string>()
+    for (const p of parsed) {
+      try {
+        if (p.kind === 'folder') await deleteFolder(p.id)
+        else {
+          await deleteStoredFile(p.id)
+          deletedFileIds.add(p.id)
+        }
+      } catch {
+        showAlert('Delete failed.', 'Files')
+      }
+    }
+    setListSelection(new Set())
+    setPreviewFile((prev) => (prev && deletedFileIds.has(prev.id) ? null : prev))
+    void loadListing()
+    refreshGlobalSearchIfActive()
+    requestFilesTreeRefresh()
+  }, [listSelection, displayFolders, canManage, showConfirm, showAlert, loadListing, refreshGlobalSearchIfActive])
+
+  const explorerLayoutToolbar = (
+    <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border bg-muted/30 px-2 py-1.5">
+      <div className="flex items-center gap-0.5" role="group" aria-label="View layout">
+        <button
+          type="button"
+          title="List view"
+          aria-label="List view"
+          aria-pressed={prefs.viewMode === 'list'}
+          onClick={() => setPrefs((p) => ({ ...p, viewMode: 'list' }))}
+          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-foreground hover:bg-muted ${
+            prefs.viewMode === 'list' ? 'border-primary bg-primary/10' : 'border-border bg-background'
+          }`}
+        >
+          <ViewListIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          title="Grid view"
+          aria-label="Grid view"
+          aria-pressed={prefs.viewMode === 'grid'}
+          onClick={() => setPrefs((p) => ({ ...p, viewMode: 'grid' }))}
+          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-foreground hover:bg-muted ${
+            prefs.viewMode === 'grid' ? 'border-primary bg-primary/10' : 'border-border bg-background'
+          }`}
+        >
+          <ViewGridIcon className="h-4 w-4" />
+        </button>
+      </div>
+      {prefs.viewMode === 'grid' ? (
+        <div className="flex flex-wrap items-center gap-1 border-l border-border pl-2" role="group" aria-label="Thumbnail size">
+          {GRID_THUMB_SIZE_OPTIONS.map((o) => {
+            const Icon = GRID_THUMB_SIZE_ICONS[o.value]
+            const selected = prefs.gridThumbSize === o.value
+            const hint = o.maxPx > 0 ? `${o.maxPx}px max` : 'Full cell width'
+            return (
+              <button
+                key={o.value}
+                type="button"
+                title={`${o.label} (${hint})`}
+                aria-label={`${o.label} thumbnails`}
+                aria-pressed={selected}
+                onClick={() => setPrefs((p) => ({ ...p, gridThumbSize: o.value }))}
+                className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-foreground hover:bg-muted ${
+                  selected ? 'border-primary bg-primary/10' : 'border-border bg-background'
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
 
   return (
     <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col">
@@ -574,58 +1481,154 @@ export function FilesExplorer() {
           </nav>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-b border-border p-2">
-          <div className="mr-auto flex flex-wrap items-center gap-2">
-            <span className="text-xs text-foreground/60">View</span>
-            <button
-              type="button"
-              className={`rounded border px-2 py-1 text-xs ${prefs.viewMode === 'list' ? 'border-primary bg-primary/10' : 'border-border'}`}
-              onClick={() => setPrefs((p) => ({ ...p, viewMode: 'list' }))}
-            >
-              List
-            </button>
-            <button
-              type="button"
-              className={`rounded border px-2 py-1 text-xs ${prefs.viewMode === 'grid' ? 'border-primary bg-primary/10' : 'border-border'}`}
-              onClick={() => setPrefs((p) => ({ ...p, viewMode: 'grid' }))}
-            >
-              Grid
-            </button>
+        <div className="flex flex-wrap items-end gap-3 border-b border-border bg-muted/15 px-2 py-2">
+          <div className="flex min-w-[200px] max-w-2xl flex-1 flex-col gap-0.5">
+            <label htmlFor={searchInputId} className="text-xs font-medium text-foreground/80">
+              Search library
+            </label>
+            <div className="relative">
+              <input
+                id={searchInputId}
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Name, type, or MIME — searches all accessible folders"
+                autoComplete="off"
+                className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-2 text-sm text-foreground placeholder:text-foreground/40"
+                aria-label="Search library"
+              />
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground/45">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </span>
+            </div>
+            {debouncedSearch.trim() ? (
+              <p className="text-[11px] text-foreground/55">Searching everywhere you can access (not only this folder).</p>
+            ) : null}
           </div>
-          <label className="flex items-center gap-1 text-xs">
-            Sort
-            <select
-              className="rounded border border-border bg-background px-2 py-1"
-              value={prefs.sortBy}
-              onChange={(e) =>
-                setPrefs((p) => ({ ...p, sortBy: e.target.value as FileSortBy }))
-              }
+          {hasActiveExplorerFilters ? (
+            <button
+              type="button"
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-muted"
+              onClick={clearExplorerFilters}
             >
-              <option value="name">Name</option>
-              <option value="date">Date</option>
-              <option value="size">Size</option>
-              <option value="type">Type</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            className="rounded border border-border px-2 py-1 text-xs"
-            onClick={() =>
-              setPrefs((p) => ({ ...p, sortOrder: p.sortOrder === 'asc' ? 'desc' : 'asc' }))
-            }
-            title="Toggle sort direction"
-          >
-            {prefs.sortOrder === 'asc' ? 'Asc ↑' : 'Desc ↓'}
-          </button>
+              Clear search & filters
+            </button>
+          ) : null}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto p-2">
-          {loading ? (
+        {prefs.viewMode === 'list' && listSelection.size > 0 ? (
+          <div
+            className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 px-2 py-2"
+            role="toolbar"
+            aria-label="Selected items"
+          >
+            <span className="text-xs text-foreground/70">{listSelection.size} selected</span>
+            <button
+              type="button"
+              className="rounded border border-border bg-background px-2 py-1 text-xs hover:bg-muted"
+              onClick={clearListSelection}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="rounded border border-border bg-background px-2 py-1 text-xs hover:bg-muted"
+              onClick={() => void handleListDownloadSelected()}
+            >
+              Download
+            </button>
+            <button
+              type="button"
+              className="rounded border border-border bg-background px-2 py-1 text-xs hover:bg-muted"
+              onClick={handleListEditSelected}
+            >
+              Edit
+            </button>
+            {canManage ? (
+              <button
+                type="button"
+                className="rounded border border-destructive/50 bg-background px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+                onClick={() => void handleListDeleteSelected()}
+              >
+                Delete
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div
+          className={`relative min-h-0 flex-1 overflow-auto p-2 ${canManage ? 'min-h-[10rem]' : ''}`}
+          onDragEnter={onExplorerDragEnter}
+          onDragLeave={onExplorerDragLeave}
+          onDragOver={onExplorerDragOver}
+          onDrop={onExplorerDrop}
+          role="region"
+          aria-label="Folder contents"
+        >
+          {canManage && dropActive ? (
+            <div
+              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-primary/10"
+              aria-hidden
+            >
+              <span className="rounded-md bg-card/95 px-4 py-2 text-sm font-medium text-foreground shadow-sm ring-1 ring-border">
+                Drop files to upload
+              </span>
+            </div>
+          ) : null}
+          {showListingSpinner ? (
             <p className="text-sm text-foreground/60">Loading…</p>
-          ) : items.length === 0 ? (
-            <p className="text-sm text-foreground/60">This folder is empty.</p>
+          ) : rawListingEmpty ? (
+            <p className="text-sm text-foreground/60">
+              {isGlobalSearchMode ? (
+                <>
+                  No matches in the library.{' '}
+                  <button
+                    type="button"
+                    className="text-primary underline hover:opacity-90"
+                    onClick={() => {
+                      setSearchQuery('')
+                      setColumnFilters({})
+                      setOpenFilterColumn(null)
+                    }}
+                  >
+                    Clear search
+                  </button>
+                </>
+              ) : (
+                <>
+                  This folder is empty.
+                  {canManage ? (
+                    <>
+                      {' '}
+                      Drag files here or use <span className="font-medium text-foreground/80">Upload</span> in the
+                      sidebar.
+                    </>
+                  ) : null}
+                </>
+              )}
+            </p>
+          ) : filtersExcludedEverything ? (
+            <p className="text-sm text-foreground/60">
+              No items match your search or filters.{' '}
+              <button
+                type="button"
+                className="text-primary underline hover:opacity-90"
+                onClick={clearExplorerFilters}
+              >
+                Clear search & filters
+              </button>
+            </p>
           ) : prefs.viewMode === 'grid' ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="overflow-hidden rounded-lg border border-border">
+              {explorerLayoutToolbar}
+              <div className={`p-2 ${gridLayoutClassName}`}>
               {items.map((item) =>
                 item.kind === 'folder' ? (
                   <button
@@ -634,11 +1637,18 @@ export function FilesExplorer() {
                     className="flex h-full min-h-0 flex-col rounded-lg border border-border bg-card p-2 text-left hover:bg-muted/50"
                     onClick={() => void onOpenItem(item)}
                   >
-                    <div className="flex h-20 shrink-0 items-center justify-center text-amber-700/90 dark:text-amber-400/90">
-                      <FolderGlyph className="h-14 w-14" />
-                    </div>
+                    <GridThumbFrame thumbMaxPx={gridThumbMaxPx}>
+                      <div className="absolute inset-0 flex items-center justify-center text-amber-700/90 dark:text-amber-400/90">
+                        <FolderGlyph className="h-14 w-14 shrink-0" />
+                      </div>
+                    </GridThumbFrame>
                     <div className="mt-1 shrink-0 truncate text-xs font-medium">{item.row.name}</div>
-                    <div className="shrink-0 text-[10px] text-foreground/50">—</div>
+                    <div
+                      className="line-clamp-2 shrink-0 text-[10px] text-foreground/50"
+                      title={isGlobalSearchMode ? item.row.location_path ?? undefined : undefined}
+                    >
+                      {isGlobalSearchMode ? item.row.location_path?.trim() || '—' : '—'}
+                    </div>
                     <div
                       className="mt-auto flex shrink-0 items-center gap-1 pt-2"
                       onClick={(ev) => ev.stopPropagation()}
@@ -667,10 +1677,23 @@ export function FilesExplorer() {
                     className="flex h-full min-h-0 flex-col rounded-lg border border-border bg-card p-2 text-left hover:bg-muted/50"
                     onClick={() => void onOpenItem(item)}
                   >
-                    <GridThumb fileId={item.row.id} mime={item.row.mime_type} />
+                    <GridThumb
+                      fileId={item.row.id}
+                      mime={item.row.mime_type}
+                      filename={item.row.original_filename}
+                      thumbMaxPx={gridThumbMaxPx}
+                    />
                     <div className="mt-1 shrink-0 truncate text-xs font-medium" title={item.row.original_filename}>
                       {item.row.original_filename}
                     </div>
+                    {isGlobalSearchMode ? (
+                      <div
+                        className="line-clamp-2 shrink-0 text-[10px] text-foreground/50"
+                        title={item.row.location_path ?? undefined}
+                      >
+                        {item.row.location_path?.trim() || '—'}
+                      </div>
+                    ) : null}
                     <div className="shrink-0 text-[10px] text-foreground/50">{formatSize(item.row.size_bytes)}</div>
                     <div
                       className="mt-auto flex shrink-0 items-center gap-1 pt-2"
@@ -706,17 +1729,300 @@ export function FilesExplorer() {
                   </button>
                 )
               )}
+              </div>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-border bg-muted/40">
+            <div className="rounded-lg border border-border">
+              {explorerLayoutToolbar}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 z-30 border-b border-border bg-muted/40 shadow-sm">
                   <tr>
-                    <th className="px-3 py-2 font-medium">Name</th>
-                    <th className="hidden px-3 py-2 font-medium sm:table-cell">Type</th>
-                    <th className="px-3 py-2 font-medium">Size</th>
-                    <th className="hidden px-3 py-2 font-medium md:table-cell">Uploaded by</th>
-                    <th className="hidden px-3 py-2 font-medium lg:table-cell">Date</th>
+                    <th className="w-10 px-2 py-2" scope="col">
+                      <input
+                        ref={listSelectAllRef}
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-border"
+                        checked={allListSelected}
+                        onChange={onListSelectAllClick}
+                        aria-label={isGlobalSearchMode ? 'Select all matching items' : 'Select all items in this folder'}
+                        title="Select all"
+                      />
+                    </th>
+                    <th
+                      className="relative min-w-0 cursor-pointer select-none px-3 py-2 font-medium hover:bg-background/50"
+                      scope="col"
+                      aria-sort={
+                        prefs.sortBy === 'name'
+                          ? prefs.sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                      onClick={() => onHeaderSort('name')}
+                      title="Sort by name"
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="min-w-0">Name</span>
+                        {prefs.sortBy === 'name' ? (
+                          <span className="shrink-0 text-foreground/60">{prefs.sortOrder === 'asc' ? '↓' : '↑'}</span>
+                        ) : null}
+                        <button
+                          type="button"
+                          ref={(el) => {
+                            filterAnchorRefs.current.name = el
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenFilterColumn((c) => (c === 'name' ? null : 'name'))
+                          }}
+                          className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                            isExplorerColumnFilterActive('name', columnFilters, distinctColumnValues)
+                              ? 'text-primary'
+                              : 'text-foreground/50'
+                          }`}
+                          title="Filter by name"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                      {openFilterColumn === 'name' ? (
+                        <ColumnFilterDropdown
+                          columnKey="name"
+                          columnLabel="Name"
+                          values={distinctColumnValues.name}
+                          selected={new Set(columnFilters.name ?? distinctColumnValues.name)}
+                          onChange={(s) => {
+                            setColumnFilters((prev) => ({ ...prev, name: Array.from(s) }))
+                          }}
+                          onClose={() => setOpenFilterColumn(null)}
+                          tableAnchorRefs={filterAnchorRefs}
+                          tableAnchorKey="name"
+                        />
+                      ) : null}
+                    </th>
+                    {isGlobalSearchMode ? (
+                      <th className="hidden min-w-0 max-w-[14rem] px-3 py-2 font-medium md:table-cell" scope="col">
+                        Location
+                      </th>
+                    ) : null}
+                    <th
+                      className="relative hidden min-w-0 cursor-pointer select-none px-3 py-2 font-medium hover:bg-background/50 sm:table-cell"
+                      scope="col"
+                      aria-sort={
+                        prefs.sortBy === 'type'
+                          ? prefs.sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                      onClick={() => onHeaderSort('type')}
+                      title="Sort by type"
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span>Type</span>
+                        {prefs.sortBy === 'type' ? (
+                          <span className="shrink-0 text-foreground/60">{prefs.sortOrder === 'asc' ? '↓' : '↑'}</span>
+                        ) : null}
+                        <button
+                          type="button"
+                          ref={(el) => {
+                            filterAnchorRefs.current.type = el
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenFilterColumn((c) => (c === 'type' ? null : 'type'))
+                          }}
+                          className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                            isExplorerColumnFilterActive('type', columnFilters, distinctColumnValues)
+                              ? 'text-primary'
+                              : 'text-foreground/50'
+                          }`}
+                          title="Filter by type"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                      {openFilterColumn === 'type' ? (
+                        <ColumnFilterDropdown
+                          columnKey="type"
+                          columnLabel="Type"
+                          values={distinctColumnValues.type}
+                          selected={new Set(columnFilters.type ?? distinctColumnValues.type)}
+                          onChange={(s) => setColumnFilters((prev) => ({ ...prev, type: Array.from(s) }))}
+                          onClose={() => setOpenFilterColumn(null)}
+                          tableAnchorRefs={filterAnchorRefs}
+                          tableAnchorKey="type"
+                        />
+                      ) : null}
+                    </th>
+                    <th
+                      className="relative min-w-0 cursor-pointer select-none px-3 py-2 font-medium hover:bg-background/50"
+                      scope="col"
+                      aria-sort={
+                        prefs.sortBy === 'size'
+                          ? prefs.sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                      onClick={() => onHeaderSort('size')}
+                      title="Sort by size"
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span>Size</span>
+                        {prefs.sortBy === 'size' ? (
+                          <span className="shrink-0 text-foreground/60">{prefs.sortOrder === 'asc' ? '↓' : '↑'}</span>
+                        ) : null}
+                        <button
+                          type="button"
+                          ref={(el) => {
+                            filterAnchorRefs.current.size = el
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenFilterColumn((c) => (c === 'size' ? null : 'size'))
+                          }}
+                          className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                            isExplorerColumnFilterActive('size', columnFilters, distinctColumnValues)
+                              ? 'text-primary'
+                              : 'text-foreground/50'
+                          }`}
+                          title="Filter by size"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                      {openFilterColumn === 'size' ? (
+                        <ColumnFilterDropdown
+                          columnKey="size"
+                          columnLabel="Size"
+                          values={distinctColumnValues.size}
+                          selected={new Set(columnFilters.size ?? distinctColumnValues.size)}
+                          onChange={(s) => setColumnFilters((prev) => ({ ...prev, size: Array.from(s) }))}
+                          onClose={() => setOpenFilterColumn(null)}
+                          tableAnchorRefs={filterAnchorRefs}
+                          tableAnchorKey="size"
+                        />
+                      ) : null}
+                    </th>
+                    <th className="relative hidden min-w-0 px-3 py-2 font-medium md:table-cell" scope="col">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="cursor-default select-none">Uploaded by</span>
+                        <button
+                          type="button"
+                          ref={(el) => {
+                            filterAnchorRefs.current.uploader = el
+                          }}
+                          onClick={() => setOpenFilterColumn((c) => (c === 'uploader' ? null : 'uploader'))}
+                          className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                            isExplorerColumnFilterActive('uploader', columnFilters, distinctColumnValues)
+                              ? 'text-primary'
+                              : 'text-foreground/50'
+                          }`}
+                          title="Filter by uploader"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                      {openFilterColumn === 'uploader' ? (
+                        <ColumnFilterDropdown
+                          columnKey="uploader"
+                          columnLabel="Uploaded by"
+                          values={distinctColumnValues.uploader}
+                          selected={new Set(columnFilters.uploader ?? distinctColumnValues.uploader)}
+                          onChange={(s) => setColumnFilters((prev) => ({ ...prev, uploader: Array.from(s) }))}
+                          onClose={() => setOpenFilterColumn(null)}
+                          tableAnchorRefs={filterAnchorRefs}
+                          tableAnchorKey="uploader"
+                        />
+                      ) : null}
+                    </th>
+                    <th
+                      className="relative hidden min-w-0 cursor-pointer select-none px-3 py-2 font-medium hover:bg-background/50 lg:table-cell"
+                      scope="col"
+                      aria-sort={
+                        prefs.sortBy === 'date'
+                          ? prefs.sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                      onClick={() => onHeaderSort('date')}
+                      title="Sort by date"
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span>Date</span>
+                        {prefs.sortBy === 'date' ? (
+                          <span className="shrink-0 text-foreground/60">{prefs.sortOrder === 'asc' ? '↓' : '↑'}</span>
+                        ) : null}
+                        <button
+                          type="button"
+                          ref={(el) => {
+                            filterAnchorRefs.current.date = el
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenFilterColumn((c) => (c === 'date' ? null : 'date'))
+                          }}
+                          className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                            isExplorerColumnFilterActive('date', columnFilters, distinctColumnValues)
+                              ? 'text-primary'
+                              : 'text-foreground/50'
+                          }`}
+                          title="Filter by date"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                      {openFilterColumn === 'date' ? (
+                        <ColumnFilterDropdown
+                          columnKey="date"
+                          columnLabel="Date"
+                          values={distinctColumnValues.date}
+                          selected={new Set(columnFilters.date ?? distinctColumnValues.date)}
+                          onChange={(s) => setColumnFilters((prev) => ({ ...prev, date: Array.from(s) }))}
+                          onClose={() => setOpenFilterColumn(null)}
+                          tableAnchorRefs={filterAnchorRefs}
+                          tableAnchorKey="date"
+                        />
+                      ) : null}
+                    </th>
                     <th className="sticky right-0 z-20 w-36 min-w-[9rem] border-l border-border bg-muted/40 px-2 py-2 text-right font-medium">
                       Actions
                     </th>
@@ -725,7 +2031,20 @@ export function FilesExplorer() {
                 <tbody>
                   {items.map((item) =>
                     item.kind === 'folder' ? (
-                      <tr key={`f-${item.row.id}`} className="border-b border-border/80">
+                      <tr
+                        key={`f-${item.row.id}`}
+                        className={`border-b border-border/80 ${listSelection.has(`folder:${item.row.id}`) ? 'bg-muted/35' : ''}`}
+                      >
+                        <td className="w-10 px-2 py-2 align-middle">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-border"
+                            checked={listSelection.has(`folder:${item.row.id}`)}
+                            onChange={() => toggleListKey(`folder:${item.row.id}`)}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select folder ${item.row.name}`}
+                          />
+                        </td>
                         <td className="px-3 py-2">
                           <button
                             type="button"
@@ -738,6 +2057,14 @@ export function FilesExplorer() {
                             </span>
                           </button>
                         </td>
+                        {isGlobalSearchMode ? (
+                          <td
+                            className="hidden max-w-[14rem] truncate px-3 py-2 text-foreground/70 md:table-cell"
+                            title={item.row.location_path ?? undefined}
+                          >
+                            {item.row.location_path?.trim() || '—'}
+                          </td>
+                        ) : null}
                         <td className="hidden px-3 py-2 text-foreground/60 sm:table-cell">Folder</td>
                         <td className="px-3 py-2">—</td>
                         <td className="hidden px-3 py-2 md:table-cell">—</td>
@@ -763,7 +2090,20 @@ export function FilesExplorer() {
                         </td>
                       </tr>
                     ) : (
-                      <tr key={item.row.id} className="border-b border-border/80">
+                      <tr
+                        key={item.row.id}
+                        className={`border-b border-border/80 ${listSelection.has(`file:${item.row.id}`) ? 'bg-muted/35' : ''}`}
+                      >
+                        <td className="w-10 px-2 py-2 align-middle">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-border"
+                            checked={listSelection.has(`file:${item.row.id}`)}
+                            onChange={() => toggleListKey(`file:${item.row.id}`)}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select file ${item.row.original_filename}`}
+                          />
+                        </td>
                         <td className="max-w-[10rem] truncate px-3 py-2 sm:max-w-md">
                           <button
                             type="button"
@@ -775,9 +2115,27 @@ export function FilesExplorer() {
                                 : onOpenItem(item))
                             }
                           >
-                            {item.row.original_filename}
+                            <span className="inline-flex min-w-0 items-center gap-1.5">
+                              {!fileSupportsInlinePreview(item.row.mime_type) ? (
+                                <FileTypeGlyphIcon
+                                  mime={item.row.mime_type}
+                                  filename={item.row.original_filename}
+                                  className="h-4 w-4 shrink-0 text-foreground/70"
+                                />
+                              ) : null}
+                              <span className="sm:hidden">{truncateTableFilename(item.row.original_filename)}</span>
+                              <span className="hidden truncate sm:inline">{item.row.original_filename}</span>
+                            </span>
                           </button>
                         </td>
+                        {isGlobalSearchMode ? (
+                          <td
+                            className="hidden max-w-[14rem] truncate px-3 py-2 text-foreground/70 md:table-cell"
+                            title={item.row.location_path ?? undefined}
+                          >
+                            {item.row.location_path?.trim() || '—'}
+                          </td>
+                        ) : null}
                         <td
                           className="hidden px-3 py-2 text-foreground/70 sm:table-cell"
                           title={item.row.mime_type?.trim() || undefined}
@@ -822,7 +2180,8 @@ export function FilesExplorer() {
                     )
                   )}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -873,6 +2232,7 @@ export function FilesExplorer() {
         onClose={() => setFolderEditTarget(null)}
         onSaved={(_row) => {
           void loadListing()
+          refreshGlobalSearchIfActive()
           requestFilesTreeRefresh()
         }}
         onDeleted={({ id, parentId }) => {
@@ -882,6 +2242,19 @@ export function FilesExplorer() {
             setPreviewFile(null)
           }
           void loadListing()
+          refreshGlobalSearchIfActive()
+          requestFilesTreeRefresh()
+        }}
+      />
+      <BulkFileUploadApplyModal
+        open={bulkApplyTargets !== null && bulkApplyTargets.length > 0}
+        files={bulkApplyTargets ?? []}
+        canManageAcl={canManageAcl}
+        canCreateFolder={canManage}
+        onClose={() => setBulkApplyTargets(null)}
+        onApplied={() => {
+          void loadListing()
+          refreshGlobalSearchIfActive()
           requestFilesTreeRefresh()
         }}
       />
@@ -890,15 +2263,18 @@ export function FilesExplorer() {
         file={editTarget}
         canManageAcl={canManageAcl}
         canDelete={canManage}
+        canCreateFolder={canManage}
         onClose={() => setEditTarget(null)}
         onSaved={(row) => {
           setPreviewFile((p) => (p?.id === row.id ? row : p))
           void loadListing()
+          refreshGlobalSearchIfActive()
         }}
         onDeleted={(id) => {
           setPreviewFile((p) => (p?.id === id ? null : p))
           setEditTarget((t) => (t?.id === id ? null : t))
           void loadListing()
+          refreshGlobalSearchIfActive()
         }}
       />
     </div>

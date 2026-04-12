@@ -30,7 +30,16 @@ export function LocationSchemas() {
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
+  const [duplicateSource, setDuplicateSource] = useState<LocationSchema | null>(null)
+  const [duplicateNewName, setDuplicateNewName] = useState('')
+  const [duplicateNewDescription, setDuplicateNewDescription] = useState('')
   const navigate = useNavigate()
+
+  function defaultDuplicateName(name: string): string {
+    const t = name.trim()
+    return t ? `${t} (copy)` : '(copy)'
+  }
 
   useEffect(() => {
     void refreshSchemas()
@@ -43,6 +52,14 @@ export function LocationSchemas() {
     ])
     setSchemas(schemasResp.data)
     setZones(zonesResp.data)
+  }
+
+  /** Zone names using this schema, sorted for display. */
+  function zoneNamesForSchema(schemaId: string): string[] {
+    return zones
+      .filter((z) => z.schemaId === schemaId)
+      .map((z) => z.name)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   }
 
   function schemaDeleteBlockedReason(schemaId: string): string | null {
@@ -99,6 +116,34 @@ export function LocationSchemas() {
       window.alert('Failed to save schema')
     } finally {
       setSavingEdit(false)
+    }
+  }
+
+  function openDuplicateModal(row: LocationSchema) {
+    setDuplicateSource(row)
+    setDuplicateNewName(defaultDuplicateName(row.name))
+    setDuplicateNewDescription(row.description ?? '')
+  }
+
+  async function handleSubmitDuplicate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!duplicateSource || !duplicateNewName.trim()) return
+    setDuplicatingId(duplicateSource.id)
+    try {
+      const { data } = await api.post<LocationSchema>(`/locations/schemas/${duplicateSource.id}/duplicate`, {
+        name: duplicateNewName.trim(),
+        description: duplicateNewDescription.trim(),
+      })
+      setDuplicateSource(null)
+      void refreshSchemas()
+      navigate(`/locations/schemas/${data.id}`)
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        'Failed to duplicate schema'
+      showAlert(msg, 'Duplicate failed')
+    } finally {
+      setDuplicatingId(null)
     }
   }
 
@@ -159,9 +204,28 @@ export function LocationSchemas() {
           { key: 'name', label: 'Schema', getValue: (s) => s.name, width: '18rem' },
           { key: 'description', label: 'Description', getValue: (s) => s.description ?? '' },
           {
+            key: 'zones',
+            label: 'Zones',
+            width: '16rem',
+            getValue: (s) => zoneNamesForSchema(s.id).join(', '),
+            render: (s) => {
+              const row = s as LocationSchema
+              const names = zoneNamesForSchema(row.id)
+              if (names.length === 0) {
+                return <span className="text-sm text-foreground/45">—</span>
+              }
+              const text = names.join(', ')
+              return (
+                <span className="text-sm text-foreground/90" title={text}>
+                  {text}
+                </span>
+              )
+            },
+          },
+          {
             key: 'actions',
             label: '',
-            width: '11rem',
+            width: '14rem',
             getValue: () => '',
             render: (s) => {
               const row = s as LocationSchema
@@ -180,6 +244,15 @@ export function LocationSchemas() {
                 </button>
                 <button
                   type="button"
+                  className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-background disabled:opacity-50"
+                  disabled={duplicatingId === row.id}
+                  title="Copy this schema’s components and fields"
+                  onClick={() => openDuplicateModal(row)}
+                >
+                  {duplicatingId === row.id ? '…' : 'Duplicate'}
+                </button>
+                <button
+                  type="button"
                   className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-500 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={!!deleteBlocked}
                   title={deleteBlocked ?? 'Delete this schema'}
@@ -193,6 +266,69 @@ export function LocationSchemas() {
           },
         ]}
       />
+        {canWrite && duplicateSource && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+            <div
+              className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-2">
+                <h2 className="text-base font-semibold text-foreground">Duplicate schema</h2>
+                <button
+                  type="button"
+                  onClick={() => !duplicatingId && setDuplicateSource(null)}
+                  className="shrink-0 rounded-lg px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                  disabled={!!duplicatingId}
+                >
+                  Close
+                </button>
+              </div>
+              <p className="mb-4 text-sm text-foreground/75">
+                Components and custom fields are copied. Zones and location rows are not.
+              </p>
+              <form onSubmit={handleSubmitDuplicate} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-foreground">New schema name</label>
+                  <input
+                    type="text"
+                    value={duplicateNewName}
+                    onChange={(e) => setDuplicateNewName(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    autoFocus
+                    disabled={!!duplicatingId}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground">Description</label>
+                  <textarea
+                    value={duplicateNewDescription}
+                    onChange={(e) => setDuplicateNewDescription(e.target.value)}
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                    disabled={!!duplicatingId}
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDuplicateSource(null)}
+                    className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
+                    disabled={!!duplicatingId}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                    disabled={!duplicateNewName.trim() || !!duplicatingId}
+                  >
+                    {duplicatingId ? 'Duplicating…' : 'Duplicate'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
         {canWrite && editSchema && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
             <div

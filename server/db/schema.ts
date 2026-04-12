@@ -246,6 +246,9 @@ export function initSchema(db: DbWrapper) {
   migrateStoredFilesRoleOnlyAcl(db)
   migrateFileFoldersAllowedRoleSlugs(db)
   migrateStoredFilesInheritFolderAcl(db)
+  migrateStoredFilesRecycle(db)
+  migrateStoredFilesRecycleOriginalFolder(db)
+  migrateStoredFilesRecycleFolderLabel(db)
   migrateRolesGrantModuleFiles(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
@@ -946,6 +949,43 @@ function migrateStoredFilesInheritFolderAcl(db: DbWrapper) {
     if (!cols.includes('inherit_folder_acl')) {
       db.run('ALTER TABLE stored_files ADD COLUMN inherit_folder_acl INTEGER DEFAULT 1')
       db.run('UPDATE stored_files SET inherit_folder_acl = 1 WHERE inherit_folder_acl IS NULL')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Soft-delete: ISO timestamp when moved to recycle bin; NULL = active. */
+function migrateStoredFilesRecycle(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'stored_files')
+    if (!cols.includes('deleted_at')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN deleted_at TEXT')
+    }
+    db.run('CREATE INDEX IF NOT EXISTS idx_stored_files_deleted_at ON stored_files(deleted_at)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** When folder rows are removed, `folder_id` is cleared; this keeps the last folder for restore UX. */
+function migrateStoredFilesRecycleOriginalFolder(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'stored_files')
+    if (!cols.includes('recycle_original_folder_id')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN recycle_original_folder_id TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Display path when `recycle_original_folder_id` points at a deleted folder (e.g. `Photos / 2024`). */
+function migrateStoredFilesRecycleFolderLabel(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'stored_files')
+    if (!cols.includes('recycle_original_folder_label')) {
+      db.run('ALTER TABLE stored_files ADD COLUMN recycle_original_folder_label TEXT')
     }
   } catch {
     // Ignore

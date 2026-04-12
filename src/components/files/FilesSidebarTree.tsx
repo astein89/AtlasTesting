@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { getFolderTree, type FileFolderTreeNode } from '@/api/files'
-import { folderIdFromSearch } from '@/lib/filesUrl'
+import { FILES_PREFIX } from '@/lib/appPaths'
+import { filesPathWithFolder, folderIdFromSearch } from '@/lib/filesUrl'
 import { useFilesModuleHost } from '@/contexts/FilesModuleHostContext'
 import { FILES_TREE_REFRESH_EVENT } from '@/lib/filesTreeRefresh'
 import { useAuthStore } from '@/store/authStore'
@@ -39,6 +40,9 @@ function ArrowUpTrayIcon({ className }: { className?: string }) {
 export function FilesSidebarTree({ onNavigate }: { onNavigate?: () => void }) {
   const { requestNewFolder, requestUploadPicker } = useFilesModuleHost()
   const canManageFiles = useAuthStore((s) => s.hasPermission('files.manage'))
+  const canRecycle = useAuthStore((s) => s.hasPermission('files.recycle'))
+  const location = useLocation()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const folderId = folderIdFromSearch(searchParams)
   const [tree, setTree] = useState<FileFolderTreeNode[]>([])
@@ -63,41 +67,59 @@ export function FilesSidebarTree({ onNavigate }: { onNavigate?: () => void }) {
   }, [loadTree])
 
   const goFolder = (id: string | null) => {
-    setSearchParams(id ? { folder: id } : {})
+    // On recycle bin, open the library at that folder instead of keeping ?folder= on /files/recycle.
+    if (location.pathname === `${FILES_PREFIX}/recycle`) {
+      navigate(filesPathWithFolder(id))
+    } else {
+      setSearchParams(id ? { folder: id } : {})
+    }
     onNavigate?.()
   }
 
   return (
-    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-      <div className="mb-2 flex min-h-9 items-center justify-between gap-2">
-        <div className="min-w-0 text-xs font-medium uppercase tracking-wide text-foreground/50">Folders</div>
-        {canManageFiles ? (
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              title="New folder"
-              aria-label="New folder"
-              onClick={() => {
-                requestNewFolder()
-                onNavigate?.()
-              }}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-foreground hover:bg-muted"
-            >
-              <NewFolderIcon className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              title="Upload files"
-              aria-label="Upload files"
-              onClick={() => requestUploadPicker()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-foreground hover:bg-muted"
-            >
-              <ArrowUpTrayIcon className="h-4 w-4" />
-            </button>
-          </div>
-        ) : null}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mb-2 flex min-h-9 items-center justify-between gap-2">
+          <div className="min-w-0 text-xs font-medium uppercase tracking-wide text-foreground/50">Folders</div>
+          {canManageFiles ? (
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                title="New folder"
+                aria-label="New folder"
+                onClick={() => {
+                  requestNewFolder()
+                  onNavigate?.()
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-foreground hover:bg-muted"
+              >
+                <NewFolderIcon className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                title="Upload files"
+                aria-label="Upload files"
+                onClick={() => requestUploadPicker()}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-foreground hover:bg-muted"
+              >
+                <ArrowUpTrayIcon className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <FolderTreeNav nodes={tree} currentFolderId={folderId} onSelect={goFolder} />
       </div>
-      <FolderTreeNav nodes={tree} currentFolderId={folderId} onSelect={goFolder} />
+      {canRecycle ? (
+        <div className="shrink-0 border-t border-border pt-2">
+          <Link
+            to={`${FILES_PREFIX}/recycle`}
+            onClick={() => onNavigate?.()}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Recycle bin
+          </Link>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -17,11 +17,7 @@ const projectRoot = path.resolve(__dirname, '..')
 function sqlitePath(): string {
   const fromEnv = process.env.SQLITE_PATH || process.env.DB_PATH
   if (fromEnv?.trim()) return path.resolve(projectRoot, fromEnv.trim())
-  const a = path.join(projectRoot, 'dc-automation.db')
-  const b = path.join(projectRoot, 'dc_automation.db')
-  if (fs.existsSync(a)) return a
-  if (fs.existsSync(b)) return b
-  return a
+  return path.join(projectRoot, 'dc-automation.db')
 }
 
 const TABLE_ORDER = [

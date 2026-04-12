@@ -32,6 +32,7 @@ const ResultsList = lazy(() => import('./routes/ResultsList').then((m) => ({ def
 const ResultDetail = lazy(() => import('./routes/ResultDetail').then((m) => ({ default: m.ResultDetail })))
 const Users = lazy(() => import('./routes/Users').then((m) => ({ default: m.Users })))
 const DbTablesViewer = lazy(() => import('./routes/DbTablesViewer').then((m) => ({ default: m.DbTablesViewer })))
+const AdminStatusPage = lazy(() => import('./routes/AdminStatusPage').then((m) => ({ default: m.AdminStatusPage })))
 const Settings = lazy(() => import('./routes/Settings').then((m) => ({ default: m.Settings })))
 const Locations = lazy(() => import('./routes/Locations').then((m) => ({ default: m.Locations })))
 const LocationSchemas = lazy(() =>
@@ -51,7 +52,13 @@ const WikiIndex = lazy(() => import('./routes/wiki/WikiIndex').then((m) => ({ de
 const WikiCatchAll = lazy(() =>
   import('./routes/wiki/WikiCatchAll').then((m) => ({ default: m.WikiCatchAll }))
 )
+const WikiRecycleBin = lazy(() =>
+  import('./routes/wiki/WikiRecycleBin').then((m) => ({ default: m.WikiRecycleBin }))
+)
 const FilesLibrary = lazy(() => import('./routes/FilesLibrary').then((m) => ({ default: m.FilesLibrary })))
+const FilesRecycleBin = lazy(() =>
+  import('./routes/FilesRecycleBin').then((m) => ({ default: m.FilesRecycleBin }))
+)
 
 const REHYDRATE_DELAY_MS = 300
 
@@ -358,6 +365,7 @@ export function createAppBrowserRouter(basePath: string) {
           </Route>
           <Route path="/admin" element={adminLayout}>
             <Route index element={<AdminIndexRedirect />} />
+            <Route path="status" element={<AdminStatusPage />} />
             <Route
               path="roles"
               element={
@@ -393,10 +401,26 @@ export function createAppBrowserRouter(basePath: string) {
           </Route>
           <Route path="/wiki" element={wikiLayout}>
             <Route index element={<WikiIndex />} />
+            <Route
+              path="recycle"
+              element={
+                <PermissionGuard permission="wiki.recycle">
+                  <WikiRecycleBin />
+                </PermissionGuard>
+              }
+            />
             <Route path="*" element={<WikiCatchAll />} />
           </Route>
           <Route path="/files" element={filesLayout}>
             <Route index element={<FilesLibrary />} />
+            <Route
+              path="recycle"
+              element={
+                <PermissionGuard permission="files.recycle">
+                  <FilesRecycleBin />
+                </PermissionGuard>
+              }
+            />
           </Route>
           <Route path="/locations" element={locationsLayout}>
             <Route

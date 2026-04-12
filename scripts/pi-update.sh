@@ -21,10 +21,6 @@ if [ -f dc-automation.db ]; then
   mkdir -p db_backup
   cp dc-automation.db "db_backup/dc-automation.db.backup.$(date +%Y%m%d-%H%M%S)"
   echo "Backed up dc-automation.db to db_backup/"
-elif [ -f dc_automation.db ]; then
-  mkdir -p db_backup
-  cp dc_automation.db "db_backup/dc_automation.db.backup.$(date +%Y%m%d-%H%M%S)"
-  echo "Backed up dc_automation.db to db_backup/ (rename to dc-automation.db when convenient; see docs/MIGRATION_DC_AUTOMATION.md)"
 elif [ -f atlas.db ]; then
   mkdir -p db_backup
   cp atlas.db "db_backup/atlas.db.backup.$(date +%Y%m%d-%H%M%S)"

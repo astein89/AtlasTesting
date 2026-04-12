@@ -5,6 +5,16 @@ import {
   getPasswordPolicy,
   normalizePasswordPolicyBody,
 } from '../lib/passwordPolicy.js'
+import {
+  getFilesRecycleRetentionDays,
+  normalizeFilesRecycleRetentionDaysBody,
+  setFilesRecycleRetentionDays,
+} from '../lib/filesRecycleSettings.js'
+import {
+  getWikiRecycleRetentionDays,
+  normalizeWikiRecycleRetentionDaysBody,
+  setWikiRecycleRetentionDays,
+} from '../lib/wikiRecycleSettings.js'
 import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
 
@@ -34,6 +44,54 @@ router.put(
       )
       .run(PASSWORD_POLICY_KV_KEY, JSON.stringify(normalized.data))
     res.json(normalized.data)
+  })
+)
+
+router.get(
+  '/files-recycle',
+  authMiddleware,
+  requirePermission('settings.access'),
+  asyncRoute(async (_req: AuthRequest, res) => {
+    const retentionDays = await getFilesRecycleRetentionDays()
+    res.json({ retentionDays })
+  })
+)
+
+router.put(
+  '/files-recycle',
+  authMiddleware,
+  requirePermission('settings.access'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const normalized = normalizeFilesRecycleRetentionDaysBody(req.body)
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error })
+    }
+    await setFilesRecycleRetentionDays(normalized.days)
+    res.json({ retentionDays: normalized.days })
+  })
+)
+
+router.get(
+  '/wiki-recycle',
+  authMiddleware,
+  requirePermission('settings.access'),
+  asyncRoute(async (_req: AuthRequest, res) => {
+    const retentionDays = await getWikiRecycleRetentionDays()
+    res.json({ retentionDays })
+  })
+)
+
+router.put(
+  '/wiki-recycle',
+  authMiddleware,
+  requirePermission('settings.access'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const normalized = normalizeWikiRecycleRetentionDaysBody(req.body)
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error })
+    }
+    await setWikiRecycleRetentionDays(normalized.days)
+    res.json({ retentionDays: normalized.days })
   })
 )
 

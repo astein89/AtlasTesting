@@ -1,0 +1,20 @@
+# Copy to files-backup.conf beside backup-on-disk-files.sh (or set FILES_BACKUP_CONF).
+# Backs up wiki + uploads + optional paths; does NOT back up the database.
+
+# Absolute path to the DC Automation checkout (same cwd PM2 uses).
+# APP_ROOT=/home/dcauto/dc-automation
+
+# Where to write dc-automation-files-<timestamp>.tar.gz and logs/state.
+# ARCHIVE_DIR=/var/lib/dc-automation-file-backups
+
+# Set to 0 to skip creating the tarball (only rclone/rsync if enabled).
+# ENABLE_TAR=1
+
+# Optional: rclone remote prefix — each run uploads to ${RCLONE_REMOTE_BASE}/<timestamp>/...
+# Same rclone remote style as backup.conf (e.g. dropbox:Backups/dc-automation/on-disk).
+# RCLONE_REMOTE_BASE=dropbox:Backups/dc-automation/on-disk
+
+# Optional: local mirror path (parent dirs created as needed). Uses rsync -a --delete.
+# RSYNC_MIRROR=/mnt/nas/dc-automation
+
+# RCLONE_OPTS=--retries 5 --low-level-retries 10 --timeout 2m

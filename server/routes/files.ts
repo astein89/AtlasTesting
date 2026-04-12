@@ -12,6 +12,7 @@ import {
 import { roleHasPermission } from '../lib/permissionsCatalog.js'
 import { folderAccessibleToUser, storedFileAccessibleToUser } from '../lib/fileAccess.js'
 import { db } from '../db/index.js'
+import { getFilesRecycleRetentionDays } from '../lib/filesRecycleSettings.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
 
 const router = Router()
@@ -77,6 +78,36 @@ async function isFolderUnderAncestor(descendantId: string, ancestorId: string): 
     cur = row?.parent_id ?? null
   }
   return false
+}
+
+/** All folder IDs in the subtree rooted at `rootId`, including `rootId` (BFS). */
+async function collectSubtreeFolderIds(rootId: string): Promise<string[]> {
+  const out: string[] = []
+  const queue = [rootId]
+  const seen = new Set<string>()
+  while (queue.length) {
+    const id = queue.shift()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+    const kids = (await db.prepare('SELECT id FROM file_folders WHERE parent_id = ?').all(id)) as { id: string }[]
+    for (const k of kids) queue.push(k.id)
+  }
+  return out
+}
+
+function folderDepthFromRoot(
+  id: string,
+  rootId: string,
+  parentMap: Map<string, string | null>
+): number {
+  let d = 0
+  let cur: string | null = id
+  while (cur && cur !== rootId) {
+    d++
+    cur = parentMap.get(cur) ?? null
+  }
+  return d
 }
 
 async function getFolderAclLayersFromDb(folderId: string | null): Promise<string[][]> {
@@ -194,6 +225,71 @@ export type StoredFileRow = {
   /** 1 = follow folder ACL chain; 0 = use only `allowed_role_slugs` on this row. */
   inherit_folder_acl: number | null
   uploaded_by_username?: string | null
+  /** ISO timestamp when soft-deleted (recycle bin); unset/null = active. */
+  deleted_at?: string | null
+  /** Set when `folder_id` was cleared because the folder row was deleted; used to restore to same place if recreated. */
+  recycle_original_folder_id?: string | null
+  /** Human path when the folder row was deleted (e.g. `A / B`); for recycle bin display. */
+  recycle_original_folder_label?: string | null
+}
+
+function isFileInRecycle(row: { deleted_at?: string | null }): boolean {
+  return Boolean(row.deleted_at && String(row.deleted_at).trim() !== '')
+}
+
+async function fileFolderExistsInDb(folderId: string): Promise<boolean> {
+  const r = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(folderId)) as { id: string } | undefined
+  return Boolean(r)
+}
+
+type ResolveRestoreTarget =
+  | { ok: true; folderId: string | null }
+  | { ok: false; needsFolder: true }
+  | { ok: false; error: string; status: number }
+
+async function resolveRestoreTargetFolderId(
+  row: StoredFileRow,
+  body: unknown,
+  user: NonNullable<AuthRequest['user']>
+): Promise<ResolveRestoreTarget> {
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+  const persisted = row.folder_id?.trim() || null
+  const remembered = row.recycle_original_folder_id?.trim() || null
+
+  if (persisted && (await fileFolderExistsInDb(persisted))) {
+    if (!(await folderChainAccessibleFromNode(persisted, user))) {
+      return { ok: false, error: 'Forbidden', status: 403 }
+    }
+    return { ok: true, folderId: persisted }
+  }
+  if (remembered && (await fileFolderExistsInDb(remembered))) {
+    if (!(await folderChainAccessibleFromNode(remembered, user))) {
+      return { ok: false, error: 'Forbidden', status: 403 }
+    }
+    return { ok: true, folderId: remembered }
+  }
+  if (!persisted && !remembered) {
+    return { ok: true, folderId: null }
+  }
+
+  if (!('folderId' in b)) {
+    return { ok: false, needsFolder: true }
+  }
+  const raw = b.folderId
+  if (raw === null || raw === '') {
+    return { ok: true, folderId: null }
+  }
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, error: 'folderId must be a string or null', status: 400 }
+  }
+  const fid = raw.trim()
+  if (!(await fileFolderExistsInDb(fid))) {
+    return { ok: false, error: 'Folder not found', status: 400 }
+  }
+  if (!(await folderChainAccessibleFromNode(fid, user))) {
+    return { ok: false, error: 'Forbidden', status: 403 }
+  }
+  return { ok: true, folderId: fid }
 }
 
 export type FileFolderRow = {
@@ -206,6 +302,25 @@ export type FileFolderRow = {
 }
 
 type FileFolderTreeNode = FileFolderRow & { children: FileFolderTreeNode[] }
+
+/** Full path like `Parent / Child` for a folder row still in `file_folders`. */
+async function folderDisplayPathFromId(folderId: string): Promise<string> {
+  const segments: string[] = []
+  let id: string | null = folderId
+  const guard = new Set<string>()
+  while (id) {
+    if (guard.has(id)) break
+    guard.add(id)
+    const row = (await db
+      .prepare('SELECT parent_id, name FROM file_folders WHERE id = ?')
+      .get(id)) as { parent_id: string | null; name: string } | undefined
+    if (!row) break
+    segments.unshift(row.name)
+    const p = row.parent_id?.trim() || null
+    id = p
+  }
+  return segments.length > 0 ? segments.join(' / ') : folderId
+}
 
 function buildFolderTree(rows: FileFolderRow[]): FileFolderTreeNode[] {
   const map = new Map<string, FileFolderTreeNode>()
@@ -239,27 +354,43 @@ function parseSort(req: AuthRequest): { sortBy: 'name' | 'date' | 'size' | 'type
   return { sortBy, order }
 }
 
+/** ORDER BY clause for `stored_files sf` list/search (same semantics as folder listing). */
+function storedFilesOrderClause(sortBy: string, order: string): string {
+  const dir = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+  switch (sortBy) {
+    case 'name':
+      return `LOWER(sf.original_filename) ${dir}`
+    case 'size':
+      return `(sf.size_bytes IS NULL) ASC, sf.size_bytes ${dir}`
+    case 'type':
+      return `LOWER(COALESCE(sf.mime_type, '')) ${dir}, LOWER(sf.original_filename) ASC`
+    case 'date':
+    default:
+      return `sf.created_at ${dir}`
+  }
+}
+
+function sanitizeGlobalSearchQuery(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  return raw.replace(/[%_]/g, '').trim().slice(0, 200)
+}
+
+async function folderParentPathLabel(parentId: string | null): Promise<string> {
+  if (!parentId?.trim()) return 'Library root'
+  return folderDisplayPathFromId(parentId.trim())
+}
+
+async function fileContainingFolderPathLabel(folderId: string | null): Promise<string> {
+  if (!folderId?.trim()) return 'Library root'
+  return folderDisplayPathFromId(folderId.trim())
+}
+
 async function listFilesInFolder(
   folderId: string | null,
   sortBy: string,
   order: string
 ): Promise<StoredFileRow[]> {
-  const dir = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
-  let orderSql: string
-  switch (sortBy) {
-    case 'name':
-      orderSql = `LOWER(sf.original_filename) ${dir}`
-      break
-    case 'size':
-      orderSql = `(sf.size_bytes IS NULL) ASC, sf.size_bytes ${dir}`
-      break
-    case 'type':
-      orderSql = `LOWER(COALESCE(sf.mime_type, '')) ${dir}, LOWER(sf.original_filename) ASC`
-      break
-    case 'date':
-    default:
-      orderSql = `sf.created_at ${dir}`
-  }
+  const orderSql = storedFilesOrderClause(sortBy, order)
   const sql = `
     SELECT sf.id, sf.original_filename, sf.storage_filename, sf.mime_type, sf.size_bytes,
            sf.uploaded_by, sf.created_at, sf.folder_id, sf.allowed_role_slugs, sf.required_permission,
@@ -268,6 +399,7 @@ async function listFilesInFolder(
     FROM stored_files sf
     LEFT JOIN users u ON u.id = sf.uploaded_by
     WHERE ((sf.folder_id = ?) OR (sf.folder_id IS NULL AND (CAST(? AS TEXT) IS NULL)))
+      AND (sf.deleted_at IS NULL OR sf.deleted_at = '')
     ORDER BY ${orderSql}
   `
   return (await db.prepare(sql).all(folderId, folderId)) as StoredFileRow[]
@@ -278,7 +410,8 @@ async function getFileRow(id: string): Promise<StoredFileRow | undefined> {
     .prepare(
       `SELECT sf.id, sf.original_filename, sf.storage_filename, sf.mime_type, sf.size_bytes,
               sf.uploaded_by, sf.created_at, COALESCE(sf.inherit_folder_acl, 1) AS inherit_folder_acl,
-              sf.folder_id, sf.allowed_role_slugs, sf.required_permission,
+              sf.folder_id, sf.allowed_role_slugs, sf.required_permission, sf.deleted_at,
+              sf.recycle_original_folder_id, sf.recycle_original_folder_label,
               u.username AS uploaded_by_username
        FROM stored_files sf
        LEFT JOIN users u ON u.id = sf.uploaded_by
@@ -359,6 +492,38 @@ router.get(
   })
 )
 
+/** Counts files and descendant folders that would be removed when deleting this folder (recursive). */
+router.get(
+  '/folders/:folderId/delete-impact',
+  requirePermission('module.files'),
+  requireFilesManage,
+  asyncRoute(async (req: AuthRequest, res) => {
+    const folderId = req.params.folderId
+    const root = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(folderId)) as
+      | { id: string }
+      | undefined
+    if (!root) return res.status(404).json({ error: 'Not found' })
+    const user = req.user!
+    if (!(await folderChainAccessibleFromNode(folderId, user))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    const subtreeIds = await collectSubtreeFolderIds(folderId)
+    if (subtreeIds.length === 0) {
+      return res.json({ fileCount: 0, subfolderCount: 0 })
+    }
+    const placeholders = subtreeIds.map(() => '?').join(',')
+    const nFiles = (await db
+      .prepare(
+        `SELECT COUNT(*) as c FROM stored_files WHERE folder_id IN (${placeholders})
+         AND (deleted_at IS NULL OR deleted_at = '')`
+      )
+      .get(...subtreeIds)) as { c: number }
+    const fileCount = Number(nFiles?.c ?? 0)
+    const subfolderCount = Math.max(0, subtreeIds.length - 1)
+    res.json({ fileCount, subfolderCount })
+  })
+)
+
 /** Zip of all files in this folder and subfolders the user may access (role/uploader rules). */
 router.get(
   '/folders/:folderId/download',
@@ -409,7 +574,8 @@ router.get(
             `SELECT sf.id, sf.original_filename, sf.storage_filename, sf.folder_id,
                   sf.uploaded_by, sf.allowed_role_slugs, COALESCE(sf.inherit_folder_acl, 1) AS inherit_folder_acl
            FROM stored_files sf
-           WHERE sf.folder_id IN (${placeholders})`
+           WHERE sf.folder_id IN (${placeholders})
+             AND (sf.deleted_at IS NULL OR sf.deleted_at = '')`
           )
           .all(...subtreeIds)) as {
           id: string
@@ -634,17 +800,62 @@ router.delete(
   requireFilesManage,
   asyncRoute(async (req: AuthRequest, res) => {
     const folderId = req.params.folderId
-    const nChild = (await db.prepare('SELECT COUNT(*) as c FROM file_folders WHERE parent_id = ?').get(folderId)) as {
-      c: number
+    const root = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(folderId)) as
+      | { id: string }
+      | undefined
+    if (!root) return res.status(404).json({ error: 'Not found' })
+    const user = req.user!
+    if (!(await folderChainAccessibleFromNode(folderId, user))) {
+      return res.status(404).json({ error: 'Not found' })
     }
-    const nFiles = (await db.prepare('SELECT COUNT(*) as c FROM stored_files WHERE folder_id = ?').get(folderId)) as {
-      c: number
+
+    const subtreeIds = await collectSubtreeFolderIds(folderId)
+    const placeholders = subtreeIds.map(() => '?').join(',')
+    const fileRows = (await db
+      .prepare(
+        `SELECT id FROM stored_files WHERE folder_id IN (${placeholders})
+         AND (deleted_at IS NULL OR deleted_at = '')`
+      )
+      .all(...subtreeIds)) as { id: string }[]
+
+    const recycledAt = new Date().toISOString()
+    for (const f of fileRows) {
+      await db
+        .prepare(`UPDATE stored_files SET deleted_at = ? WHERE id = ? AND (deleted_at IS NULL OR deleted_at = '')`)
+        .run(recycledAt, f.id)
     }
-    if ((nChild?.c ?? 0) > 0 || (nFiles?.c ?? 0) > 0) {
-      return res.status(409).json({ error: 'Folder is not empty' })
+
+    // Drop folder FK references so file_folders rows can be deleted (PG enforces stored_files_folder_id_fkey).
+    // Preserve last folder id + display path for recycle bin when the folder no longer exists.
+    const affectedFiles = (await db
+      .prepare(
+        `SELECT id, folder_id FROM stored_files WHERE folder_id IN (${placeholders}) AND folder_id IS NOT NULL`
+      )
+      .all(...subtreeIds)) as { id: string; folder_id: string }[]
+    const labelCache = new Map<string, string>()
+    for (const f of affectedFiles) {
+      let label = labelCache.get(f.folder_id)
+      if (label === undefined) {
+        label = await folderDisplayPathFromId(f.folder_id)
+        labelCache.set(f.folder_id, label)
+      }
+      await db
+        .prepare(
+          `UPDATE stored_files SET recycle_original_folder_id = folder_id, recycle_original_folder_label = ?, folder_id = NULL WHERE id = ?`
+        )
+        .run(label, f.id)
     }
-    const r = await db.prepare('DELETE FROM file_folders WHERE id = ?').run(folderId)
-    if (r.changes === 0) return res.status(404).json({ error: 'Not found' })
+
+    const parentRows = (await db
+      .prepare(`SELECT id, parent_id FROM file_folders WHERE id IN (${placeholders})`)
+      .all(...subtreeIds)) as { id: string; parent_id: string | null }[]
+    const parentMap = new Map(parentRows.map((r) => [r.id, r.parent_id]))
+    const sortedFolderIds = [...subtreeIds].sort(
+      (a, b) => folderDepthFromRoot(b, folderId, parentMap) - folderDepthFromRoot(a, folderId, parentMap)
+    )
+    for (const id of sortedFolderIds) {
+      await db.prepare('DELETE FROM file_folders WHERE id = ?').run(id)
+    }
     res.json({ ok: true })
   })
 )
@@ -665,6 +876,170 @@ router.get(
       if (await storedFileAllowedForUser(r, user)) filtered.push(r)
     }
     res.json(filtered)
+  })
+)
+
+router.get(
+  '/recycle',
+  requirePermission('module.files'),
+  requirePermission('files.recycle'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const rows = (await db
+      .prepare(
+        `SELECT sf.id, sf.original_filename, sf.storage_filename, sf.mime_type, sf.size_bytes,
+                sf.uploaded_by, sf.created_at, sf.folder_id, sf.allowed_role_slugs, sf.required_permission,
+                COALESCE(sf.inherit_folder_acl, 1) AS inherit_folder_acl,
+                sf.deleted_at, sf.recycle_original_folder_id, sf.recycle_original_folder_label,
+                u.username AS uploaded_by_username
+         FROM stored_files sf
+         LEFT JOIN users u ON u.id = sf.uploaded_by
+         WHERE sf.deleted_at IS NOT NULL AND sf.deleted_at != ''
+         ORDER BY sf.deleted_at DESC`
+      )
+      .all()) as StoredFileRow[]
+    const user = req.user!
+    const filtered: StoredFileRow[] = []
+    for (const r of rows) {
+      if (await storedFileAllowedForUser(r, user)) filtered.push(r)
+    }
+    const retentionDays = await getFilesRecycleRetentionDays()
+    res.json({ items: filtered, retentionDays })
+  })
+)
+
+router.get(
+  '/search',
+  requirePermission('module.files'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const q = sanitizeGlobalSearchQuery(req.query.q)
+    if (!q) return res.json({ folders: [], files: [] })
+
+    const { sortBy, order } = parseSort(req)
+    const orderSql = storedFilesOrderClause(sortBy, order)
+    const like = `%${q.toLowerCase()}%`
+    const user = req.user!
+
+    const fileRows = (await db
+      .prepare(
+        `SELECT sf.id, sf.original_filename, sf.storage_filename, sf.mime_type, sf.size_bytes,
+                sf.uploaded_by, sf.created_at, sf.folder_id, sf.allowed_role_slugs, sf.required_permission,
+                COALESCE(sf.inherit_folder_acl, 1) AS inherit_folder_acl,
+                u.username AS uploaded_by_username
+         FROM stored_files sf
+         LEFT JOIN users u ON u.id = sf.uploaded_by
+         WHERE (sf.deleted_at IS NULL OR sf.deleted_at = '')
+           AND (
+             LOWER(sf.original_filename) LIKE ?
+             OR LOWER(COALESCE(sf.mime_type, '')) LIKE ?
+           )
+         ORDER BY ${orderSql}
+         LIMIT 500`
+      )
+      .all(like, like)) as StoredFileRow[]
+
+    const folderRows = (await db
+      .prepare(
+        `SELECT id, parent_id, name, created_at, allowed_role_slugs, created_by
+         FROM file_folders
+         WHERE LOWER(name) LIKE ?
+         ORDER BY LOWER(name) ASC
+         LIMIT 300`
+      )
+      .all(like)) as FileFolderRow[]
+
+    type FolderHit = FileFolderRow & { location_path: string }
+    type FileHit = StoredFileRow & { location_path: string }
+
+    const filteredFolders: FolderHit[] = []
+    const parentPathCache = new Map<string, string>()
+    for (const r of folderRows) {
+      if (!(await folderChainAccessibleFromNode(r.id, user))) continue
+      const pkey = r.parent_id ?? ''
+      let loc = parentPathCache.get(pkey)
+      if (loc === undefined) {
+        loc = await folderParentPathLabel(r.parent_id)
+        parentPathCache.set(pkey, loc)
+      }
+      filteredFolders.push({ ...r, location_path: loc })
+    }
+
+    const filteredFiles: FileHit[] = []
+    const fileFolderPathCache = new Map<string, string>()
+    for (const r of fileRows) {
+      if (!(await storedFileAllowedForUser(r, user))) continue
+      const fkey = r.folder_id ?? ''
+      let loc = fileFolderPathCache.get(fkey)
+      if (loc === undefined) {
+        loc = await fileContainingFolderPathLabel(r.folder_id)
+        fileFolderPathCache.set(fkey, loc)
+      }
+      filteredFiles.push({ ...r, location_path: loc })
+    }
+
+    res.json({ folders: filteredFolders, files: filteredFiles })
+  })
+)
+
+router.post(
+  '/:id/restore',
+  requirePermission('module.files'),
+  requirePermission('files.recycle'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const id = req.params.id
+    const row = await getFileRow(id)
+    if (!row) return res.status(404).json({ error: 'Not found' })
+    if (!req.user) return res.status(403).json({ error: 'Forbidden' })
+    if (!isFileInRecycle(row)) return res.status(400).json({ error: 'File is not in recycle bin' })
+    if (!canModifyFileMeta(req.user, row.uploaded_by)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!(await storedFileAllowedForUser(row, req.user))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    const resolved = await resolveRestoreTargetFolderId(row, req.body, req.user)
+    if (!resolved.ok) {
+      if ('needsFolder' in resolved) {
+        return res.status(409).json({ error: 'Choose a folder to restore to', code: 'RESTORE_NEEDS_FOLDER' })
+      }
+      return res.status(resolved.status).json({ error: resolved.error })
+    }
+    await db
+      .prepare(
+        `UPDATE stored_files SET deleted_at = NULL, folder_id = ?, recycle_original_folder_id = NULL, recycle_original_folder_label = NULL WHERE id = ?`
+      )
+      .run(resolved.folderId, id)
+    const out = await getFileRow(id)
+    res.json(out)
+  })
+)
+
+router.delete(
+  '/:id/permanent',
+  requirePermission('module.files'),
+  requirePermission('files.recycle'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const id = req.params.id
+    const row = await getFileRow(id)
+    if (!row) return res.status(404).json({ error: 'Not found' })
+    if (!req.user) return res.status(403).json({ error: 'Forbidden' })
+    if (!isFileInRecycle(row)) return res.status(400).json({ error: 'File is not in recycle bin' })
+    if (!canModifyFileMeta(req.user, row.uploaded_by)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!(await storedFileAllowedForUser(row, req.user))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    const dir = path.resolve(filesUploadDir())
+    const diskPath = path.resolve(path.join(dir, row.storage_filename))
+    if (diskPath.startsWith(dir) && fs.existsSync(diskPath)) {
+      try {
+        fs.unlinkSync(diskPath)
+      } catch {
+        /* */
+      }
+    }
+    await db.prepare('DELETE FROM stored_files WHERE id = ?').run(id)
+    res.json({ ok: true })
   })
 )
 
@@ -739,6 +1114,9 @@ router.put(
     if (!req.user) return res.status(403).json({ error: 'Forbidden' })
     if (!canModifyFileMeta(req.user, row.uploaded_by)) {
       return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (isFileInRecycle(row)) {
+      return res.status(400).json({ error: 'Cannot edit a file in the recycle bin; restore it first' })
     }
 
     let folder_id: string | null | undefined = undefined
@@ -818,25 +1196,13 @@ router.get(
   requirePermission('module.files'),
   asyncRoute(async (req: AuthRequest, res) => {
     const id = req.params.id
-    const row = (await db.prepare('SELECT * FROM stored_files WHERE id = ?').get(id)) as
-      | (StoredFileRow & { storage_filename: string })
-      | undefined
+    const row = await getFileRow(id)
     if (!row) return res.status(404).json({ error: 'Not found' })
     const user = req.user!
-    const viewRow: StoredFileRow = {
-      id: row.id,
-      original_filename: row.original_filename,
-      storage_filename: row.storage_filename,
-      mime_type: row.mime_type,
-      size_bytes: row.size_bytes,
-      uploaded_by: row.uploaded_by,
-      created_at: row.created_at,
-      folder_id: row.folder_id,
-      allowed_role_slugs: row.allowed_role_slugs,
-      required_permission: row.required_permission,
-      inherit_folder_acl: (row as StoredFileRow).inherit_folder_acl ?? 1,
+    if (!(await storedFileAllowedForUser(row, user))) {
+      return res.status(404).json({ error: 'Not found' })
     }
-    if (!(await storedFileAllowedForUser(viewRow, user))) {
+    if (isFileInRecycle(row) && !roleHasPermission(user.permissions, 'files.recycle')) {
       return res.status(404).json({ error: 'Not found' })
     }
     sendFileBytes(res, row, 'inline')
@@ -848,25 +1214,13 @@ router.get(
   requirePermission('module.files'),
   asyncRoute(async (req: AuthRequest, res) => {
     const id = req.params.id
-    const row = (await db.prepare('SELECT * FROM stored_files WHERE id = ?').get(id)) as
-      | (StoredFileRow & { storage_filename: string })
-      | undefined
+    const row = await getFileRow(id)
     if (!row) return res.status(404).json({ error: 'Not found' })
     const user = req.user!
-    const dlRow: StoredFileRow = {
-      id: row.id,
-      original_filename: row.original_filename,
-      storage_filename: row.storage_filename,
-      mime_type: row.mime_type,
-      size_bytes: row.size_bytes,
-      uploaded_by: row.uploaded_by,
-      created_at: row.created_at,
-      folder_id: row.folder_id,
-      allowed_role_slugs: row.allowed_role_slugs,
-      required_permission: row.required_permission,
-      inherit_folder_acl: (row as StoredFileRow).inherit_folder_acl ?? 1,
+    if (!(await storedFileAllowedForUser(row, user))) {
+      return res.status(404).json({ error: 'Not found' })
     }
-    if (!(await storedFileAllowedForUser(dlRow, user))) {
+    if (isFileInRecycle(row) && !roleHasPermission(user.permissions, 'files.recycle')) {
       return res.status(404).json({ error: 'Not found' })
     }
     sendFileBytes(res, row, 'attachment')
@@ -878,24 +1232,17 @@ router.delete(
   requirePermission('module.files'),
   asyncRoute(async (req: AuthRequest, res) => {
     const id = req.params.id
-    const row = (await db
-      .prepare('SELECT storage_filename, uploaded_by FROM stored_files WHERE id = ?')
-      .get(id)) as { storage_filename: string; uploaded_by: string } | undefined
+    const row = await getFileRow(id)
     if (!row) return res.status(404).json({ error: 'Not found' })
     if (!req.user) return res.status(403).json({ error: 'Forbidden' })
     if (!canModifyFileMeta(req.user, row.uploaded_by)) {
       return res.status(403).json({ error: 'Forbidden' })
     }
-    const dir = path.resolve(filesUploadDir())
-    const diskPath = path.resolve(path.join(dir, row.storage_filename))
-    if (diskPath.startsWith(dir) && fs.existsSync(diskPath)) {
-      try {
-        fs.unlinkSync(diskPath)
-      } catch {
-        /* */
-      }
+    if (isFileInRecycle(row)) {
+      return res.status(400).json({ error: 'File is already in recycle bin' })
     }
-    await db.prepare('DELETE FROM stored_files WHERE id = ?').run(id)
+    const recycledAt = new Date().toISOString()
+    await db.prepare('UPDATE stored_files SET deleted_at = ? WHERE id = ?').run(recycledAt, id)
     res.json({ ok: true })
   })
 )

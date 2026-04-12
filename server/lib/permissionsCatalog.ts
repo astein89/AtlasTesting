@@ -44,7 +44,17 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   },
   { id: 'home.edit', label: 'Edit home page content', group: 'Home' },
   { id: 'wiki.edit', label: 'Edit wiki pages (create / save Markdown files)', group: 'Wiki' },
+  {
+    id: 'wiki.recycle',
+    label: 'Wiki: view recycle bin, restore, and permanently delete pages',
+    group: 'Wiki',
+  },
   { id: 'files.manage', label: 'Files: upload and delete library files', group: 'Files' },
+  {
+    id: 'files.recycle',
+    label: 'Files: view recycle bin, restore, and permanently delete',
+    group: 'Files',
+  },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },
   { id: 'admin.db', label: 'Database tables viewer', group: 'Administration' },

@@ -34,7 +34,7 @@ This document covers two separate jobs:
 | Folder name (typical) | `automation-testing`, `AutomationTesting` | **`dc-automation`** |
 | PM2 process | `automation-testing` | **`dc-automation`** |
 | npm package `name` | `automation-testing` | **`dc-automation`** |
-| SQLite file | `atlas.db` | **`dc-automation.db`** (in **project root**, not inside `dist/`; legacy **`dc_automation.db`** is still opened if the hyphenated file is missing) |
+| SQLite file | `atlas.db` | **`dc-automation.db`** (in **project root**, not inside `dist/`) |
 | App URLs | `/test-plans`, … | **`/testing/...`**, **`/locations/...`**, home **`/`** — old paths may **302 redirect** |
 
 ---
@@ -246,7 +246,7 @@ pm2 restart dc-automation
 
 ### Database location and migrations
 
-**`dc-automation.db`** stays in the **project root** (not inside **`dist/`**), so it survives **`npm run build`**. If you still have only **`dc_automation.db`**, the app uses it until you run **`mv dc_automation.db dc-automation.db`**. Migrations run **automatically** on startup. If you see schema errors, check the release notes for that version.
+**`dc-automation.db`** stays in the **project root** (not inside **`dist/`**), so it survives **`npm run build`**. Migrations run **automatically** on startup. If you see schema errors, check the release notes for that version.
 
 ---
 

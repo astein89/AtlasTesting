@@ -15,7 +15,7 @@ This guide is for **operators** who already run DC Automation on **SQLite** (`dc
 ## How the app chooses the database
 
 - If **`DATABASE_URL`** is set (or `config.json` contains a non-empty **`databaseUrl`**), the server uses **PostgreSQL** and applies the **baseline schema** on startup.
-- If not, the server uses **SQLite** (`DB_PATH` or `dc-automation.db` / `dc_automation.db` in the project root).
+- If not, the server uses **SQLite** (`DB_PATH` or `dc-automation.db` in the project root).
 
 See [`.env.example`](../.env.example) and [config.default.json](../config.default.json). Local overrides can live in **`config.json`** (gitignored).
 
@@ -71,7 +71,7 @@ Do this in a **maintenance window** if the app is live.
    ```
 
    Alternatively, put **`databaseUrl`** in **`config.json`** (same merge rules as the app: env wins over `config.json` over `config.default.json`).  
-   The script reads SQLite from **`DB_PATH`**, **`SQLITE_PATH`**, or defaults to `./dc-automation.db` / `./dc_automation.db`.
+   The script reads SQLite from **`DB_PATH`**, **`SQLITE_PATH`**, or defaults to `./dc-automation.db`.
 
 6. Confirm the script exits with code **0** and review the per-table row counts in the log.
 7. **Start** the app with **`DATABASE_URL`** set. The app will not re-run the data copy on boot.

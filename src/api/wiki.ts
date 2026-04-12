@@ -136,3 +136,31 @@ export async function archiveWikiPage(path: string): Promise<{ ok: boolean; move
   })
   return data
 }
+
+export type WikiRecycleListItem = {
+  storageRel: string
+  wikiPath: string
+  deletedAt: string
+  title?: string
+}
+
+export async function listWikiRecyclePages(
+  signal?: AbortSignal
+): Promise<{ items: WikiRecycleListItem[]; retentionDays: number }> {
+  const { data } = await api.get<{ items: WikiRecycleListItem[]; retentionDays: number }>('/wiki/recycle', {
+    signal,
+  })
+  return {
+    items: Array.isArray(data?.items) ? data.items : [],
+    retentionDays: typeof data?.retentionDays === 'number' ? data.retentionDays : 30,
+  }
+}
+
+export async function restoreWikiRecyclePage(storageRel: string): Promise<{ ok: boolean; path: string }> {
+  const { data } = await api.post<{ ok: boolean; path: string }>('/wiki/recycle/restore', { storageRel })
+  return data
+}
+
+export async function permanentlyDeleteWikiRecyclePage(storageRel: string): Promise<void> {
+  await api.delete('/wiki/recycle/permanent', { data: { storageRel } })
+}

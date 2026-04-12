@@ -1,0 +1,45 @@
+# Bumps package.json patch version on each push to the default branch so semver tracks activity.
+# Requires: Settings → Actions → General → Workflow permissions → Read and write.
+# If main is protected and blocks bot pushes, use a PR-based flow or deploy-only version instead.
+name: Bump package version
+
+on:
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: bump-version-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Avoid loops: commits from this job include [skip ci], which skips Actions for that commit.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Bump patch version
+        run: npm version patch --no-git-tag-version
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --staged --quiet; then
+            echo "No version change; skipping."
+            exit 0
+          fi
+          git commit -m "chore(release): bump version [skip ci]"
+          git push

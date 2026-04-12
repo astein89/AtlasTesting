@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   DndContext,
   closestCenter,
@@ -244,7 +244,8 @@ function StaticSchemaComponentRow({
 
 export function LocationSchemaDetail() {
   const canWrite = useAuthStore((s) => s.canEditLocationSchemas())
-  const { showConfirm } = useAlertConfirm()
+  const { showConfirm, showAlert } = useAlertConfirm()
+  const navigate = useNavigate()
   const { schemaId } = useParams<{ schemaId: string }>()
   const [schema, setSchema] = useState<LocationSchema | null>(null)
   const [components, setComponents] = useState<SchemaComponent[]>([])
@@ -273,6 +274,15 @@ export function LocationSchemaDetail() {
   const [editSchemaName, setEditSchemaName] = useState('')
   const [editSchemaDescription, setEditSchemaDescription] = useState('')
   const [savingSchema, setSavingSchema] = useState(false)
+  const [duplicatingSchema, setDuplicatingSchema] = useState(false)
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false)
+  const [duplicateNewName, setDuplicateNewName] = useState('')
+  const [duplicateNewDescription, setDuplicateNewDescription] = useState('')
+
+  function defaultDuplicateName(name: string): string {
+    const t = name.trim()
+    return t ? `${t} (copy)` : '(copy)'
+  }
 
   async function load(id: string, signal?: AbortSignal) {
     setLoading(true)
@@ -435,6 +445,35 @@ export function LocationSchemaDetail() {
     setEditSchemaOpen(true)
   }
 
+  function openDuplicateModal() {
+    if (!schema) return
+    setDuplicateNewName(defaultDuplicateName(schema.name))
+    setDuplicateNewDescription(schema.description ?? '')
+    setDuplicateModalOpen(true)
+  }
+
+  async function handleSubmitDuplicateSchema(e: React.FormEvent) {
+    e.preventDefault()
+    if (!schemaId || !schema || !duplicateNewName.trim() || duplicatingSchema) return
+    setDuplicatingSchema(true)
+    setError(null)
+    try {
+      const { data } = await api.post<LocationSchema>(`/locations/schemas/${schemaId}/duplicate`, {
+        name: duplicateNewName.trim(),
+        description: duplicateNewDescription.trim(),
+      })
+      setDuplicateModalOpen(false)
+      navigate(`/locations/schemas/${data.id}`)
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        'Failed to duplicate schema'
+      showAlert(msg, 'Duplicate failed')
+    } finally {
+      setDuplicatingSchema(false)
+    }
+  }
+
   async function handleSaveSchemaMeta(e: React.FormEvent) {
     e.preventDefault()
     if (!schemaId || !editSchemaName.trim()) return
@@ -550,6 +589,15 @@ export function LocationSchemaDetail() {
               </button>
               <button
                 type="button"
+                onClick={openDuplicateModal}
+                className="rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-background disabled:opacity-50"
+                disabled={!schemaId || !schema || duplicatingSchema}
+                title="Copy components and custom fields to a new schema"
+              >
+                Duplicate schema
+              </button>
+              <button
+                type="button"
                 onClick={openNewComponentModal}
                 className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 disabled={!schemaId}
@@ -615,6 +663,70 @@ export function LocationSchemaDetail() {
           reservedComponentKeys={components.map((c) => c.key)}
           onError={(msg) => setError(msg)}
         />
+      )}
+
+      {canWrite && duplicateModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div
+            className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-2">
+              <h2 className="text-base font-semibold text-foreground">Duplicate schema</h2>
+              <button
+                type="button"
+                onClick={() => !duplicatingSchema && setDuplicateModalOpen(false)}
+                className="shrink-0 rounded-lg px-2 py-1 text-sm text-foreground/70 hover:bg-background"
+                disabled={duplicatingSchema}
+              >
+                Close
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-foreground/75">
+              Components and custom fields are copied. Zones and location rows are not.
+            </p>
+            <form onSubmit={handleSubmitDuplicateSchema} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground">New schema name</label>
+                <input
+                  type="text"
+                  value={duplicateNewName}
+                  onChange={(e) => setDuplicateNewName(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  autoFocus
+                  disabled={duplicatingSchema}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground">Description</label>
+                <textarea
+                  value={duplicateNewDescription}
+                  onChange={(e) => setDuplicateNewDescription(e.target.value)}
+                  rows={3}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                  disabled={duplicatingSchema}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDuplicateModalOpen(false)}
+                  className="rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background"
+                  disabled={duplicatingSchema}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                  disabled={!duplicateNewName.trim() || duplicatingSchema}
+                >
+                  {duplicatingSchema ? 'Duplicating…' : 'Duplicate'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {canWrite && editSchemaOpen && (

@@ -243,4 +243,8 @@ export async function initSchemaPg(db: AsyncDbWrapper): Promise<void> {
   for (const sql of BASELINE_PG_STATEMENTS) {
     await db.exec(sql)
   }
+  await db.exec('ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS deleted_at TEXT')
+  await db.exec('CREATE INDEX IF NOT EXISTS idx_stored_files_deleted_at ON stored_files(deleted_at)')
+  await db.exec('ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_id TEXT')
+  await db.exec('ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_label TEXT')
 }

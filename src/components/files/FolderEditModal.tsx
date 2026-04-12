@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import {
   deleteFolder,
+  getFolderDeleteImpact,
   getFolderTree,
   getRolesForFileAcl,
   updateFolder,
@@ -176,7 +177,24 @@ export function FolderEditModal({
 
   const confirmDelete = async () => {
     if (!canDelete) return
-    const ok = await showConfirm(`Delete folder “${folder.name}”? It must be empty.`, {
+    let fileCount = 0
+    let subfolderCount = 0
+    try {
+      const impact = await getFolderDeleteImpact(folder.id)
+      fileCount = impact.fileCount
+      subfolderCount = impact.subfolderCount
+    } catch {
+      showAlert('Could not check folder contents.', 'Files')
+      return
+    }
+    const parts: string[] = []
+    if (fileCount > 0) parts.push(`${fileCount} file${fileCount === 1 ? '' : 's'}`)
+    if (subfolderCount > 0) parts.push(`${subfolderCount} subfolder${subfolderCount === 1 ? '' : 's'}`)
+    const detail =
+      fileCount === 0 && subfolderCount === 0
+        ? 'This folder is empty.'
+        : `This will permanently delete ${parts.join(' and ')} (including all nested items).`
+    const ok = await showConfirm(`Delete folder “${folder.name}”? ${detail}`, {
       title: 'Delete folder',
       variant: 'danger',
       confirmLabel: 'Delete',
@@ -188,7 +206,7 @@ export function FolderEditModal({
       onDeleted({ id: folder.id, parentId: folder.parent_id })
       onClose()
     } catch {
-      showAlert('Folder is not empty or could not be deleted.', 'Files')
+      showAlert('Could not delete folder.', 'Files')
     } finally {
       setDeleting(false)
     }

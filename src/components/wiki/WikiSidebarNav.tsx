@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { isAbortLikeError } from '@/api/client'
 import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { useMatchMedia } from '@/hooks/useMatchMedia'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   archiveWikiPage,
   fetchWikiPages,
@@ -11,7 +11,8 @@ import {
   type WikiPageListItem,
 } from '@/api/wiki'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
-import { wikiEditUrl, wikiPageUrl, wikiPath, wikiTrailFromPathname } from '@/lib/appPaths'
+import { WIKI_PREFIX, wikiEditUrl, wikiPageUrl, wikiPath, wikiTrailFromPathname } from '@/lib/appPaths'
+import { WIKI_PAGES_REFRESH_EVENT } from '@/lib/wikiPagesRefresh'
 import { buildWikiTree, findWikiTreeNode, sortedTreeChildren, type WikiTreeNode } from '@/lib/wikiTree'
 import { useAuthStore } from '@/store/authStore'
 import { WikiMovePageModal } from './WikiMovePageModal'
@@ -394,6 +395,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
   const navigate = useNavigate()
   const { showAlert, showConfirm } = useAlertConfirm()
   const canEdit = useAuthStore((s) => s.hasPermission('wiki.edit'))
+  const canRecycle = useAuthStore((s) => s.hasPermission('wiki.recycle'))
   const searchInputRef = useRef<HTMLInputElement>(null)
   const sidebarLoadGenRef = useRef(0)
   const [pages, setPages] = useState<WikiPageListItem[]>([])
@@ -477,6 +479,12 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
   /** Omit `location.pathname`: refetching the page list on every in-wiki navigation aborted the
    * request each time and was unnecessary; mount covers entering the wiki module. */
   useAbortableEffect((signal) => load(signal), [load])
+
+  useEffect(() => {
+    const onRefresh = () => void load()
+    window.addEventListener(WIKI_PAGES_REFRESH_EVENT, onRefresh)
+    return () => window.removeEventListener(WIKI_PAGES_REFRESH_EVENT, onRefresh)
+  }, [load])
 
   /** Wiki path key for the current URL (view or editor); `null` on wiki home. Basename-safe. */
   const currentPagePath = useMemo(() => {
@@ -735,7 +743,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-col overflow-x-hidden">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <WikiSidebarPageSettingsModal
         pagePath={pageSettingsPath}
         onClose={closePageSettings}
@@ -822,7 +830,7 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
           id="wiki-panel-explorer"
           role="tabpanel"
           aria-labelledby="wiki-tab-explorer"
-          className="mt-2 flex min-w-0 flex-col"
+          className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         >
           {showExplorerToolbar ? (
             <WikiExplorerToolbar
@@ -833,14 +841,14 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
               trailing={editToolbarButtons}
             />
           ) : null}
-          {renderTree()}
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">{renderTree()}</div>
         </div>
       ) : (
         <div
           id="wiki-panel-search"
           role="tabpanel"
           aria-labelledby="wiki-tab-search"
-          className="mt-2 flex min-w-0 flex-col gap-2"
+          className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden"
         >
           <div>
             <label htmlFor="wiki-sidebar-search" className="sr-only">
@@ -866,9 +874,21 @@ export function WikiSidebarNav({ onNavigate }: WikiSidebarNavProps) {
               trailing={null}
             />
           ) : null}
-          {renderTree()}
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">{renderTree()}</div>
         </div>
       )}
+
+      {canRecycle ? (
+        <div className="shrink-0 border-t border-border px-0.5 pt-2">
+          <Link
+            to={`${WIKI_PREFIX}/recycle`}
+            onClick={() => onNavigate?.()}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Recycle bin
+          </Link>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -21,6 +21,8 @@ import { rolesRouter } from './routes/roles.js'
 import { settingsRouter } from './routes/settings.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
 import { seedWikiDefaults } from './lib/wikiSeed.js'
+import { scheduleRecyclePurgeAtMidnight } from './lib/filesRecyclePurge.js'
+import { scheduleWikiRecyclePurgeAtMidnight } from './lib/wikiRecyclePurge.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -173,6 +175,8 @@ void (async () => {
   await initDatabase()
   await runSeed()
   seedWikiDefaults()
+  scheduleRecyclePurgeAtMidnight()
+  scheduleWikiRecyclePurgeAtMidnight()
 
   if (isProd && !basePath) {
     app.use(express.static(distPath))

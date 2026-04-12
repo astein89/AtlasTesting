@@ -57,6 +57,241 @@ function SettingsCollapsible({
 
 const SAVE_NOTICE_MS = 2800
 
+const FILES_RECYCLE_MIN = 1
+const FILES_RECYCLE_MAX = 3650
+
+function FilesRecycleRetentionSection() {
+  const { showAlert } = useAlertConfirm()
+  const [retentionDays, setRetentionDays] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveNotice, setSaveNotice] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<{ retentionDays: number }>('/settings/files-recycle')
+      .then((r) => {
+        if (!cancelled) {
+          setRetentionDays(r.data.retentionDays)
+          setLoadError('')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRetentionDays(null)
+          setLoadError('Could not load files recycle settings.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!saveNotice) return
+    const t = window.setTimeout(() => setSaveNotice(false), SAVE_NOTICE_MS)
+    return () => window.clearTimeout(t)
+  }, [saveNotice])
+
+  const save = async () => {
+    if (retentionDays == null) return
+    setSaving(true)
+    setSaveNotice(false)
+    try {
+      const { data } = await api.put<{ retentionDays: number }>('/settings/files-recycle', {
+        retentionDays,
+      })
+      setRetentionDays(data.retentionDays)
+      setSaveNotice(true)
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to save'
+      showAlert(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      {loadError ? (
+        <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
+      ) : loading || retentionDays == null ? (
+        <p className="text-sm text-foreground/60">Loading…</p>
+      ) : (
+        <>
+          <p className="mb-4 text-sm text-foreground/80">
+            Files removed from the library stay on disk in the recycle bin for this many days, then are deleted
+            permanently (once per day at local midnight).
+          </p>
+          <div className="mb-4 flex flex-wrap items-end gap-4">
+            <div>
+              <label htmlFor="files-recycle-days" className="mb-1 block text-sm font-medium text-foreground">
+                Retention (days)
+              </label>
+              <input
+                id="files-recycle-days"
+                type="number"
+                min={FILES_RECYCLE_MIN}
+                max={FILES_RECYCLE_MAX}
+                value={retentionDays}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10)
+                  const v = Number.isFinite(n)
+                    ? Math.min(FILES_RECYCLE_MAX, Math.max(FILES_RECYCLE_MIN, n))
+                    : FILES_RECYCLE_MIN
+                  setRetentionDays(v)
+                }}
+                className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            {saveNotice ? (
+              <span
+                className="text-sm font-medium text-emerald-600 dark:text-emerald-400"
+                role="status"
+                aria-live="polite"
+              >
+                Saved
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
+function WikiRecycleRetentionSection() {
+  const { showAlert } = useAlertConfirm()
+  const [retentionDays, setRetentionDays] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveNotice, setSaveNotice] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<{ retentionDays: number }>('/settings/wiki-recycle')
+      .then((r) => {
+        if (!cancelled) {
+          setRetentionDays(r.data.retentionDays)
+          setLoadError('')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRetentionDays(null)
+          setLoadError('Could not load wiki recycle settings.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!saveNotice) return
+    const t = window.setTimeout(() => setSaveNotice(false), SAVE_NOTICE_MS)
+    return () => window.clearTimeout(t)
+  }, [saveNotice])
+
+  const save = async () => {
+    if (retentionDays == null) return
+    setSaving(true)
+    setSaveNotice(false)
+    try {
+      const { data } = await api.put<{ retentionDays: number }>('/settings/wiki-recycle', {
+        retentionDays,
+      })
+      setRetentionDays(data.retentionDays)
+      setSaveNotice(true)
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to save'
+      showAlert(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      {loadError ? (
+        <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
+      ) : loading || retentionDays == null ? (
+        <p className="text-sm text-foreground/60">Loading…</p>
+      ) : (
+        <>
+          <p className="mb-4 text-sm text-foreground/80">
+            Wiki pages moved to the recycle bin are kept for this many days, then removed permanently (once per day
+            at local midnight).
+          </p>
+          <div className="mb-4 flex flex-wrap items-end gap-4">
+            <div>
+              <label htmlFor="wiki-recycle-days" className="mb-1 block text-sm font-medium text-foreground">
+                Retention (days)
+              </label>
+              <input
+                id="wiki-recycle-days"
+                type="number"
+                min={FILES_RECYCLE_MIN}
+                max={FILES_RECYCLE_MAX}
+                value={retentionDays}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10)
+                  const v = Number.isFinite(n)
+                    ? Math.min(FILES_RECYCLE_MAX, Math.max(FILES_RECYCLE_MIN, n))
+                    : FILES_RECYCLE_MIN
+                  setRetentionDays(v)
+                }}
+                className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save()}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            {saveNotice ? (
+              <span
+                className="text-sm font-medium text-emerald-600 dark:text-emerald-400"
+                role="status"
+                aria-live="polite"
+              >
+                Saved
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
 function PasswordPolicySection() {
   const { showAlert } = useAlertConfirm()
   const [policy, setPolicy] = useState<PasswordPolicy | null>(null)
@@ -272,6 +507,22 @@ export function Settings() {
         subtitle="Rules for new user passwords and admin resets. Length 4–24 characters; existing logins unchanged until a new password is set."
       >
         <PasswordPolicySection />
+      </SettingsCollapsible>
+
+      <SettingsCollapsible
+        title="Recycle bins"
+        subtitle="Retention for soft-deleted files and wiki pages before they are removed permanently (purged once per day at local midnight)."
+      >
+        <div className="space-y-8">
+          <div>
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Files</h3>
+            <FilesRecycleRetentionSection />
+          </div>
+          <div>
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Wiki</h3>
+            <WikiRecycleRetentionSection />
+          </div>
+        </div>
       </SettingsCollapsible>
 
       <SettingsCollapsible

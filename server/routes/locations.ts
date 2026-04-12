@@ -289,6 +289,105 @@ router.post(
   })
 )
 
+/** Copy schema metadata, components, and custom fields to a new schema (zones and locations are not copied). */
+router.post(
+  '/schemas/:schemaId/duplicate',
+  asyncRoute(async (req: AuthRequest, res) => {
+    const { schemaId } = req.params
+    const source = (await db
+      .prepare(`SELECT id, name, description FROM location_schemas WHERE id = ?`)
+      .get(schemaId)) as { id: string; name: string; description: string | null } | undefined
+    if (!source) return res.status(404).json({ error: 'Schema not found' })
+
+    const body = req.body as { name?: string; description?: string | null }
+    const nameTrim =
+      body.name != null && typeof body.name === 'string' && body.name.trim()
+        ? body.name.trim()
+        : `${source.name} (copy)`
+    const descriptionNext =
+      body.description !== undefined
+        ? body.description === null || body.description === ''
+          ? null
+          : String(body.description)
+        : source.description
+
+    const newId = uuidv4()
+    await db
+      .prepare(`INSERT INTO location_schemas (id, name, description) VALUES (?, ?, ?)`)
+      .run(newId, nameTrim, descriptionNext ?? null)
+
+    const components = (await db
+      .prepare(
+        `SELECT key, display_name AS "displayName", type AS "componentType", width,
+                pattern_mask AS "patternMask", min_value AS "minValue", max_value AS "maxValue", order_index AS "orderIndex"
+         FROM location_schema_components WHERE schema_id = ? ORDER BY order_index`
+      )
+      .all(schemaId)) as Array<{
+      key: string
+      displayName: string
+      componentType: string
+      width: number
+      patternMask: string | null
+      minValue: string | null
+      maxValue: string | null
+      orderIndex: number
+    }>
+
+    for (const c of components) {
+      const cid = uuidv4()
+      await db
+        .prepare(
+          `INSERT INTO location_schema_components
+             (id, schema_id, key, display_name, type, width, pattern_mask, min_value, max_value, order_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          cid,
+          newId,
+          c.key,
+          c.displayName,
+          c.componentType,
+          c.width,
+          c.patternMask,
+          c.minValue,
+          c.maxValue,
+          c.orderIndex
+        )
+    }
+
+    const fields = (await db
+      .prepare(
+        `SELECT key, label, type, config, order_index AS "orderIndex"
+         FROM location_schema_fields WHERE schema_id = ? ORDER BY order_index`
+      )
+      .all(schemaId)) as Array<{
+      key: string
+      label: string
+      type: string
+      config: string | null
+      orderIndex: number
+    }>
+
+    for (const f of fields) {
+      const fid = uuidv4()
+      await db
+        .prepare(
+          `INSERT INTO location_schema_fields (id, schema_id, key, label, type, config, order_index)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(fid, newId, f.key, f.label, f.type, f.config, f.orderIndex)
+    }
+
+    const row = await db
+      .prepare(
+        `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
+         FROM location_schemas WHERE id = ?`
+      )
+      .get(newId)
+    res.status(201).json(row)
+  })
+)
+
 router.put(
   '/schemas/:schemaId',
   asyncRoute(async (req: AuthRequest, res) => {

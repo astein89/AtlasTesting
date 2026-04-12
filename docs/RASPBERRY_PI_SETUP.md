@@ -33,20 +33,20 @@ By default DC Automation uses **SQLite** (`dc-automation.db` on disk). To run ag
 
    ```bash
    sudo -u postgres psql -c "CREATE USER dcauto WITH PASSWORD 'your-secure-password';"
-   sudo -u postgres psql -c "CREATE DATABASE dc_automation OWNER dcauto;"
-   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE dc_automation TO dcauto;"
-   sudo -u postgres psql -d dc_automation -c "GRANT ALL ON SCHEMA public TO dcauto;"
-   sudo -u postgres psql -d dc_automation -c "ALTER SCHEMA public OWNER TO dcauto;"
+   sudo -u postgres psql -c 'CREATE DATABASE "dc-automation" OWNER dcauto;'
+   sudo -u postgres psql -c 'GRANT ALL PRIVILEGES ON DATABASE "dc-automation" TO dcauto;'
+   sudo -u postgres psql -d "dc-automation" -c "GRANT ALL ON SCHEMA public TO dcauto;"
+   sudo -u postgres psql -d "dc-automation" -c "ALTER SCHEMA public OWNER TO dcauto;"
    ```
 
-   If the database already exists but was owned by `postgres` and you only granted `CONNECT`, run the two `psql -d dc_automation` lines above (replace `dcauto` with your app role). That fixes **`permission denied for schema public`** (`SQLSTATE 42501`) during `npm run db:migrate` or first app start.
+   If the database already exists but was owned by `postgres` and you only granted `CONNECT`, run the two `psql -d "dc-automation"` lines above (replace `dcauto` with your app role). That fixes **`permission denied for schema public`** (`SQLSTATE 42501`) during `npm run db:migrate` or first app start.
 
 3. **Connectivity for Node on the same machine:** use **`localhost`**. Ensure PostgreSQL listens locally (`listen_addresses` in `postgresql.conf` often includes `localhost`) and **`pg_hba.conf`** allows the app user to connect via TCP to `127.0.0.1` (e.g. `scram-sha-256` or `md5`). You do not need to expose port `5432` on the LAN unless a remote client requires it.
 
 4. **Application URL form:**
 
    ```text
-   postgresql://dcauto:your-secure-password@127.0.0.1:5432/dc_automation
+   postgresql://dcauto:your-secure-password@127.0.0.1:5432/dc-automation
    ```
 
 5. **Wire DC Automation:** set **`DATABASE_URL`** in the environment for the same Unix user that runs **PM2** (see [Step 8](#step-8-start-the-application)), e.g. in `ecosystem.config.cjs` under `env`, or a systemd drop-in. Restart after changes: `pm2 restart dc-automation`.
@@ -54,6 +54,86 @@ By default DC Automation uses **SQLite** (`dc-automation.db` on disk). To run ag
 6. **Migrating an existing SQLite file on the Pi:** with `DATABASE_URL` set, run **`npm run db:migrate`** once (see project `package.json`). It copies data from `dc-automation.db` (or `SQLITE_PATH` / `DB_PATH`) into PostgreSQL. Wiki files under `content/wiki/` remain on disk—copy them separately if you move hosts.
 
 7. **Optional tuning** on small boards: see PostgreSQL docs for `shared_buffers` and memory-related settings; keep changes minimal unless you measure load.
+
+### Default `postgres` user vs `dcauto` (pgAdmin login)
+
+A fresh PostgreSQL install on Raspberry Pi OS / Debian creates:
+
+- A **Linux user** `postgres` (no normal login shell needed for daily use).
+- A database **role** `postgres` with **superuser** privileges.
+
+**Admin access on the Pi (no password):** use the OS user and peer authentication:
+
+```bash
+sudo -u postgres psql
+```
+
+That works because `pg_hba.conf` typically has **`local … peer`** (or **`host … 127.0.0.1/32 peer`**) for the `postgres` OS user connecting as the `postgres` DB role. It is **not** the same as logging in from pgAdmin.
+
+**pgAdmin from another computer** uses **TCP + password**. The built-in **`postgres` role often has no password set**, so “login as `postgres`” in pgAdmin will fail or feel confusing until you set one.
+
+| Goal | What to use |
+| --- | --- |
+| Browse your app’s data in pgAdmin | User **`dcauto`** (or whatever you created with `CREATE USER … PASSWORD`), maintenance DB **`postgres`** or **`dc-automation`**, and the password from that `CREATE USER`. |
+| Need superuser in pgAdmin (rare) | On the Pi: `sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'your-strong-secret';"` then in pgAdmin use username **`postgres`** and that password. You still need the **Remote access** steps below (`listen_addresses`, `pg_hba.conf` for your LAN, firewall) so TCP connections from your PC work. |
+
+Prefer **`dcauto`** for everyday pgAdmin use; reserve **`postgres`** for admin tasks.
+
+### Remote access (e.g. pgAdmin 4 on another computer)
+
+The steps above only allow clients on the **Pi itself** (`127.0.0.1`). **pgAdmin on your PC** connects over the **LAN**, so PostgreSQL must listen on the network interface and **trust your subnet** in `pg_hba.conf`. Also allow **TCP port 5432** if a firewall is on.
+
+**1. Find config file paths** (version may differ):
+
+```bash
+sudo -u postgres psql -c "SHOW config_file;"
+sudo -u postgres psql -c "SHOW hba_file;"
+```
+
+**2. Listen on all interfaces** — edit `postgresql.conf` (often under `/etc/postgresql/<version>/main/`):
+
+```conf
+listen_addresses = '*'
+```
+
+(Alternatively use the Pi’s LAN IP only; `'*'` is common for home LANs.)
+
+**3. Allow password auth from your LAN** — edit `pg_hba.conf`. Add a line **above** any overly broad `reject` rules, using **your** subnet (examples):
+
+```text
+# LAN clients — replace 10.0.1.0/24 with your network (e.g. 192.168.1.0/24)
+host    all    all    10.0.1.0/24    scram-sha-256
+```
+
+Use **`scram-sha-256`** (or **`md5`** on older defaults). Do **not** copy `peer`/`ident` lines meant for local sockets; remote clients need `host` + password.
+
+**4. Reload or restart PostgreSQL:**
+
+```bash
+sudo systemctl restart postgresql
+```
+
+**5. Firewall** — if **ufw** is enabled:
+
+```bash
+sudo ufw status
+sudo ufw allow 5432/tcp comment 'PostgreSQL LAN'
+sudo ufw reload
+```
+
+**6. In pgAdmin:** create a server with **Host** = the Pi’s IP (e.g. `10.0.1.110`), **Port** `5432`, **Username** your DB user (e.g. `dcauto`), **Password** as set in SQL. **Maintenance database** can be `postgres` or **`dc-automation`** (if the name contains a hyphen, pgAdmin usually accepts it in the DB field).
+
+**Security:** Prefer restricting `pg_hba.conf` to your **home subnet CIDR**, not `0.0.0.0/0`. For access over the public internet, use a VPN or SSH tunnel instead of exposing `5432` globally.
+
+**Quick checks from your PC** (replace IP):
+
+```bash
+# Timeout or "Connection refused" → listen_addresses / firewall
+# "no pg_hba.conf entry" → add the host line for your client IP/subnet
+nc -vz 10.0.1.110 5432
+```
+
+On **Windows PowerShell:** `Test-NetConnection 10.0.1.110 -Port 5432` (`TcpTestSucceeded` should be **True**).
 
 ---
 
@@ -114,7 +194,7 @@ cd dc-automation
 On your development machine:
 
 ```bash
-rsync -avz --exclude node_modules --exclude 'dc-automation.db' --exclude 'dc_automation.db' ./dc-automation/ pi@<pi-ip>:~/dc-automation/
+rsync -avz --exclude node_modules --exclude 'dc-automation.db' ./dc-automation/ pi@<pi-ip>:~/dc-automation/
 ```
 
 Or use SCP, USB drive, or another transfer method.

@@ -18,6 +18,8 @@ export type FileFolderRow = {
   created_at: string | null
   allowed_role_slugs: string | null
   created_by: string | null
+  /** Present on `/files/search` hits: parent folder path label. */
+  location_path?: string | null
 }
 
 export type FileFolderTreeNode = FileFolderRow & { children: FileFolderTreeNode[] }
@@ -37,6 +39,14 @@ export type StoredFileRow = {
   /** When true (1), visibility follows folder (and ancestor folder) role settings. */
   inherit_folder_acl?: number | null
   uploaded_by_username?: string | null
+  /** ISO timestamp when soft-deleted; absent = active. */
+  deleted_at?: string | null
+  /** Last folder before `folder_id` was cleared (e.g. parent folder deleted). */
+  recycle_original_folder_id?: string | null
+  /** Saved display path when that folder was deleted (server). */
+  recycle_original_folder_label?: string | null
+  /** Present on `/files/search` hits: folder path where the file lives. */
+  location_path?: string | null
 }
 
 export async function getFolderTree(): Promise<FileFolderTreeNode[]> {
@@ -76,6 +86,15 @@ export async function deleteFolder(folderId: string): Promise<void> {
   await api.delete(`/files/folders/${encodeURIComponent(folderId)}`)
 }
 
+export type FolderDeleteImpact = { fileCount: number; subfolderCount: number }
+
+export async function getFolderDeleteImpact(folderId: string): Promise<FolderDeleteImpact> {
+  const { data } = await api.get<FolderDeleteImpact>(
+    `/files/folders/${encodeURIComponent(folderId)}/delete-impact`
+  )
+  return data
+}
+
 export async function listStoredFiles(params: {
   folderId: string | null
   sortBy: FileSortBy
@@ -87,6 +106,19 @@ export async function listStoredFiles(params: {
       sortBy: params.sortBy,
       order: params.order,
     },
+  })
+  return data
+}
+
+export async function searchLibraryFiles(params: {
+  q: string
+  sortBy: FileSortBy
+  order: SortOrder
+  signal?: AbortSignal
+}): Promise<{ folders: FileFolderRow[]; files: StoredFileRow[] }> {
+  const { data } = await api.get<{ folders: FileFolderRow[]; files: StoredFileRow[] }>('/files/search', {
+    params: { q: params.q, sortBy: params.sortBy, order: params.order },
+    signal: params.signal,
   })
   return data
 }
@@ -203,6 +235,26 @@ export async function downloadFolderArchive(folderId: string): Promise<void> {
 
 export async function deleteStoredFile(fileId: string): Promise<void> {
   await api.delete(`/files/${encodeURIComponent(fileId)}`)
+}
+
+export async function listRecycledFiles(): Promise<{ items: StoredFileRow[]; retentionDays: number }> {
+  const { data } = await api.get<{ items: StoredFileRow[]; retentionDays: number }>('/files/recycle')
+  return {
+    items: Array.isArray(data?.items) ? data.items : [],
+    retentionDays: typeof data?.retentionDays === 'number' ? data.retentionDays : 30,
+  }
+}
+
+export async function restoreStoredFile(id: string, opts?: { folderId: string | null }): Promise<StoredFileRow> {
+  const { data } = await api.post<StoredFileRow>(
+    `/files/${encodeURIComponent(id)}/restore`,
+    opts !== undefined ? { folderId: opts.folderId } : {}
+  )
+  return data
+}
+
+export async function permanentlyDeleteStoredFile(id: string): Promise<void> {
+  await api.delete(`/files/${encodeURIComponent(id)}/permanent`)
 }
 
 export function previewCategory(mime: string | null | undefined): 'image' | 'pdf' | 'text' | 'markdown' | 'csv' | 'other' {

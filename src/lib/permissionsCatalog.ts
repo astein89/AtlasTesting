@@ -39,7 +39,17 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   },
   { id: 'home.edit', label: 'Edit home page content', group: 'Home' },
   { id: 'wiki.edit', label: 'Edit wiki pages (create / save Markdown files)', group: 'Wiki' },
+  {
+    id: 'wiki.recycle',
+    label: 'Wiki: view recycle bin, restore, and permanently delete pages',
+    group: 'Wiki',
+  },
   { id: 'files.manage', label: 'Files: upload and delete library files', group: 'Files' },
+  {
+    id: 'files.recycle',
+    label: 'Files: view recycle bin, restore, and permanently delete',
+    group: 'Files',
+  },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },
   { id: 'admin.db', label: 'Database tables viewer', group: 'Administration' },
@@ -86,8 +96,8 @@ export const ROLE_EDITOR_MODULE_NESTING: Array<{
     moduleId: 'module.locations',
     nestedIds: ['locations.schemas.manage', 'locations.data.write'],
   },
-  { moduleId: 'module.wiki', nestedIds: ['wiki.edit'] },
-  { moduleId: 'module.files', nestedIds: ['files.manage'] },
+  { moduleId: 'module.wiki', nestedIds: ['wiki.edit', 'wiki.recycle'] },
+  { moduleId: 'module.files', nestedIds: ['files.manage', 'files.recycle'] },
   { moduleId: 'module.admin', nestedIds: ['roles.manage', 'users.manage', 'settings.access', 'admin.db'] },
 ]
 

@@ -1,7 +1,6 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import {
   createFolder,
-  deleteStoredFile,
   getFolderTree,
   getRolesForFileAcl,
   updateStoredFile,
@@ -26,32 +25,29 @@ function parseStoredSlugs(json: string | null): string[] {
   }
 }
 
-export function FileEditModal({
+/**
+ * After uploading multiple files: one step to set folder and visibility for all rows.
+ * Display names stay as the uploaded filenames (no per-file rename).
+ */
+export function BulkFileUploadApplyModal({
   open,
-  file,
+  files,
   canManageAcl,
-  canDelete,
   canCreateFolder = false,
   onClose,
-  onSaved,
-  onDeleted,
+  onApplied,
 }: {
   open: boolean
-  file: StoredFileRow | null
+  files: StoredFileRow[]
   canManageAcl: boolean
-  /** Same as prior list action: `files.manage` (or equivalent) only. */
-  canDelete: boolean
-  /** When true, show “New folder…” next to folder (requires `files.manage` on server). */
   canCreateFolder?: boolean
   onClose: () => void
-  onSaved: (row: StoredFileRow) => void
-  onDeleted: (id: string) => void
+  onApplied: () => void
 }) {
-  const { showAlert, showConfirm } = useAlertConfirm()
+  const { showAlert } = useAlertConfirm()
   const titleId = useId()
   const folderSelectId = useId()
   const inheritFolderId = useId()
-  const [filename, setFilename] = useState('')
   const [targetFolderId, setTargetFolderId] = useState<string | null>(null)
   const [inheritFromFolder, setInheritFromFolder] = useState(true)
   const [folderTree, setFolderTree] = useState<FileFolderTreeNode[]>([])
@@ -59,21 +55,20 @@ export function FileEditModal({
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([])
   const [selectedSlugs, setSelectedSlugs] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const [createFolderOpen, setCreateFolderOpen] = useState(false)
-  const busy = saving || deleting
+
+  const first = files[0]
 
   useEffect(() => {
-    if (!open || !file) return
-    setFilename(file.original_filename)
-    setTargetFolderId(file.folder_id)
+    if (!open || !first) return
+    setTargetFolderId(first.folder_id)
     const inh =
-      file.inherit_folder_acl === undefined ||
-      file.inherit_folder_acl === null ||
-      file.inherit_folder_acl === 1
+      first.inherit_folder_acl === undefined ||
+      first.inherit_folder_acl === null ||
+      first.inherit_folder_acl === 1
     setInheritFromFolder(inh)
-    setSelectedSlugs(parseStoredSlugs(file.allowed_role_slugs))
-  }, [open, file?.id, file?.original_filename, file?.folder_id, file?.allowed_role_slugs, file?.inherit_folder_acl, file])
+    setSelectedSlugs(parseStoredSlugs(first.allowed_role_slugs))
+  }, [open, first?.id, first?.folder_id, first?.allowed_role_slugs, first?.inherit_folder_acl, first])
 
   useEffect(() => {
     if (!open) return
@@ -117,7 +112,7 @@ export function FileEditModal({
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || busy || createFolderOpen) return
+      if (e.key !== 'Escape' || saving || createFolderOpen) return
       onClose()
     }
     window.addEventListener('keydown', handler)
@@ -125,14 +120,10 @@ export function FileEditModal({
       window.removeEventListener('keydown', handler)
       document.body.style.overflow = prevOverflow
     }
-  }, [open, onClose, busy, createFolderOpen])
+  }, [open, onClose, saving, createFolderOpen])
 
   useEffect(() => {
     if (!open) setCreateFolderOpen(false)
-  }, [open])
-
-  useEffect(() => {
-    if (!open) setDeleting(false)
   }, [open])
 
   const knownSlugSet = useMemo(() => new Set(roleOptions.map((r) => r.slug)), [roleOptions])
@@ -149,31 +140,26 @@ export function FileEditModal({
     })
   }
 
-  if (!open || !file) return null
-
-  const save = async () => {
-    const trimmed = filename.trim()
-    if (!trimmed) {
-      showAlert('Enter a file name.', 'Files')
-      return
-    }
+  const apply = async () => {
+    if (files.length === 0) return
     setSaving(true)
     try {
       const sortedRoles = [...new Set(selectedSlugs)].sort()
-      const updated = await updateStoredFile(file.id, {
-        originalFilename: trimmed,
-        folderId: targetFolderId,
-        ...(canManageAcl
-          ? {
-              inheritFolderAcl: inheritFromFolder,
-              allowedRoleSlugs: inheritFromFolder ? null : sortedRoles.length > 0 ? sortedRoles : null,
-            }
-          : {}),
-      })
-      onSaved(updated)
+      for (const f of files) {
+        await updateStoredFile(f.id, {
+          folderId: targetFolderId,
+          ...(canManageAcl
+            ? {
+                inheritFolderAcl: inheritFromFolder,
+                allowedRoleSlugs: inheritFromFolder ? null : sortedRoles.length > 0 ? sortedRoles : null,
+              }
+            : {}),
+        })
+      }
+      onApplied()
       onClose()
     } catch {
-      showAlert('Could not save changes.', 'Error')
+      showAlert('Could not update all files.', 'Files')
     } finally {
       setSaving(false)
     }
@@ -197,25 +183,11 @@ export function FileEditModal({
     }
   }
 
-  const removeFromLibrary = async () => {
-    if (!canDelete) return
-    const ok = await showConfirm(`Remove “${file.original_filename}” from the library?`, {
-      title: 'Delete file',
-      variant: 'danger',
-      confirmLabel: 'Delete',
-    })
-    if (!ok) return
-    setDeleting(true)
-    try {
-      await deleteStoredFile(file.id)
-      onDeleted(file.id)
-      onClose()
-    } catch {
-      showAlert('Could not delete file.', 'Error')
-    } finally {
-      setDeleting(false)
-    }
-  }
+  if (!open || files.length === 0) return null
+
+  const n = files.length
+  const previewRows = files.slice(0, 12)
+  const extra = n > 12 ? n - 12 : 0
 
   return (
     <>
@@ -228,7 +200,7 @@ export function FileEditModal({
       />
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
-      onClick={busy || createFolderOpen ? undefined : onClose}
+      onClick={saving || createFolderOpen ? undefined : onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -239,12 +211,12 @@ export function FileEditModal({
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-border pl-4 pr-1">
           <h2 id={titleId} className="min-w-0 flex-1 py-3 pr-2 text-lg font-semibold leading-tight text-foreground">
-            Edit file
+            Set location and permissions
           </h2>
           <button
             type="button"
             onClick={onClose}
-            disabled={busy}
+            disabled={saving}
             className="flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-lg text-foreground/70 hover:bg-background hover:text-foreground disabled:opacity-50"
             aria-label="Close"
           >
@@ -255,17 +227,23 @@ export function FileEditModal({
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm">
-          <label className="block space-y-1.5">
-            <span className="font-medium text-foreground">Name</span>
-            <input
-              type="text"
-              value={filename}
-              onChange={(e) => setFilename(e.target.value)}
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
-              autoComplete="off"
-              disabled={busy}
-            />
-          </label>
+          <p className="text-foreground/80">
+            <span className="font-medium text-foreground">{n}</span> files uploaded. Names match the files on your
+            device.
+          </p>
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-foreground/50">Files</div>
+            <ul className="max-h-32 list-inside list-disc overflow-y-auto text-xs text-foreground/90">
+              {previewRows.map((f) => (
+                <li key={f.id} className="truncate" title={f.original_filename}>
+                  {f.original_filename}
+                </li>
+              ))}
+            </ul>
+            {extra > 0 ? (
+              <p className="mt-1 text-xs text-foreground/60">+{extra} more</p>
+            ) : null}
+          </div>
 
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -275,7 +253,7 @@ export function FileEditModal({
               {canCreateFolder ? (
                 <button
                   type="button"
-                  disabled={busy || foldersLoading}
+                  disabled={saving || foldersLoading}
                   onClick={() => setCreateFolderOpen(true)}
                   className="text-sm font-medium text-primary hover:underline disabled:opacity-50"
                 >
@@ -287,7 +265,7 @@ export function FileEditModal({
               id={folderSelectId}
               value={targetFolderId ?? ''}
               onChange={(e) => setTargetFolderId(e.target.value === '' ? null : e.target.value)}
-              disabled={busy || foldersLoading}
+              disabled={saving || foldersLoading}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-60"
             >
               <option value="">Files (root)</option>
@@ -311,21 +289,21 @@ export function FileEditModal({
                   type="checkbox"
                   className="mt-0.5 rounded border-border"
                   checked={inheritFromFolder}
-                  disabled={busy}
+                  disabled={saving}
                   onChange={(e) => setInheritFromFolder(e.target.checked)}
                 />
                 <span>
                   <span className="font-medium">Match folder (default)</span>
                   <span className="mt-0.5 block text-xs text-foreground/60">
-                    Uses this file’s folder and parent folders’ role settings. Change the folder in <strong>Edit folder</strong>{' '}
-                    or turn this off to set roles only for this file.
+                    Uses each file’s folder and parent folders’ role settings, or turn off to set roles for these
+                    uploads only.
                   </span>
                 </span>
               </label>
               {!inheritFromFolder ? (
                 <>
                   <p className="mb-2 text-xs text-foreground/60">
-                    Custom roles for this file only. Leave none selected to allow anyone with Files access.
+                    Custom roles for these files only. Leave none selected to allow anyone with Files access.
                   </p>
                   <ul className="max-h-48 space-y-2 overflow-y-auto rounded-lg border border-border bg-background p-3">
                     {orphanSlugs.map((slug) => (
@@ -335,7 +313,7 @@ export function FileEditModal({
                             type="checkbox"
                             className="mt-0.5 rounded border-border"
                             checked={selectedSlugs.includes(slug)}
-                            disabled={busy}
+                            disabled={saving}
                             onChange={() => toggleRole(slug)}
                           />
                           <span>
@@ -355,7 +333,7 @@ export function FileEditModal({
                               type="checkbox"
                               className="mt-0.5 rounded border-border"
                               checked={selectedSlugs.includes(r.slug)}
-                              disabled={busy}
+                              disabled={saving}
                               onChange={() => toggleRole(r.slug)}
                             />
                             <span>
@@ -372,37 +350,23 @@ export function FileEditModal({
           ) : null}
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
-          <div className="min-w-0">
-            {canDelete ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void removeFromLibrary()}
-                className="min-h-[44px] rounded-lg px-3 text-left text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {deleting ? 'Deleting…' : 'Delete from library'}
-              </button>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={busy}
-              className="min-h-[44px] min-w-[100px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void save()}
-              className="min-h-[44px] min-w-[100px] rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
+        <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-border px-4 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="min-h-[44px] min-w-[100px] rounded-lg border border-border px-4 py-2 text-foreground hover:bg-background disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void apply()}
+            className="min-h-[44px] min-w-[100px] rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? 'Applying…' : 'Apply to all'}
+          </button>
         </div>
       </div>
     </div>

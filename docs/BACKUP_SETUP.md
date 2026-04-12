@@ -14,6 +14,104 @@ pg_dump --file=/path/to/staging/dc-automation-$(date +%Y%m%d-%H%M).sql "$DATABAS
 
 Upload the resulting file with **rclone** the same way you would upload SQLite snapshots (point `RCLONE_REMOTE` at a folder such as `dropbox:Backups/dc-automation/postgres`). Document **restore** in your runbook: `pg_restore -d "$DATABASE_URL" file.dump` (custom format) or `psql "$DATABASE_URL" -f file.sql` (plain). Rotate old dumps with retention rules similar to `KEEP_LAST` / `MAX_AGE_DAYS` in [`backup.conf.example`](../scripts/backup.conf.example).
 
+### On-disk data outside the database
+
+**Neither** `pg_dump` **nor** `sqlite-dropbox-backup.sh` backs up anything except the **database file** (SQLite) or **logical DB dump** (PostgreSQL). Everything below lives **outside** the DB and must be copied separately if you need a full restore.
+
+| Path | What it is |
+| --- | --- |
+| **`content/wiki/`** | All wiki content: **`*.md`** pages, **`.wiki-page-meta.json`**, **`.wiki-order.json`**, **`.wiki-seed-applied.json`**, recycle (**`_deleted/`** and **`.wiki-recycle-manifest.json`** inside it). |
+| **`content/wiki-seed/`** | Default seed Markdown shipped with the app (usually tracked in **git**). Back up only if you **customize** files here; otherwise a fresh clone restores them. |
+| **`content/home-intro.md`** | Optional file override for the home intro (if present); otherwise the app uses a built-in default. |
+| **`uploads/`** | Entire tree served as **`/api/uploads/…`**: **`uploads/files/`** (Files module binaries), **`uploads/testing/`** (Testing field images), **`uploads/home/`** (welcome logo / site favicon). Legacy installs may still have loose files in **`uploads/`** root. |
+| **`config.json`** | Optional local config (e.g. **`databaseUrl`** when not using env). **Treat as sensitive** if it contains credentials. |
+| **`.env`** | Often holds **`DATABASE_URL`**, **`JWT_SECRET`**, etc. **Not** included in DB backups; store in a **secret manager** or encrypted backup—do not upload secrets to shared Dropbox without **rclone crypt** or equivalent. |
+| **`scripts/backup.conf`** | Your **`sqlite-dropbox-backup.sh`** settings (`DB_PATH`, `RCLONE_REMOTE`, …). Convenience to restore the same backup job; not required for app data. |
+
+**Usually regenerable (optional to exclude from “full site” backups):** **`dist/`**, **`node_modules/`**, **`build-version.json`** (rewritten on **`npm run build`**).
+
+#### How to back up on-disk data (Linux / Raspberry Pi)
+
+Run these **on the machine where the app lives** (same host as **`sqlite-dropbox-backup.sh`** / **`pg_dump`**). Replace **`APP_ROOT`** with your checkout (e.g. **`~/dc-automation`**).
+
+**Bundled script (recommended):** [`scripts/backup-on-disk-files.sh`](../scripts/backup-on-disk-files.sh) — copies the same paths into a timestamped **`dc-automation-files-<stamp>.tar.gz`** under **`ARCHIVE_DIR`**, and optionally uploads to **`RCLONE_REMOTE_BASE/<stamp>/…`** and/or mirrors with **`RSYNC_MIRROR`**. Copy [`scripts/files-backup.conf.example`](../scripts/files-backup.conf.example) to **`scripts/files-backup.conf`**, set **`APP_ROOT`** / **`ARCHIVE_DIR`** (and rclone/rsync if wanted), then:
+
+```bash
+chmod +x scripts/backup-on-disk-files.sh
+./scripts/backup-on-disk-files.sh
+```
+
+**1. One archive (tar.gz) — manual equivalent**
+
+Writes a single file you can copy to USB, another server, or upload with **rclone** manually:
+
+```bash
+APP_ROOT="$HOME/dc-automation"
+ARCHIVE_DIR="/var/lib/dc-automation-file-backups"   # or ~/backups
+STAMP=$(date +%Y%m%d-%H%M)
+mkdir -p "$ARCHIVE_DIR"
+cd "$APP_ROOT" || exit 1
+
+parts=(content/wiki uploads)
+[ -d content/wiki-seed ] && parts+=(content/wiki-seed)
+[ -f content/home-intro.md ] && parts+=(content/home-intro.md)
+[ -f config.json ] && parts+=(config.json)
+[ -f scripts/backup.conf ] && parts+=(scripts/backup.conf)
+
+tar -czf "$ARCHIVE_DIR/dc-automation-files-$STAMP.tar.gz" "${parts[@]}"
+echo "Created $ARCHIVE_DIR/dc-automation-files-$STAMP.tar.gz"
+```
+
+**`.env`:** do **not** put it in an unencrypted cloud folder. Copy it only to encrypted storage, a password manager export, or use **`rclone crypt`** / host-level disk encryption.
+
+**2. rclone to Dropbox (or another remote) — mirror trees**
+
+Uses the same **rclone** remote you configured for SQLite backups. Prefer a **dated folder** per run so mistakes do not overwrite good data:
+
+```bash
+APP_ROOT="$HOME/dc-automation"
+REMOTE_BASE="dropbox:Backups/dc-automation/on-disk"   # no trailing slash
+STAMP=$(date +%Y%m%d-%H%M)
+DEST="$REMOTE_BASE/$STAMP"
+
+rclone copy "$APP_ROOT/content/wiki" "$DEST/content/wiki" --retries 5
+rclone copy "$APP_ROOT/uploads" "$DEST/uploads" --retries 5
+[ -d "$APP_ROOT/content/wiki-seed" ] && rclone copy "$APP_ROOT/content/wiki-seed" "$DEST/content/wiki-seed" --retries 5
+[ -f "$APP_ROOT/content/home-intro.md" ] && rclone copy "$APP_ROOT/content/home-intro.md" "$DEST/content/" --retries 5
+```
+
+Use **`rclone copy`** (additive). Avoid **`rclone sync`** toward Dropbox unless you understand that it can **delete** remote files to match the source.
+
+**3. rsync to a second disk or NAS**
+
+Good for a local mirror (fast restore):
+
+```bash
+APP_ROOT="$HOME/dc-automation"
+NAS="/mnt/backup/dc-automation"    # adjust
+
+rsync -a --delete "$APP_ROOT/content/wiki/" "$NAS/content/wiki/"
+rsync -a --delete "$APP_ROOT/uploads/" "$NAS/uploads/"
+```
+
+`--delete` keeps the mirror exact; drop it if you want a cumulative “never delete on dest” copy.
+
+**4. Cron (example: daily files + your existing DB job)**
+
+Example: files at **02:15** using the repo script:
+
+```cron
+15 2 * * * /home/dcauto/dc-automation/scripts/backup-on-disk-files.sh >> /var/log/dc-automation-files-backup.log 2>&1
+```
+
+Point **`ARCHIVE_DIR`** at a path the cron user can write. Combine with the hourly SQLite script ([§6 Cron](#6-cron-hourly)) or **`pg_dump`** on a similar schedule.
+
+**5. Restore (short)**
+
+1. Restore the **database** (`pg_restore` / `psql`, or copy **`dc-automation.db`**).
+2. Extract or **rsync** back **`content/wiki/`** and **`uploads/`** into **`APP_ROOT`** (same paths as above).
+3. Restore **`config.json`** / **`.env`** if you use them; **`npm install && npm run build`**; restart **PM2** (or your process manager).
+
 The rest of this document applies to **SQLite-only** installs (`dc-automation.db`, no `DATABASE_URL`).
 
 ---
@@ -219,6 +317,7 @@ For heavy deduplication across many machines, consider **restic** or **borg** ta
 | Discord not firing | `curl` installed; webhook URL correct; `python3` for JSON (optional fallback exists). |
 | Mail not sending | `mailutils` + working MTA; test with `echo test \| mail -s test you@example.com`. |
 | Backups every hour despite no edits | State file not updating—check write permissions on `STATE_FILE` directory; inspect logs for failed steps before state write. |
+| On-disk script exits 1 | `APP_ROOT` wrong; or neither `content/wiki` nor `uploads` exists; or `RCLONE_REMOTE_BASE` / `RSYNC_MIRROR` set but `rclone` / `rsync` not installed. |
 
 ---
 
@@ -226,3 +325,5 @@ For heavy deduplication across many machines, consider **restic** or **borg** ta
 
 - [`scripts/sqlite-dropbox-backup.sh`](../scripts/sqlite-dropbox-backup.sh) — implementation and inline comments.
 - [`scripts/backup.conf.example`](../scripts/backup.conf.example) — template for `backup.conf`.
+- [`scripts/backup-on-disk-files.sh`](../scripts/backup-on-disk-files.sh) — wiki / uploads / optional config tarball + optional rclone and rsync.
+- [`scripts/files-backup.conf.example`](../scripts/files-backup.conf.example) — template for `files-backup.conf`.

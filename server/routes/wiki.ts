@@ -13,6 +13,14 @@ import { roleHasPermission } from '../lib/permissionsCatalog.js'
 import { db } from '../db/index.js'
 import { roleSlugExists } from '../lib/userRoles.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
+import {
+  readWikiRecycleManifest,
+  removeWikiRecycleManifestEntry,
+  upsertWikiRecycleManifestEntry,
+} from '../lib/wikiRecycleManifest.js'
+import { wikiPathFromDeletedStorageRel } from '../lib/wikiRecyclePaths.js'
+import { listDeletedWikiMarkdownFiles } from '../lib/wikiRecyclePurge.js'
+import { getWikiRecycleRetentionDays } from '../lib/wikiRecycleSettings.js'
 
 const router = Router()
 
@@ -791,6 +799,212 @@ router.put('/move', authMiddleware, requirePermission('wiki.edit'), (_req, res) 
   }
 })
 
+function resolveStorageUnderWikiRoot(wikiRoot: string, storageRel: string): { abs: string; rel: string } | null {
+  const norm = storageRel.replace(/\\/g, '/').replace(/^\/+/, '')
+  if (!norm.startsWith('_deleted/')) return null
+  const abs = path.resolve(wikiRoot, ...norm.split('/'))
+  const deletedRoot = path.resolve(wikiRoot, '_deleted')
+  const delSep = deletedRoot.endsWith(path.sep) ? deletedRoot : `${deletedRoot}${path.sep}`
+  if (!abs.startsWith(delSep)) return null
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null
+  return { abs, rel: norm }
+}
+
+/** GET /api/wiki/recycle — list soft-deleted pages under _deleted/ (manifest + inferred paths). */
+router.get(
+  '/recycle',
+  authMiddleware,
+  requirePermission('module.wiki'),
+  requirePermission('wiki.recycle'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const wikiRoot = wikiRootDir()
+    try {
+      fs.mkdirSync(wikiRoot, { recursive: true })
+    } catch {
+      /* */
+    }
+    const liveMeta = readPageMeta(wikiRoot)
+    const manifest = readWikiRecycleManifest(wikiRoot)
+    const files = listDeletedWikiMarkdownFiles(wikiRoot)
+    const userPerms = req.user?.permissions ?? []
+    const listBypass = roleHasPermission(userPerms, '*')
+    const out: Array<{
+      storageRel: string
+      wikiPath: string
+      deletedAt: string
+      title?: string
+    }> = []
+
+    for (const { abs, rel } of files) {
+      const man = manifest[rel]
+      const wikiPath = man?.wikiPath || wikiPathFromDeletedStorageRel(rel)
+      if (!wikiPath) continue
+      const merged: PageMetaFile = { ...liveMeta }
+      if (man?.viewRoleSlugs && man.viewRoleSlugs.length > 0) {
+        merged[wikiPath] = { ...merged[wikiPath], viewRoleSlugs: man.viewRoleSlugs }
+      }
+      if (!userCanViewWikiPage(merged, wikiPath, req.user?.roles, listBypass)) continue
+
+      let title: string | undefined = man?.title?.trim()
+      if (!title) {
+        try {
+          const md = fs.readFileSync(abs, 'utf8')
+          title = firstHeadingTitle(md)
+        } catch {
+          /* */
+        }
+      }
+      const deletedAt =
+        man?.deletedAt && man.deletedAt.trim()
+          ? man.deletedAt
+          : fs.statSync(abs).mtime.toISOString()
+      out.push({ storageRel: rel, wikiPath, deletedAt, title })
+    }
+
+    out.sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : a.deletedAt > b.deletedAt ? -1 : 0))
+    const retentionDays = await getWikiRecycleRetentionDays()
+    res.json({ items: out, retentionDays })
+  })
+)
+
+/** POST /api/wiki/recycle/restore body: { storageRel } */
+router.post(
+  '/recycle/restore',
+  authMiddleware,
+  requirePermission('module.wiki'),
+  requirePermission('wiki.recycle'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const storageRel = typeof (req.body as { storageRel?: unknown })?.storageRel === 'string'
+      ? (req.body as { storageRel: string }).storageRel.trim()
+      : ''
+    if (!storageRel) {
+      return res.status(400).json({ error: 'storageRel is required' })
+    }
+    if (!req.user || !roleHasPermission(req.user.permissions, 'wiki.edit')) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    const wikiRoot = wikiRootDir()
+    const resolved = resolveStorageUnderWikiRoot(wikiRoot, storageRel)
+    if (!resolved) {
+      return res.status(400).json({ error: 'Invalid or missing storage path' })
+    }
+    const manifest = readWikiRecycleManifest(wikiRoot)
+    const man = manifest[resolved.rel]
+    const wikiPath = man?.wikiPath || wikiPathFromDeletedStorageRel(resolved.rel)
+    if (!wikiPath) {
+      return res.status(400).json({ error: 'Could not resolve wiki path' })
+    }
+    const liveMeta = readPageMeta(wikiRoot)
+    const merged: PageMetaFile = { ...liveMeta }
+    if (man?.viewRoleSlugs && man.viewRoleSlugs.length > 0) {
+      merged[wikiPath] = { ...merged[wikiPath], viewRoleSlugs: man.viewRoleSlugs }
+    }
+    if (!userCanViewWikiPage(merged, wikiPath, req.user.roles, roleHasPermission(req.user.permissions, '*'))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+
+    const wasIndex = path.basename(resolved.abs).toLowerCase() === 'index.md'
+    const destFlat = wikiFlatMdPath(wikiRoot, wikiPath)
+    const destIdx = wikiIndexMdPath(wikiRoot, wikiPath)
+    const dest = wasIndex ? destIdx : destFlat
+    if (!underWikiRoot(wikiRoot, dest)) {
+      return res.status(400).json({ error: 'Invalid destination' })
+    }
+    if (fs.existsSync(dest)) {
+      return res.status(409).json({ error: 'A page already exists at the restore target' })
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      fs.renameSync(resolved.abs, dest)
+    } catch {
+      return res.status(500).json({ error: 'Failed to restore page' })
+    }
+
+    const meta = readPageMeta(wikiRoot)
+    const next: PageMetaFile = { ...meta }
+    const ent: PageMetaEntry = {}
+    if (man?.viewRoleSlugs && man.viewRoleSlugs.length > 0) {
+      ent.viewRoleSlugs = man.viewRoleSlugs
+    }
+    if (man?.title && man.title.trim()) {
+      ent.title = truncateMaxCodePoints(man.title.trim(), 200)
+    }
+    if (wasIndex && man?.showSectionPages === false) {
+      ent.showSectionPages = false
+    }
+    const pruned = prunePageMetaEntry(ent)
+    if (pruned) {
+      next[wikiPath] = pruned
+    } else {
+      delete next[wikiPath]
+    }
+    writePageMeta(wikiRoot, next)
+    removeWikiRecycleManifestEntry(wikiRoot, resolved.rel)
+
+    return res.json({ ok: true, path: wikiPath })
+  })
+)
+
+/** DELETE /api/wiki/recycle/permanent body: { storageRel } */
+router.delete(
+  '/recycle/permanent',
+  authMiddleware,
+  requirePermission('module.wiki'),
+  requirePermission('wiki.recycle'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const storageRel = typeof (req.body as { storageRel?: unknown })?.storageRel === 'string'
+      ? (req.body as { storageRel: string }).storageRel.trim()
+      : ''
+    if (!storageRel) {
+      return res.status(400).json({ error: 'storageRel is required' })
+    }
+    if (!req.user || !roleHasPermission(req.user.permissions, 'wiki.edit')) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    const wikiRoot = wikiRootDir()
+    const resolved = resolveStorageUnderWikiRoot(wikiRoot, storageRel)
+    if (!resolved) {
+      return res.status(400).json({ error: 'Invalid or missing storage path' })
+    }
+    const manifest = readWikiRecycleManifest(wikiRoot)
+    const man = manifest[resolved.rel]
+    const wikiPath = man?.wikiPath || wikiPathFromDeletedStorageRel(resolved.rel)
+    if (!wikiPath) {
+      return res.status(400).json({ error: 'Could not resolve wiki path' })
+    }
+    const liveMeta = readPageMeta(wikiRoot)
+    const merged: PageMetaFile = { ...liveMeta }
+    if (man?.viewRoleSlugs && man.viewRoleSlugs.length > 0) {
+      merged[wikiPath] = { ...merged[wikiPath], viewRoleSlugs: man.viewRoleSlugs }
+    }
+    if (!userCanViewWikiPage(merged, wikiPath, req.user.roles, roleHasPermission(req.user.permissions, '*'))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+
+    try {
+      fs.unlinkSync(resolved.abs)
+      removeWikiRecycleManifestEntry(wikiRoot, resolved.rel)
+      const deletedRoot = path.resolve(wikiRoot, '_deleted')
+      let parent = path.dirname(resolved.abs)
+      while (parent.startsWith(deletedRoot + path.sep) || parent === deletedRoot) {
+        try {
+          const left = fs.readdirSync(parent)
+          if (left.length > 0) break
+          fs.rmdirSync(parent)
+        } catch {
+          break
+        }
+        if (parent === deletedRoot) break
+        parent = path.dirname(parent)
+      }
+    } catch {
+      return res.status(500).json({ error: 'Failed to delete file' })
+    }
+    return res.json({ ok: true })
+  })
+)
+
 /** DELETE /api/wiki/page?path=foo/bar — moves file to content/wiki/_deleted/... (no hard delete). */
 router.delete('/page', authMiddleware, requirePermission('wiki.edit'), (_req: AuthRequest, res) => {
   const raw = typeof _req.query.path === 'string' ? _req.query.path : ''
@@ -823,8 +1037,20 @@ router.delete('/page', authMiddleware, requirePermission('wiki.edit'), (_req: Au
       finalDest = `${base}-${Date.now()}${ext}`
     }
     fs.renameSync(src, finalDest)
+    const metaBefore = readPageMeta(wikiRoot)
+    const entryMeta = metaBefore[normalized] ?? {}
+    const finalRel = path.relative(wikiRootResolved, path.resolve(finalDest)).replace(/\\/g, '/')
+    upsertWikiRecycleManifestEntry(wikiRoot, finalRel, {
+      wikiPath: normalized,
+      deletedAt: new Date().toISOString(),
+      ...(entryMeta.viewRoleSlugs && entryMeta.viewRoleSlugs.length > 0
+        ? { viewRoleSlugs: entryMeta.viewRoleSlugs }
+        : {}),
+      ...(entryMeta.title && entryMeta.title.trim() ? { title: entryMeta.title.trim() } : {}),
+      ...(entryMeta.showSectionPages === false ? { showSectionPages: false } : {}),
+    })
     deletePageMetaEntry(wikiRoot, normalized)
-    const rel = path.relative(wikiRootResolved, finalDest).replace(/\\/g, '/')
+    const rel = finalRel
     return res.json({ ok: true, movedTo: rel })
   } catch {
     return res.status(500).json({ error: 'Failed to move page to deleted folder' })
