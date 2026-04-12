@@ -34,6 +34,7 @@ const Users = lazy(() => import('./routes/Users').then((m) => ({ default: m.User
 const DbTablesViewer = lazy(() => import('./routes/DbTablesViewer').then((m) => ({ default: m.DbTablesViewer })))
 const AdminStatusPage = lazy(() => import('./routes/AdminStatusPage').then((m) => ({ default: m.AdminStatusPage })))
 const Settings = lazy(() => import('./routes/Settings').then((m) => ({ default: m.Settings })))
+const BackupPage = lazy(() => import('./routes/BackupPage').then((m) => ({ default: m.BackupPage })))
 const Locations = lazy(() => import('./routes/Locations').then((m) => ({ default: m.Locations })))
 const LocationSchemas = lazy(() =>
   import('./routes/LocationSchemas').then((m) => ({ default: m.LocationSchemas }))
@@ -395,6 +396,14 @@ export function createAppBrowserRouter(basePath: string) {
               element={
                 <PermissionGuard permission="settings.access">
                   <Settings />
+                </PermissionGuard>
+              }
+            />
+            <Route
+              path="backup"
+              element={
+                <PermissionGuard permission="backup.manage">
+                  <BackupPage />
                 </PermissionGuard>
               }
             />

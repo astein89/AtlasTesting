@@ -115,6 +115,19 @@ export function AdminModuleSidebar({ isOpen = true, onClose }: AdminModuleSideba
             Settings
           </NavLink>
         )}
+        {hasPermission('backup.manage') && (
+          <NavLink
+            to={adminPath('backup')}
+            onClick={onClose}
+            className={({ isActive }) =>
+              `${baseLink} ${
+                isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-background'
+              }`
+            }
+          >
+            Backup
+          </NavLink>
+        )}
         {hasPermission('admin.db') && (
           <div className="flex flex-col gap-0.5">
             <NavLink

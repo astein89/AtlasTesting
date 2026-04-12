@@ -19,10 +19,12 @@ import { wikiRouter } from './routes/wiki.js'
 import { filesRouter } from './routes/files.js'
 import { rolesRouter } from './routes/roles.js'
 import { settingsRouter } from './routes/settings.js'
+import { backupRouter } from './routes/backup.js'
 import { sanitizeForLog } from './utils/sanitizeLog.js'
 import { seedWikiDefaults } from './lib/wikiSeed.js'
 import { scheduleRecyclePurgeAtMidnight } from './lib/filesRecyclePurge.js'
 import { scheduleWikiRecyclePurgeAtMidnight } from './lib/wikiRecyclePurge.js'
+import { scheduleBackupTimers } from './lib/backupScheduler.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -52,6 +54,7 @@ apiRouter.use('/wiki', wikiRouter)
 apiRouter.use('/files', filesRouter)
 apiRouter.use('/roles', rolesRouter)
 apiRouter.use('/settings', settingsRouter)
+apiRouter.use('/backup', backupRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use(`${prefix}/api`, apiRouter)
 
@@ -177,6 +180,7 @@ void (async () => {
   seedWikiDefaults()
   scheduleRecyclePurgeAtMidnight()
   scheduleWikiRecyclePurgeAtMidnight()
+  scheduleBackupTimers()
 
   if (isProd && !basePath) {
     app.use(express.static(distPath))

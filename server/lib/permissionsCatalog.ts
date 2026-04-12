@@ -59,6 +59,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },
   { id: 'admin.db', label: 'Database tables viewer', group: 'Administration' },
   { id: 'settings.access', label: 'App settings', group: 'Administration' },
+  { id: 'backup.manage', label: 'Configure backups', group: 'Administration' },
   { id: 'fields.manage', label: 'Data fields (CRUD)', group: 'Test Plans (configuration)' },
   { id: 'testing.plans.manage', label: 'Test plans (create / edit / delete)', group: 'Test Plans (configuration)' },
   { id: 'testing.tests.manage', label: 'Tests under a plan (edit / delete)', group: 'Test Plans (configuration)' },

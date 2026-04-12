@@ -78,6 +78,14 @@ function createAsyncSqliteWrapper(sqlite: Database.Database): AsyncDbWrapper {
 export let db: AsyncDbWrapper
 export let pgPool: pg.Pool | undefined
 
+/** Set only in SQLite mode; used for online `.backup()` in backup jobs. */
+let sqliteRaw: Database.Database | null = null
+
+/** Returns the native better-sqlite3 handle for backup-only operations, or null when using PostgreSQL. */
+export function getSqliteDatabaseForBackup(): Database.Database | null {
+  return sqliteRaw
+}
+
 export function isUsingPostgres(): boolean {
   return pgPool != undefined
 }
@@ -131,6 +139,7 @@ See README.md (Tech Stack / troubleshooting).
   // eslint-disable-next-line no-console
   console.log('[db] Connected; applying schema/migrations…')
 
+  sqliteRaw = sqlite
   const syncWrapper = createSqliteSyncWrapper(sqlite)
   initSchema(syncWrapper)
   db = createAsyncSqliteWrapper(sqlite)

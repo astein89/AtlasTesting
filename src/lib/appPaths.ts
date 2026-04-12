@@ -151,6 +151,7 @@ export function firstAccessibleAdminPath(hasPermission: (key: string) => boolean
   if (hasPermission('roles.manage')) return adminPath('roles')
   if (hasPermission('users.manage')) return adminPath('users')
   if (hasPermission('settings.access')) return adminPath('settings')
+  if (hasPermission('backup.manage')) return adminPath('backup')
   if (hasPermission('admin.db')) return adminPath('db')
   return null
 }
