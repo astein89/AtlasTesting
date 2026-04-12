@@ -44,6 +44,7 @@ router.get(
     if (!plan) return res.status(404).json({ error: 'Test plan not found' })
 
     const includeArchived = req.query.archived === 'true'
+    /** Hide empty Legacy once real tests exist; always keep Legacy visible if it still has runs (pre-migration data). */
     const legacyListFilter = includeArchived
       ? ''
       : `AND (
@@ -54,6 +55,7 @@ router.get(
       AND t2.archived = 0
       AND t2.id NOT LIKE 'legacy-%'
     )
+    OR EXISTS (SELECT 1 FROM test_runs tr WHERE tr.test_id = t.id)
   )`
 
     const rows = (await db
