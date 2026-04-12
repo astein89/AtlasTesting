@@ -1,7 +1,11 @@
 {
   "name": "dc-automation",
   "private": true,
+<<<<<<< HEAD
   "version": "1.2.0",
+=======
+  "version": "1.1.4",
+>>>>>>> 0b36077757d078495de7b6a0166589734a31d140
   "type": "module",
   "scripts": {
     "dev": "node scripts/write-build-version.mjs && concurrently \"npm run dev:client\" \"npm run dev:server\"",
