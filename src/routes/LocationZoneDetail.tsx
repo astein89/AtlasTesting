@@ -1739,7 +1739,7 @@ export function LocationZoneDetail() {
                 className="my-auto w-full max-h-[min(90dvh,calc(100dvh-2rem))] max-w-4xl overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-6 shadow-lg"
                 onClick={(e) => e.stopPropagation()}
               >
-              <div className="mb-5 flex items-start justify-between gap-3 border-b border-border pb-4">
+              <div className="mb-5 border-b border-border pb-4">
                 <div className="space-y-1">
                   <h2 className="text-lg font-semibold tracking-tight text-foreground">Generate locations</h2>
                   <p className="text-sm leading-relaxed text-foreground/70">
@@ -1748,19 +1748,6 @@ export function LocationZoneDetail() {
                     <span className="font-mono text-foreground/90">A1-C3</span> (letters and digits per position).
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!generating) {
-                      setGenerateError(null)
-                      setGenerateOpen(false)
-                    }
-                  }}
-                  disabled={generating}
-                  className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm text-foreground/70 hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Close
-                </button>
               </div>
 
               {generateError && (
@@ -1960,17 +1947,18 @@ export function LocationZoneDetail() {
                   )}
 
                   <div className="mt-auto flex flex-col gap-3 border-t border-border pt-4">
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         type="button"
-                        className="mr-auto rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background"
+                        className="rounded-lg border border-border px-4 py-2 text-sm text-foreground hover:bg-background disabled:opacity-50"
                         onClick={() => {
                           setGenerateError(null)
                           setGenerateOpen(false)
                         }}
                         disabled={generating}
+                        title="Close this dialog"
                       >
-                        Cancel
+                        Close
                       </button>
                       <button
                         type="button"
