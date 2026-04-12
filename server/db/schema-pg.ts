@@ -239,12 +239,22 @@ export const BASELINE_PG_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_home_links_sort_order ON home_links(sort_order)`,
 ]
 
+/**
+ * Applied after {@link BASELINE_PG_STATEMENTS} on PostgreSQL startup and in `migrate-sqlite-to-pg`
+ * so the migration script matches `initSchemaPg` (SQLite may include columns not in the CREATE TABLE baseline).
+ */
+export const PG_POST_BASELINE_STATEMENTS: string[] = [
+  `ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS deleted_at TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_stored_files_deleted_at ON stored_files(deleted_at)`,
+  `ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_id TEXT`,
+  `ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_label TEXT`,
+]
+
 export async function initSchemaPg(db: AsyncDbWrapper): Promise<void> {
   for (const sql of BASELINE_PG_STATEMENTS) {
     await db.exec(sql)
   }
-  await db.exec('ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS deleted_at TEXT')
-  await db.exec('CREATE INDEX IF NOT EXISTS idx_stored_files_deleted_at ON stored_files(deleted_at)')
-  await db.exec('ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_id TEXT')
-  await db.exec('ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_label TEXT')
+  for (const sql of PG_POST_BASELINE_STATEMENTS) {
+    await db.exec(sql)
+  }
 }

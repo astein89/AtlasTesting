@@ -12,6 +12,39 @@ This guide is for **operators** who already run DC Automation on **SQLite** (`dc
 
 ---
 
+## SQLite → PostgreSQL at a glance
+
+To **copy an existing SQLite database into PostgreSQL**, you run the **one-time import** command:
+
+```bash
+npm run db:migrate
+```
+
+That runs [`scripts/migrate-sqlite-to-pg.ts`](../scripts/migrate-sqlite-to-pg.ts). It:
+
+1. Requires a **PostgreSQL URL** via **`DATABASE_URL`** (or **`databaseUrl`** in **`config.json`**).
+2. Locates your **SQLite file** (see [Where the migration reads SQLite from](#where-the-migration-reads-sqlite-from)).
+3. Creates the **baseline PostgreSQL schema** if needed, then **copies rows** from SQLite into PostgreSQL.
+
+It does **not** copy wiki markdown (**`content/wiki/`** is always on disk) or uploaded files (**`uploads/`**). Back those up separately if you change hosts—see [BACKUP_SETUP.md](BACKUP_SETUP.md).
+
+**Jump to:** [B. Cutover from existing SQLite](#b-cutover-from-existing-sqlite-keep-your-data) · [New deployment (no import)](#a-new-deployment-no-sqlite-data-to-import)
+
+---
+
+### Where the migration reads SQLite from
+
+The migration resolves the SQLite file in this order:
+
+| Source | Example |
+| --- | --- |
+| **`SQLITE_PATH`** or **`DB_PATH`** environment variable | Path is resolved **relative to the project root** (the folder that contains `package.json`), not your shell’s current directory. Example: `export DB_PATH=./dc-automation.db` or `export DB_PATH=/var/lib/dc-automation/dc-automation.db` |
+| *(if unset)* | **`dc-automation.db`** in the **project root** (next to `package.json`) |
+
+So for a typical Pi checkout at **`~/dc-automation`**, either place **`dc-automation.db`** there or set **`DB_PATH`** / **`SQLITE_PATH`** to point at your backup copy before running **`npm run db:migrate`**.
+
+---
+
 ## How the app chooses the database
 
 - If **`DATABASE_URL`** is set (or `config.json` contains a non-empty **`databaseUrl`**), the server uses **PostgreSQL** and applies the **baseline schema** on startup.
@@ -38,19 +71,31 @@ See [`.env.example`](../.env.example) and [config.default.json](../config.defaul
 
 ## B. Cutover from existing SQLite (keep your data)
 
-Do this in a **maintenance window** if the app is live.
+Use this when you already have a **`dc-automation.db`** (or custom **`DB_PATH`**) and want **the same data** in PostgreSQL. Do it in a **maintenance window** if the app is live.
 
-1. **Stop** the application.
-2. **Back up** the SQLite file (copy `dc-automation.db` or your `DB_PATH` file) and, if you move servers, the **`content/wiki/`** tree.
-3. Prepare an **empty** PostgreSQL database (new DB, or drop/recreate schemas—avoid mixing old PG data unless you know what you are doing).
-4. Set **`DATABASE_URL`** in the environment (or `config.json`) to that database, but **do not** start serving production traffic yet until migration succeeds.
-5. From the project root, with the same Node dependencies installed (`npm ci`):
+### Before you run `npm run db:migrate`
+
+| Requirement | Notes |
+| --- | --- |
+| **SQLite file** | Readable path—default **`dc-automation.db`** in the project root, or set **`DB_PATH`** / **`SQLITE_PATH`** (see [above](#where-the-migration-reads-sqlite-from)). |
+| **PostgreSQL** | Empty database (or one you are allowed to overwrite). [Create user + DB](RASPBERRY_PI_SETUP.md#optional-postgresql-instead-of-sqlite) first. |
+| **URL** | **`DATABASE_URL`** (or **`databaseUrl`** in **`config.json`**) must point at that PostgreSQL database **before** you run the migration. |
+| **Node deps** | From the **project root**, run **`npm ci`** or **`npm install`** so **`npm run db:migrate`** can run. |
+
+### Steps
+
+1. **Stop** the DC Automation process (PM2, systemd, etc.).
+2. **Back up** the SQLite file and **`content/wiki/`** (and **`uploads/`** if you care about file uploads). Keep the SQLite path unchanged until the migration succeeds, or copy the file to **`dc-automation.db`** in the project root (next to **`package.json`**) and use that.
+3. **Create** an empty PostgreSQL database and user with correct **`public`** privileges (see [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md)).
+4. **Set** **`DATABASE_URL`** to the new database. Do **not** point production traffic at the app until the migration finishes successfully.
+5. **Run the import** from the **project root** (folder with **`package.json`**):
 
    **PowerShell** (recommended on Windows—`set` does **not** set env vars for `npm` here):
 
    ```powershell
    $env:DATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DBNAME"
-   $env:DB_PATH = "C:\path\to\dc-automation.db"   # optional if the DB is at project root
+   # Only if SQLite is not at .\dc-automation.db (paths relative to project root):
+   # $env:DB_PATH = ".\backups\dc-automation.db"
    npm run db:migrate
    ```
 
@@ -58,24 +103,27 @@ Do this in a **maintenance window** if the app is live.
 
    ```bat
    set DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME
-   set DB_PATH=C:\path\to\dc-automation.db
+   rem Optional: set DB_PATH=backups\dc-automation.db
    npm run db:migrate
    ```
 
-   **bash / Linux / macOS:**
+   **bash / Linux / macOS (e.g. Raspberry Pi):**
 
    ```bash
-   export DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME
-   export DB_PATH=/path/to/dc-automation.db
+   cd ~/dc-automation   # your checkout
+   export DATABASE_URL="postgresql://USER:PASSWORD@127.0.0.1:5432/dc-automation"
+   # Optional if the DB file is not ./dc-automation.db:
+   # export DB_PATH=/path/to/dc-automation.db
    npm run db:migrate
    ```
 
-   Alternatively, put **`databaseUrl`** in **`config.json`** (same merge rules as the app: env wins over `config.json` over `config.default.json`).  
-   The script reads SQLite from **`DB_PATH`**, **`SQLITE_PATH`**, or defaults to `./dc-automation.db`.
+   You can put **`databaseUrl`** in **`config.json`** instead of **`DATABASE_URL`** (same merge order as the app: env overrides file).
 
-6. Confirm the script exits with code **0** and review the per-table row counts in the log.
-7. **Start** the app with **`DATABASE_URL`** set. The app will not re-run the data copy on boot.
-8. **Smoke-test**: login, open Testing/Locations, perform one read and one write.
+6. **Confirm** exit code **0** and read the per-table row counts printed in the log.
+7. **Start** the app **with only** **`DATABASE_URL`** set (no SQLite **`DB_PATH`** needed for normal operation). The server uses PostgreSQL; it does **not** re-import on every boot.
+8. **Smoke-test**: log in, open Testing/Locations/Files/Wiki, do one read and one write.
+
+If **`npm run db:migrate`** says the SQLite file was not found, fix **`DB_PATH`** / **`SQLITE_PATH`** or copy **`dc-automation.db`** into the project root under the expected name.
 
 ---
 
@@ -95,12 +143,12 @@ PostgreSQL **15+** tightened defaults: your app user may **CONNECT** to the data
 Connect as a superuser (often OS user `postgres` on Linux, or an admin role on Windows) and fix **your database name** and **your app role** (URL user):
 
 ```sql
-\c dc-automation
+\c "dc-automation"
 GRANT ALL ON SCHEMA public TO dcauto;
 ALTER SCHEMA public OWNER TO dcauto;
 ```
 
-(`\c` is a **psql** meta-command; in GUI tools, select the target DB first, then run the two SQL lines.)
+(`\c` is a **psql** meta-command; use quotes if the database name contains hyphens. In GUI tools, select the target DB first, then run the two SQL lines.)
 
 Prefer creating the database as **`CREATE DATABASE ... OWNER appuser;`** so this is rarely needed—see [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md).
 

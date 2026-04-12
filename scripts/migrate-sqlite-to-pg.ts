@@ -9,7 +9,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import pg from 'pg'
 import { resolveDatabaseUrl } from '../server/config.js'
-import { BASELINE_PG_STATEMENTS } from '../server/db/schema-pg.js'
+import { BASELINE_PG_STATEMENTS, PG_POST_BASELINE_STATEMENTS } from '../server/db/schema-pg.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '..')
@@ -94,6 +94,9 @@ async function main() {
     console.log('[migrate] Applying baseline PostgreSQL schema…')
     try {
       for (const sql of BASELINE_PG_STATEMENTS) {
+        await pool.query(sql)
+      }
+      for (const sql of PG_POST_BASELINE_STATEMENTS) {
         await pool.query(sql)
       }
     } catch (schemaErr: unknown) {
