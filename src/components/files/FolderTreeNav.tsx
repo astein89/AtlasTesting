@@ -1,22 +1,47 @@
 import type { FileFolderRow, FileFolderTreeNode } from '@/api/files'
+import { fileFolderNavSegment } from '@/lib/filesUrl'
+
+export function folderParamMatchesRow(row: Pick<FileFolderRow, 'id' | 'slug'>, param: string): boolean {
+  if (row.id === param) return true
+  const s = row.slug?.trim()
+  return !!s && s.toLowerCase() === param.toLowerCase()
+}
+
+export function findFolderInTreeByParam(
+  nodes: FileFolderTreeNode[],
+  param: string | null
+): FileFolderTreeNode | null {
+  if (param == null || !String(param).trim()) return null
+  const p = param.trim()
+  const walk = (ns: FileFolderTreeNode[]): FileFolderTreeNode | null => {
+    for (const n of ns) {
+      if (folderParamMatchesRow(n, p)) return n
+      const sub = walk(n.children ?? [])
+      if (sub) return sub
+    }
+    return null
+  }
+  return walk(nodes)
+}
 
 export function findPathToFolder(
   nodes: FileFolderTreeNode[],
-  targetId: string | null
+  targetKey: string | null
 ): FileFolderRow[] | null {
-  if (targetId === null) return []
+  if (targetKey === null) return []
   const walk = (ns: FileFolderTreeNode[], acc: FileFolderRow[]): FileFolderRow[] | null => {
     for (const n of ns) {
       const row: FileFolderRow = {
         id: n.id,
         parent_id: n.parent_id,
+        slug: n.slug,
         name: n.name,
         created_at: n.created_at,
         allowed_role_slugs: n.allowed_role_slugs ?? null,
         created_by: n.created_by ?? null,
       }
-      if (n.id === targetId) return [...acc, row]
-      const sub = walk(n.children, [...acc, row])
+      if (folderParamMatchesRow(row, targetKey)) return [...acc, row]
+      const sub = walk(n.children ?? [], [...acc, row])
       if (sub) return sub
     }
     return null
@@ -26,12 +51,13 @@ export function findPathToFolder(
 
 export function FolderTreeNav({
   nodes,
-  currentFolderId,
+  currentFolderKey,
   onSelect,
 }: {
   nodes: FileFolderTreeNode[]
-  currentFolderId: string | null
-  onSelect: (id: string | null) => void
+  /** `folder` query value (slug or UUID), or null for library root. */
+  currentFolderKey: string | null
+  onSelect: (navKey: string | null) => void
 }) {
   return (
     <ul className="space-y-0.5 text-sm">
@@ -40,14 +66,14 @@ export function FolderTreeNav({
           type="button"
           onClick={() => onSelect(null)}
           className={`w-full rounded-md px-2 py-1.5 text-left hover:bg-muted ${
-            currentFolderId === null ? 'bg-primary/15 font-medium text-primary' : ''
+            currentFolderKey === null ? 'bg-primary/15 font-medium text-primary' : ''
           }`}
         >
           All files
         </button>
       </li>
       {nodes.map((n) => (
-        <FolderTreeBranch key={n.id} node={n} depth={0} currentFolderId={currentFolderId} onSelect={onSelect} />
+        <FolderTreeBranch key={n.id} node={n} depth={0} currentFolderKey={currentFolderKey} onSelect={onSelect} />
       ))}
     </ul>
   )
@@ -56,21 +82,24 @@ export function FolderTreeNav({
 function FolderTreeBranch({
   node,
   depth,
-  currentFolderId,
+  currentFolderKey,
   onSelect,
 }: {
   node: FileFolderTreeNode
   depth: number
-  currentFolderId: string | null
-  onSelect: (id: string | null) => void
+  currentFolderKey: string | null
+  onSelect: (navKey: string | null) => void
 }) {
-  const active = currentFolderId === node.id
+  const active =
+    currentFolderKey != null &&
+    (node.id === currentFolderKey ||
+      (node.slug?.trim() && node.slug.trim().toLowerCase() === currentFolderKey.toLowerCase()))
   return (
     <li>
       <button
         type="button"
         style={{ paddingLeft: depth * 12 + 8 }}
-        onClick={() => onSelect(node.id)}
+        onClick={() => onSelect(fileFolderNavSegment(node))}
         className={`w-full rounded-md px-2 py-1.5 text-left hover:bg-muted ${
           active ? 'bg-primary/15 font-medium text-primary' : ''
         }`}
@@ -84,7 +113,7 @@ function FolderTreeBranch({
               key={c.id}
               node={c}
               depth={depth + 1}
-              currentFolderId={currentFolderId}
+              currentFolderKey={currentFolderKey}
               onSelect={onSelect}
             />
           ))}

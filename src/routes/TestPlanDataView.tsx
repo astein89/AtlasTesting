@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useSortableHeader } from '../hooks/useSortableHeader'
 import { useMatchMedia } from '../hooks/useMatchMedia'
 import { useUserPreference } from '../hooks/useUserPreference'
@@ -38,7 +38,7 @@ import {
   USER_STATUS_AUTOMATION_LOCK_KEY,
 } from '../utils/planConditionalStatus'
 import { getConditionalFormatStyle } from '../utils/conditionalFormat'
-import { testingPath } from '../lib/appPaths'
+import { testingPath, isTestingUuidParam } from '../lib/appPaths'
 import { formatFieldValue } from '../utils/formatFieldValue'
 import type { FormulaData } from '../utils/formulaEvaluator'
 import { getContrastTextColor } from '../utils/colorContrast'
@@ -288,7 +288,9 @@ export function TestPlanDataView() {
   const columnPickerAnchorRef = useRef<HTMLButtonElement | null>(null)
   const filterAnchorRefs = useRef<Record<string, HTMLElement | null>>({})
   const canViewRecordHistory = useAuthStore((s) => s.hasPermission('records.history'))
+  const canManagePlans = useAuthStore((s) => s.hasPermission('testing.plans.manage'))
   const canEditData = useAuthStore((s) => s.canEditData())
+  const location = useLocation()
   const isArchived = currentTest?.archived === true
   const editingAllowed = canEditData && (!testId || (currentTest != null && !currentTest.archived))
   const { showAlert, showConfirm } = useAlertConfirm()
@@ -506,6 +508,20 @@ export function TestPlanDataView() {
       .then((t) => setCurrentTest(t))
       .catch(() => setCurrentTest(null))
   }, [planId, testId])
+
+  useEffect(() => {
+    if (!plan?.slug || !currentTest?.slug || !planId || !testId) return
+    const canonical = testingPath('test-plans', plan.slug, 'tests', currentTest.slug, 'data')
+    if (
+      location.pathname !== canonical &&
+      (isTestingUuidParam(planId) ||
+        isTestingUuidParam(testId) ||
+        planId !== plan.slug ||
+        testId !== currentTest.slug)
+    ) {
+      navigate({ pathname: canonical, search: location.search }, { replace: true })
+    }
+  }, [plan?.slug, currentTest?.slug, planId, testId, location.pathname, location.search, navigate])
 
   useEffect(() => {
     if (!planId) return
@@ -752,7 +768,7 @@ export function TestPlanDataView() {
     setRestoringFromArchive(true)
     try {
       await updateTest(planId, testId, { archived: false })
-      navigate(testingPath('test-plans', planId))
+      navigate(testingPath('test-plans', plan?.slug || planId))
     } catch {
       showAlert('Failed to restore test.')
     } finally {
@@ -840,7 +856,13 @@ export function TestPlanDataView() {
   const openMoveToTestModal = useCallback(() => {
     if (!planId || !testId) return
     getTests(planId)
-      .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
+      .then((list) =>
+        setOtherTests(
+          list
+            .filter((t) => !t.archived && t.id !== testId && t.slug !== testId)
+            .map((t) => ({ id: t.id, name: t.name }))
+        )
+      )
       .catch(() => setOtherTests([]))
     setMoveToTestId('')
     setShowAddTestInMoveModal(false)
@@ -853,7 +875,13 @@ export function TestPlanDataView() {
   const refreshOtherTests = useCallback(() => {
     if (!planId || !testId) return
     getTests(planId)
-      .then((list) => setOtherTests(list.filter((t) => !t.archived && t.id !== testId).map((t) => ({ id: t.id, name: t.name }))))
+      .then((list) =>
+        setOtherTests(
+          list
+            .filter((t) => !t.archived && t.id !== testId && t.slug !== testId)
+            .map((t) => ({ id: t.id, name: t.name }))
+        )
+      )
       .catch(() => setOtherTests([]))
   }, [planId, testId])
 
@@ -1231,6 +1259,7 @@ export function TestPlanDataView() {
   if (loading || !plan) return <p className="text-foreground/60">Loading...</p>
 
   const hasFields = fields.length > 0
+  const planPathSeg = plan.slug || planId!
 
   return (
     <ModalNestedHistoryContext.Provider value={registerAtlasPickerHistory}>
@@ -1241,7 +1270,7 @@ export function TestPlanDataView() {
             Test plans
           </Link>
           <span>/</span>
-          <Link to={testingPath('test-plans', planId)} className="text-foreground hover:underline">
+          <Link to={testingPath('test-plans', planPathSeg)} className="text-foreground hover:underline">
             {plan.name}
           </Link>
           {currentTest && (
@@ -1249,6 +1278,25 @@ export function TestPlanDataView() {
               <span>/</span>
               <span className="text-foreground/80">{currentTest.name}</span>
             </>
+          )}
+        </div>
+        {canManagePlans && planId && (
+          <Link
+            to={testingPath('test-plans', planPathSeg, 'edit')}
+            state={{ returnTo: `${location.pathname}${location.search}` }}
+            className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background shrink-0"
+          >
+            Edit plan
+          </Link>
+        )}
+      </div>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">{plan.name}</h1>
+          {plan.description && (
+            <p className="mt-1 max-w-2xl whitespace-pre-wrap text-sm text-foreground/80 leading-relaxed">
+              {plan.description}
+            </p>
           )}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
@@ -1289,14 +1337,6 @@ export function TestPlanDataView() {
             </>
           )}
         </div>
-      </div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-foreground">{plan.name}</h1>
-        {plan.description && (
-          <p className="mt-1 max-w-2xl whitespace-pre-wrap text-sm text-foreground/80 leading-relaxed">
-            {plan.description}
-          </p>
-        )}
       </div>
       {isAdding && (
         <AddRecordModal
@@ -1629,7 +1669,7 @@ export function TestPlanDataView() {
             No fields configured. Go to the plan page to edit the plan and add fields, then you can collect data.
           </p>
           <Link
-            to={testingPath('test-plans', planId)}
+            to={testingPath('test-plans', planPathSeg)}
             className="mt-4 inline-flex min-h-[44px] shrink-0 items-center rounded-lg bg-primary px-4 py-2 text-primary-foreground hover:opacity-90 sm:min-h-0"
           >
             ← Back to plan

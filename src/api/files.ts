@@ -14,6 +14,8 @@ export type SortOrder = 'asc' | 'desc'
 export type FileFolderRow = {
   id: string
   parent_id: string | null
+  /** Globally unique URL segment; also accepted by the API as `folderId` / `parentId`. */
+  slug?: string | null
   name: string
   created_at: string | null
   allowed_role_slugs: string | null

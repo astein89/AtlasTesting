@@ -60,6 +60,7 @@ export function normalizeLocationSchemaComponent(
 
 export interface NormalizedLocationZone {
   id: string
+  slug?: string | null
   name: string
   description?: string | null
   schemaId: string
@@ -73,6 +74,7 @@ export function normalizeLocationZone(row: Record<string, unknown>): NormalizedL
   const locationCount = Number.isFinite(countNum) ? countNum : 0
   return {
     id: String(pick(row, 'id') ?? ''),
+    slug: (pick(row, 'slug') as string | null | undefined) ?? null,
     name: String(pick(row, 'name') ?? ''),
     description: (pick(row, 'description') as string | null | undefined) ?? null,
     schemaId: String(pick(row, 'schemaId', 'schema_id', 'schemaid') ?? ''),

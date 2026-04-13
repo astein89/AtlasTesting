@@ -55,7 +55,7 @@ export function TestPlansList() {
 
   const handleRowClick = (plan: TestPlan, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
-    navigate(testingPath('test-plans', plan.id))
+    navigate(testingPath('test-plans', plan.slug || plan.id))
   }
 
   useEffect(() => {
@@ -130,7 +130,7 @@ export function TestPlansList() {
                     </button>
                     {canManagePlans && (
                       <Link
-                        to={testingPath('test-plans', plan.id, 'edit')}
+                        to={testingPath('test-plans', plan.slug || plan.id, 'edit')}
                         state={{ returnTo: testingPath('test-plans') }}
                         className="min-h-[44px] flex items-center rounded border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
                       >
@@ -234,7 +234,7 @@ export function TestPlansList() {
                           </button>
                           {canManagePlans && (
                             <Link
-                              to={testingPath('test-plans', plan.id, 'edit')}
+                              to={testingPath('test-plans', plan.slug || plan.id, 'edit')}
                               state={{ returnTo: testingPath('test-plans') }}
                               className="shrink-0 rounded border border-border px-3 py-1.5 text-sm text-foreground hover:bg-background"
                             >

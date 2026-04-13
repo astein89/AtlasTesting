@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { SimpleDataTable, type SimpleColumn } from '../components/data/SimpleDataTable'
 import { getBasePath } from '../lib/basePath'
+import { isLocationUuidParam, locationsPath } from '../lib/appPaths'
 import { useAuthStore } from '../store/authStore'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
@@ -296,6 +297,8 @@ function formatGenerateFailureMessage(err: unknown): string {
 export function LocationZoneDetail() {
   const { showConfirm } = useAlertConfirm()
   const canWriteLocations = useAuthStore((s) => s.canEditLocationsData())
+  const navigate = useNavigate()
+  const location = useLocation()
   const { zoneId } = useParams<{ zoneId: string }>()
   const [zone, setZone] = useState<Zone | null>(null)
   const [locations, setLocations] = useState<LocationRow[]>([])
@@ -368,6 +371,17 @@ export function LocationZoneDetail() {
     void refreshLocations(zoneId)
   }, [zoneId])
 
+  useEffect(() => {
+    if (!zone?.slug || !zoneId) return
+    const canonical = locationsPath('zones', zone.slug)
+    if (
+      location.pathname !== canonical &&
+      (isLocationUuidParam(zoneId) || zoneId !== zone.slug)
+    ) {
+      navigate({ pathname: canonical, search: location.search }, { replace: true })
+    }
+  }, [zone?.slug, zoneId, location.pathname, location.search, navigate])
+
   /** Keep range inputs aligned when component keys change (e.g. schema refresh) without dropping typed values. */
   useEffect(() => {
     if (components.length === 0) return
@@ -382,10 +396,15 @@ export function LocationZoneDetail() {
 
   async function loadZoneAndSchema(id: string) {
     const zonesResp = await api.get<Zone[]>('/locations/zones')
+    const param = id.trim()
     const z =
       zonesResp.data
-        .map((row) => normalizeLocationZone(row as Record<string, unknown>))
-        .find((row) => row.id === id) ?? null
+        .map((row) => normalizeLocationZone(row as unknown as Record<string, unknown>))
+        .find(
+          (row) =>
+            row.id === param ||
+            (row.slug && row.slug.toLowerCase() === param.toLowerCase())
+        ) ?? null
     setZone(z)
     if (z?.schemaId) {
       const [comps, fieldsResp] = await Promise.all([

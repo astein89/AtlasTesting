@@ -5,9 +5,11 @@ import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { useAuthStore } from '../store/authStore'
+import { locationsPath } from '../lib/appPaths'
 
 interface LocationSchema {
   id: string
+  slug?: string | null
   name: string
   description?: string | null
 }
@@ -86,7 +88,7 @@ export function LocationSchemas() {
       setNewSchemaDescription('')
       setNewSchemaOpen(false)
       void refreshSchemas()
-      navigate(`/locations/schemas/${data.id}`)
+      navigate(locationsPath('schemas', data.slug || data.id))
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to create schema'
@@ -136,7 +138,7 @@ export function LocationSchemas() {
       })
       setDuplicateSource(null)
       void refreshSchemas()
-      navigate(`/locations/schemas/${data.id}`)
+      navigate(locationsPath('schemas', data.slug || data.id))
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
@@ -199,7 +201,7 @@ export function LocationSchemas() {
         preferenceKey="atlas-locations-schemas"
         rows={schemas}
         getRowKey={(s) => s.id}
-        onRowClick={(s) => navigate(`/locations/schemas/${s.id}`)}
+        onRowClick={(s) => navigate(locationsPath('schemas', s.slug || s.id))}
         columns={[
           { key: 'name', label: 'Schema', getValue: (s) => s.name, width: '18rem' },
           { key: 'description', label: 'Description', getValue: (s) => s.description ?? '' },

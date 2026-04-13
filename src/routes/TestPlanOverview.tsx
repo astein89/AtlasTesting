@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link, useParams, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { api, isAbortLikeError } from '../api/client'
 import { useAbortableEffect } from '../hooks/useAbortableEffect'
 import { getTests, createTest, updateTest, deleteTest } from '../api/tests'
@@ -7,12 +7,14 @@ import { useAuthStore } from '../store/authStore'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { ExportPlanModal } from '../components/plan/ExportPlanModal'
 import { formatDate, formatDateTime } from '../lib/dateTimeConfig'
-import { testingPath } from '../lib/appPaths'
+import { testingPath, isTestingUuidParam } from '../lib/appPaths'
+import { parseWikiPathSegment, slugifyWikiTitleToSegment } from '../lib/wikiPaths'
 import type { Test, TestPlan } from '../types'
 
 export function TestPlanOverview() {
   const { planId } = useParams<{ planId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const canManagePlans = useAuthStore((s) => s.hasPermission('testing.plans.manage'))
   const canManageTests = useAuthStore((s) => s.hasPermission('testing.tests.manage'))
   const { showAlert, showConfirm } = useAlertConfirm()
@@ -23,6 +25,8 @@ export function TestPlanOverview() {
   const [loading, setLoading] = useState(true)
   const [addTestOpen, setAddTestOpen] = useState(false)
   const [addTestName, setAddTestName] = useState('')
+  const [addTestSlug, setAddTestSlug] = useState('')
+  const addTestSlugTouchedRef = useRef(false)
   const [addTestStart, setAddTestStart] = useState('')
   const [addTestEnd, setAddTestEnd] = useState('')
   const [archiveModalOpen, setArchiveModalOpen] = useState(false)
@@ -30,6 +34,7 @@ export function TestPlanOverview() {
   const [restoringTestId, setRestoringTestId] = useState<string | null>(null)
   const [editingTest, setEditingTest] = useState<Test | null>(null)
   const [editTestName, setEditTestName] = useState('')
+  const [editTestSlug, setEditTestSlug] = useState('')
   const [editTestStart, setEditTestStart] = useState('')
   const [editTestEnd, setEditTestEnd] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
@@ -126,17 +131,33 @@ export function TestPlanOverview() {
     [planId]
   )
 
+  useEffect(() => {
+    if (!plan?.slug || !planId) return
+    const canonical = testingPath('test-plans', plan.slug)
+    if (location.pathname !== canonical && (isTestingUuidParam(planId) || planId !== plan.slug)) {
+      navigate({ pathname: canonical, search: location.search }, { replace: true })
+    }
+  }, [plan?.slug, planId, location.pathname, location.search, navigate])
+
   const handleAddTest = async () => {
     if (!planId || !addTestName.trim() || !addTestStart.trim()) return
+    const sp = addTestSlug.trim() ? parseWikiPathSegment(addTestSlug) : null
+    if (addTestSlug.trim() && !sp) {
+      showAlert('URL slug: use lowercase letters, digits, and hyphens only.')
+      return
+    }
     setSubmitting(true)
     try {
       await createTest(planId, {
         name: addTestName.trim(),
+        ...(sp ? { slug: sp } : {}),
         startDate: addTestStart.trim() || undefined,
         endDate: addTestEnd.trim() || undefined,
       })
       setAddTestOpen(false)
       setAddTestName('')
+      setAddTestSlug('')
+      addTestSlugTouchedRef.current = false
       setAddTestStart('')
       setAddTestEnd('')
       loadTests()
@@ -207,20 +228,28 @@ export function TestPlanOverview() {
   const openEditTest = (test: Test) => {
     setEditingTest(test)
     setEditTestName(test.name)
+    setEditTestSlug(test.slug ?? '')
     setEditTestStart(test.startDate ?? '')
     setEditTestEnd(test.endDate ?? '')
   }
 
   const handleSaveEditTest = async () => {
     if (!planId || !editingTest || !editTestName.trim()) return
+    const sp = parseWikiPathSegment(editTestSlug.trim())
+    if (!sp) {
+      showAlert('URL slug: use lowercase letters, digits, and hyphens only.')
+      return
+    }
     setSubmitting(true)
     try {
       await updateTest(planId, editingTest.id, {
         name: editTestName.trim(),
+        slug: sp,
         startDate: editTestStart.trim() || undefined,
         endDate: editTestEnd.trim() || undefined,
       })
       setEditingTest(null)
+      setEditTestSlug('')
       loadTests()
     } catch {
       showAlert('Failed to update test.')
@@ -251,7 +280,9 @@ export function TestPlanOverview() {
 
   const handleTestRowClick = (t: Test, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, a')) return
-    navigate(testingPath('test-plans', planId!, 'tests', t.id, 'data'))
+    navigate(
+      testingPath('test-plans', plan.slug, 'tests', t.slug || t.id, 'data')
+    )
   }
 
   const renderTestsList = (list: Test[], archived: boolean, sortKey: TestSortKey, sortDir: 'asc' | 'desc', onSort: (key: TestSortKey) => void) => (
@@ -478,8 +509,8 @@ export function TestPlanOverview() {
         </div>
         {canManagePlans && (
           <Link
-            to={testingPath('test-plans', planId!, 'edit')}
-            state={{ returnTo: testingPath('test-plans', planId!) }}
+            to={testingPath('test-plans', plan.slug, 'edit')}
+            state={{ returnTo: testingPath('test-plans', plan.slug) }}
             className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background shrink-0"
           >
             Edit plan
@@ -517,6 +548,8 @@ export function TestPlanOverview() {
               type="button"
               onClick={() => {
                 setAddTestStart(new Date().toISOString().slice(0, 10))
+                setAddTestSlug('')
+                addTestSlugTouchedRef.current = false
                 setAddTestOpen(true)
               }}
               className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
@@ -629,9 +662,27 @@ export function TestPlanOverview() {
               <input
                 type="text"
                 value={addTestName}
-                onChange={(e) => setAddTestName(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setAddTestName(v)
+                  if (!addTestSlugTouchedRef.current) {
+                    setAddTestSlug(slugifyWikiTitleToSegment(v))
+                  }
+                }}
                 className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
                 placeholder="e.g. Run 1 – March 2025"
+              />
+              <label className="block text-sm font-medium text-foreground">URL slug (optional)</label>
+              <input
+                type="text"
+                value={addTestSlug}
+                onChange={(e) => {
+                  addTestSlugTouchedRef.current = true
+                  setAddTestSlug(e.target.value)
+                }}
+                className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
+                placeholder="auto from name"
+                autoComplete="off"
               />
               <label className="block text-sm font-medium text-foreground">
                 Start date <span className="text-destructive">*</span>
@@ -657,6 +708,8 @@ export function TestPlanOverview() {
                 onClick={() => {
                   setAddTestOpen(false)
                   setAddTestName('')
+                  setAddTestSlug('')
+                  addTestSlugTouchedRef.current = false
                   setAddTestStart('')
                   setAddTestEnd('')
                 }}
@@ -692,6 +745,14 @@ export function TestPlanOverview() {
                 className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
                 placeholder="e.g. Run 1 – March 2025"
               />
+              <label className="block text-sm font-medium text-foreground">URL slug</label>
+              <input
+                type="text"
+                value={editTestSlug}
+                onChange={(e) => setEditTestSlug(e.target.value)}
+                className="w-full rounded border border-border bg-background px-3 py-2 text-foreground"
+                autoComplete="off"
+              />
               <label className="block text-sm font-medium text-foreground">Start date (optional)</label>
               <input
                 type="date"
@@ -713,6 +774,7 @@ export function TestPlanOverview() {
                 onClick={() => {
                   setEditingTest(null)
                   setEditTestName('')
+                  setEditTestSlug('')
                   setEditTestStart('')
                   setEditTestEnd('')
                 }}
@@ -765,7 +827,7 @@ export function TestPlanOverview() {
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <Link
-                            to={testingPath('test-plans', planId!, 'tests', t.id, 'data')}
+                            to={testingPath('test-plans', plan.slug, 'tests', t.slug || t.id, 'data')}
                             onClick={() => setArchiveModalOpen(false)}
                             className="text-sm text-primary hover:underline"
                           >

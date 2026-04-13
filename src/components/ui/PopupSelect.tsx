@@ -141,7 +141,7 @@ export function PopupSelect({
   }, [open, usePortal])
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative min-w-0 ${className}`}>
       {label && (
         <label
           htmlFor={id}
@@ -156,11 +156,14 @@ export function PopupSelect({
         id={id}
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
-        className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card disabled:cursor-not-allowed disabled:opacity-70"
+        className="min-h-[44px] w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card disabled:cursor-not-allowed disabled:opacity-70"
         aria-expanded={open}
         aria-haspopup="listbox"
+        title={displayLabel}
       >
-        <span className={`block break-words whitespace-normal text-left ${!value ? 'text-foreground/60' : ''}`}>
+        <span
+          className={`block min-w-0 truncate text-left ${!value ? 'text-foreground/60' : ''}`}
+        >
           {displayLabel}
         </span>
       </button>
@@ -197,13 +200,14 @@ export function PopupSelect({
                   key={opt.value}
                   type="button"
                   onClick={() => select(opt.value)}
-                  className={`flex min-h-[44px] w-full items-center break-words px-3 py-2 text-left text-sm whitespace-normal text-foreground hover:bg-card ${
+                  className={`flex min-h-[44px] w-full min-w-0 items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
                     value === opt.value ? 'bg-primary/10 font-medium' : ''
                   }`}
                   role="option"
                   aria-selected={value === opt.value}
+                  title={opt.label}
                 >
-                  {opt.label}
+                  <span className="min-w-0 flex-1 truncate">{opt.label}</span>
                 </button>
               ))}
             </div>
@@ -247,13 +251,14 @@ export function PopupSelect({
                   key={opt.value}
                   type="button"
                   onClick={() => select(opt.value)}
-                  className={`flex min-h-[44px] w-full items-center break-words px-3 py-2 text-left text-sm whitespace-normal text-foreground hover:bg-card ${
+                  className={`flex min-h-[44px] w-full min-w-0 items-center px-3 py-2 text-left text-sm text-foreground hover:bg-card ${
                     value === opt.value ? 'bg-primary/10 font-medium' : ''
                   }`}
                   role="option"
                   aria-selected={value === opt.value}
+                  title={opt.label}
                 >
-                  {opt.label}
+                  <span className="min-w-0 flex-1 truncate">{opt.label}</span>
                 </button>
               ))}
             </div>

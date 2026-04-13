@@ -10,6 +10,7 @@ import type { DataField, TimerValue } from '../../types'
 import { getStatusOptions } from '../../types'
 import { formatDateTime } from '../../lib/dateTimeConfig'
 import { getBasePath } from '../../lib/basePath'
+import { resolveHeaderStatusField } from '../../utils/headerStatusField'
 
 interface Record {
   id: string
@@ -54,7 +55,12 @@ interface EditRecordModalProps {
   submitting: boolean
   formLayoutOrder?: string[]
   /** Plan key field for naming uploaded images (key_field + image_tag + timestamp) */
-  plan?: { keyField?: string; hiddenFieldIds?: string[]; requiredFieldIds?: string[] }
+  plan?: {
+    keyField?: string
+    hiddenFieldIds?: string[]
+    requiredFieldIds?: string[]
+    mainStatusFieldId?: string | null
+  }
   /** When true, show History button in footer (admin-only) */
   isAdmin?: boolean
   /** When true, show record as read-only (e.g. for viewer role) */
@@ -137,7 +143,6 @@ export function EditRecordModal({
 
   const handleSaveClick = useCallback(() => {
     if (!overrideValidation) {
-      const statusField = fields.find((f) => f.type === 'status')
       const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
       const validationFields = fields.filter((f) => f.type !== 'status' && !hiddenSet.has(f.id))
       const effectiveRequiredIds = plan?.requiredFieldIds?.filter((id) => !hiddenSet.has(id))
@@ -155,7 +160,6 @@ export function EditRecordModal({
 
   const handleSaveAndClose = useCallback(() => {
     if (!overrideValidation) {
-      const statusField = fields.find((f) => f.type === 'status')
       const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
       const validationFields = fields.filter((f) => f.type !== 'status' && !hiddenSet.has(f.id))
       const effectiveRequiredIds = plan?.requiredFieldIds?.filter((id) => !hiddenSet.has(id))
@@ -177,12 +181,12 @@ export function EditRecordModal({
     onCancel()
   }, [onCancel])
 
-  const statusField = fields.find((f) => f.type === 'status')
+  const headerStatusField = resolveHeaderStatusField(fields, plan?.mainStatusFieldId)
   const hiddenSet = new Set(plan?.hiddenFieldIds ?? [])
-  const formOrderWithoutStatus = (statusField
+  const formOrderWithoutStatus = (headerStatusField
     ? normalizeFormLayoutOrder(formLayoutOrder, fields).filter((entry) => {
         if (isSeparatorId(entry) || isSeparatorLineId(entry)) return true
-        return parseFieldEntry(entry).fieldId !== statusField.id
+        return parseFieldEntry(entry).fieldId !== headerStatusField.id
       })
     : normalizeFormLayoutOrder(formLayoutOrder, fields)
   ).filter((entry) => {
@@ -254,33 +258,41 @@ export function EditRecordModal({
               </label>
             )}
           </div>
-            {statusField && !plan?.hiddenFieldIds?.includes(statusField.id) ? (
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="shrink-0 text-sm font-medium text-foreground/50">Status</span>
+            {headerStatusField && !plan?.hiddenFieldIds?.includes(headerStatusField.id) ? (
+            <div className="flex min-w-0 max-w-[min(22rem,50vw)] items-center gap-2 sm:max-w-md">
+              <span
+                className="min-w-0 shrink truncate text-sm font-medium text-foreground/50"
+                title={headerStatusField.label}
+              >
+                {headerStatusField.label}
+              </span>
               {readOnly ? (
                 (() => {
-                  const statusColor = statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]
+                  const statusColor = headerStatusField.config?.statusColors?.[String(data[headerStatusField.key] ?? '')]
+                  const raw = String(data[headerStatusField.key] ?? '') || '—'
                   return (
                     <span
-                      className="rounded border border-border bg-background px-3 py-1.5 text-sm"
+                      className="max-w-[min(12rem,40vw)] truncate rounded border border-border bg-background px-3 py-1.5 text-sm sm:max-w-[14rem]"
                       style={
                         statusColor
                           ? { backgroundColor: statusColor, color: getContrastTextColor(statusColor) }
                           : undefined
                       }
+                      title={raw !== '—' ? raw : undefined}
                     >
-                      {String(data[statusField.key] ?? '') || '—'}
+                      {raw}
                     </span>
                   )
                 })()
               ) : (
                 <SelectInput
-                  value={String(data[statusField.key] ?? '')}
-                  onChange={(v) => onDataChange(statusField.key, v)}
-                  options={getStatusOptions(statusField)}
-                  className="min-w-[140px]"
-                  valueColor={statusField.config?.statusColors?.[String(data[statusField.key] ?? '')]}
-                  optionColors={statusField.config?.statusColors}
+                  value={String(data[headerStatusField.key] ?? '')}
+                  onChange={(v) => onDataChange(headerStatusField.key, v)}
+                  options={getStatusOptions(headerStatusField)}
+                  placeholder="None"
+                  className="min-w-0 max-w-[min(12rem,42vw)] flex-1 sm:max-w-[14rem]"
+                  valueColor={headerStatusField.config?.statusColors?.[String(data[headerStatusField.key] ?? '')]}
+                  optionColors={headerStatusField.config?.statusColors}
                 />
               )}
             </div>

@@ -229,7 +229,7 @@ export function FieldsList() {
                         })().map((p) => (
                           <div key={p.id} className="min-w-0 truncate" title={p.name}>
                             <Link
-                              to={testingPath('test-plans', p.id)}
+                              to={testingPath('test-plans', p.slug || p.id)}
                               className="block truncate text-primary hover:underline"
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -371,7 +371,7 @@ export function FieldsList() {
                         })().map((p) => (
                           <li key={p.id} className="min-w-0 max-w-full overflow-hidden">
                             <Link
-                              to={testingPath('test-plans', p.id)}
+                              to={testingPath('test-plans', p.slug || p.id)}
                               className="block truncate whitespace-nowrap text-primary hover:underline"
                               title={p.name}
                               onClick={(e) => e.stopPropagation()}

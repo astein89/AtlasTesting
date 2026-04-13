@@ -353,6 +353,7 @@ export function renderFormField(
         value={String(value ?? '')}
         onChange={(v) => onChange(f.key, v)}
         options={f.config?.options || []}
+        emptyOptionLabel="—"
         className="w-full"
       />
     )
@@ -407,6 +408,7 @@ export function renderFormField(
         value={statusVal}
         onChange={(v) => onChange(f.key, v)}
         options={getStatusOptions(f)}
+        placeholder="None"
         className="w-full"
         valueColor={f.config?.statusColors?.[statusVal]}
         optionColors={f.config?.statusColors}

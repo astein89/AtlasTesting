@@ -199,6 +199,8 @@ export interface DataField {
 
 export interface TestPlan {
   id: string
+  /** URL segment for `/testing/test-plans/...`; unique globally. */
+  slug: string
   name: string
   /** Brief summary (for lists). Stored in DB as short_description. */
   description?: string
@@ -236,6 +238,12 @@ export interface TestPlan {
   conditionalStatusRules?: Record<string, Record<string, ConditionalStatusOptionCondition | null | undefined>>
   /** Per status field id: ordered list of status labels in the Status Conditionals table (subset of field options). */
   conditionalStatusRuleOrder?: Record<string, string[]>
+  /**
+   * Optional: default status field id — its value is shown in the Add/Edit row header (next to the date).
+   * If unset or invalid, the first status field on the plan is used (automatic).
+   * Use the literal `'none'` for no status in the header. Not enforced; other status fields behave normally.
+   */
+  mainStatusFieldId?: string | null
   createdAt?: string
   updatedAt?: string | null
   /**
@@ -250,6 +258,8 @@ export interface TestPlan {
 /** A first-class test under a test plan (has its own records and dates). */
 export interface Test {
   id: string
+  /** URL segment under `/tests/.../data`; unique within the plan. */
+  slug: string
   testPlanId: string
   name: string
   startDate?: string

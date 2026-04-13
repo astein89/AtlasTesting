@@ -38,11 +38,12 @@ import { useUserPreference } from '@/hooks/useUserPreference'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
-import { filesPathWithFolder, folderIdFromSearch } from '@/lib/filesUrl'
+import { isTestingUuidParam } from '@/lib/appPaths'
+import { fileFolderNavSegment, filesPathWithFolder, folderIdFromSearch } from '@/lib/filesUrl'
 import { useFilesModuleHost } from '@/contexts/FilesModuleHostContext'
 import { FILES_TREE_REFRESH_EVENT, requestFilesTreeRefresh } from '@/lib/filesTreeRefresh'
 import { ColumnFilterDropdown } from '@/components/data/ColumnFilterDropdown'
-import { findPathToFolder } from '@/components/files/FolderTreeNav'
+import { findFolderInTreeByParam, findPathToFolder } from '@/components/files/FolderTreeNav'
 import { BulkFileUploadApplyModal } from '@/components/files/BulkFileUploadApplyModal'
 import { FileEditModal } from '@/components/files/FileEditModal'
 import { FolderEditModal } from '@/components/files/FolderEditModal'
@@ -895,8 +896,8 @@ export function FilesExplorer() {
   const listSelectAllRef = useRef<HTMLInputElement>(null)
 
   const goFolder = useCallback(
-    (id: string | null) => {
-      setSearchParams(id ? { folder: id } : {})
+    (folderKey: string | null) => {
+      setSearchParams(folderKey ? { folder: folderKey } : {})
       setPreviewFile(null)
     },
     [setSearchParams]
@@ -976,6 +977,16 @@ export function FilesExplorer() {
   useEffect(() => {
     void loadTree()
   }, [loadTree])
+
+  useEffect(() => {
+    if (!folderId || tree.length === 0) return
+    const node = findFolderInTreeByParam(tree, folderId)
+    if (!node?.slug?.trim()) return
+    const seg = fileFolderNavSegment(node)
+    if (isTestingUuidParam(folderId) && seg !== folderId) {
+      setSearchParams({ folder: seg }, { replace: true })
+    }
+  }, [tree, folderId, setSearchParams])
 
   useEffect(() => {
     const onRefresh = () => void loadTree()
@@ -1081,7 +1092,7 @@ export function FilesExplorer() {
 
   const onOpenItem = async (item: ReturnType<typeof mergedItems>[number]) => {
     if (item.kind === 'folder') {
-      goFolder(item.row.id)
+      goFolder(fileFolderNavSegment(item.row))
       return
     }
     const row = item.row
@@ -1470,7 +1481,7 @@ export function FilesExplorer() {
               <span key={seg.id} className="flex items-center gap-1">
                 <span aria-hidden>/</span>
                 <Link
-                  to={filesPathWithFolder(seg.id)}
+                  to={filesPathWithFolder(fileFolderNavSegment(seg))}
                   className="hover:text-primary hover:underline"
                   onClick={() => setPreviewFile(null)}
                 >
@@ -2237,8 +2248,15 @@ export function FilesExplorer() {
         }}
         onDeleted={({ id, parentId }) => {
           setFolderEditTarget(null)
-          if (folderId === id) {
-            setSearchParams(parentId ? { folder: parentId } : {})
+          const openHit = folderId ? findFolderInTreeByParam(tree, folderId) : null
+          const viewingDeleted = openHit?.id === id
+          if (viewingDeleted) {
+            let nextKey: string | null = null
+            if (parentId) {
+              const pNode = findFolderInTreeByParam(tree, parentId)
+              nextKey = pNode ? fileFolderNavSegment(pNode) : parentId
+            }
+            setSearchParams(nextKey ? { folder: nextKey } : {})
             setPreviewFile(null)
           }
           void loadListing()

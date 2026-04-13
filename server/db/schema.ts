@@ -218,8 +218,12 @@ export function initSchema(db: DbWrapper) {
   migratePlanArchivedRuns(db)
   migratePlanConditionalStatusRules(db)
   migratePlanConditionalStatusRuleOrder(db)
+  migratePlanMainStatusFieldId(db)
   migrateTestRunsRunId(db)
   migrateTestsTableAndBackfill(db)
+  migrateTestingSlugColumns(db)
+  migrateLocationSlugColumns(db)
+  migrateFileFolderSlugColumns(db)
   migratePlanConstraints(db)
   migratePlanShortDescription(db)
   migrateRecordsToPlanDirect(db)
@@ -550,6 +554,17 @@ function migratePlanConditionalStatusRuleOrder(db: DbWrapper) {
   }
 }
 
+function migratePlanMainStatusFieldId(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'test_plans')
+    if (!cols.includes('main_status_field_id')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN main_status_field_id TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 function migrateTestRunsRunId(db: DbWrapper) {
   try {
     const cols = tableColumnNames(db, 'test_runs')
@@ -562,6 +577,47 @@ function migrateTestRunsRunId(db: DbWrapper) {
 }
 
 /** Create tests table (first-class tests under a plan), add test_id to test_runs, backfill one Legacy test per plan. */
+function migrateTestingSlugColumns(db: DbWrapper) {
+  try {
+    const planCols = tableColumnNames(db, 'test_plans')
+    if (!planCols.includes('slug')) {
+      db.run('ALTER TABLE test_plans ADD COLUMN slug TEXT')
+    }
+    const testCols = tableColumnNames(db, 'tests')
+    if (!testCols.includes('slug')) {
+      db.run('ALTER TABLE tests ADD COLUMN slug TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateLocationSlugColumns(db: DbWrapper) {
+  try {
+    const schemaCols = tableColumnNames(db, 'location_schemas')
+    if (!schemaCols.includes('slug')) {
+      db.run('ALTER TABLE location_schemas ADD COLUMN slug TEXT')
+    }
+    const zoneCols = tableColumnNames(db, 'zones')
+    if (!zoneCols.includes('slug')) {
+      db.run('ALTER TABLE zones ADD COLUMN slug TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateFileFolderSlugColumns(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'file_folders')
+    if (!cols.includes('slug')) {
+      db.run('ALTER TABLE file_folders ADD COLUMN slug TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 function migrateTestsTableAndBackfill(db: DbWrapper) {
   try {
     db.exec(`

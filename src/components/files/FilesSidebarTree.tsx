@@ -35,7 +35,7 @@ function ArrowUpTrayIcon({ className }: { className?: string }) {
 }
 
 /**
- * Files module folder tree in the app sidebar. Current folder is synced via `?folder=<id>`.
+ * Files module folder tree in the app sidebar. Current folder is synced via `?folder=<slug-or-uuid>`.
  */
 export function FilesSidebarTree({ onNavigate }: { onNavigate?: () => void }) {
   const { requestNewFolder, requestUploadPicker } = useFilesModuleHost()
@@ -107,7 +107,7 @@ export function FilesSidebarTree({ onNavigate }: { onNavigate?: () => void }) {
             </div>
           ) : null}
         </div>
-        <FolderTreeNav nodes={tree} currentFolderId={folderId} onSelect={goFolder} />
+        <FolderTreeNav nodes={tree} currentFolderKey={folderId} onSelect={goFolder} />
       </div>
       {canRecycle ? (
         <div className="shrink-0 border-t border-border pt-2">

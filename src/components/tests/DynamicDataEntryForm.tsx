@@ -164,6 +164,7 @@ export function DynamicDataEntryForm({
                 onChange={(v) => setValue(f.key, v)}
                 options={f.config?.options || []}
                 placeholder="(Select)"
+                emptyOptionLabel="—"
                 className="w-full"
               />
             )}
@@ -172,7 +173,7 @@ export function DynamicDataEntryForm({
                 value={String(watch(f.key) ?? '')}
                 onChange={(v) => setValue(f.key, v)}
                 options={getStatusOptions(f)}
-                placeholder="(Select)"
+                placeholder="None"
                 className="w-full"
                 valueColor={f.config?.statusColors?.[String(watch(f.key) ?? '')]}
                 optionColors={f.config?.statusColors}

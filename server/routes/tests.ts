@@ -4,6 +4,13 @@ import { db, isUsingPostgres } from '../db/index.js'
 import { sqlUtcNowExpr, sqlUnixEpochFromXTs, toIsoUtcString } from '../lib/timestamps.js'
 import { authMiddleware, requirePermission } from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
+import {
+  allocateUniqueTestSlug,
+  isTestSlugAvailable,
+  resolvePlanId,
+  resolveTestId,
+  validateTestSlugFormat,
+} from '../lib/testingSlugs.js'
 
 const router = Router({ mergeParams: true })
 
@@ -39,9 +46,8 @@ async function getLastEditedAtIsoForTest(testId: string, fallbackCreatedAt: stri
 router.get(
   '/',
   asyncRoute(async (req, res) => {
-    const planId = req.params.planId
-    const plan = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(planId)
-    if (!plan) return res.status(404).json({ error: 'Test plan not found' })
+    const planId = await resolvePlanId(db, req.params.planId ?? '')
+    if (!planId) return res.status(404).json({ error: 'Test plan not found' })
 
     const includeArchived = req.query.archived === 'true'
     /** Hide empty Legacy once real tests exist; always keep Legacy visible if it still has runs (pre-migration data). */
@@ -60,7 +66,7 @@ router.get(
 
     const rows = (await db
       .prepare(
-        `SELECT t.id, t.test_plan_id, t.name, t.start_date, t.end_date, t.archived, t.created_at, t.updated_at,
+        `SELECT t.id, t.test_plan_id, t.name, t.slug, t.start_date, t.end_date, t.archived, t.created_at, t.updated_at,
        (SELECT COUNT(*) FROM test_runs tr WHERE tr.test_id = t.id) as record_count
        FROM tests t
        WHERE t.test_plan_id = ?
@@ -72,6 +78,7 @@ router.get(
       id: string
       test_plan_id: string
       name: string
+      slug: string | null
       start_date: string | null
       end_date: string | null
       archived: number
@@ -120,6 +127,7 @@ router.get(
         const updatedAtNorm = toIsoUtcString(r.updated_at)
         return {
           id: r.id,
+          slug: r.slug ?? '',
           testPlanId: r.test_plan_id,
           name: r.name,
           startDate: r.start_date ?? undefined,
@@ -138,12 +146,29 @@ router.get(
 router.post(
   '/',
   asyncRoute(async (req, res) => {
-    const planId = req.params.planId
-    const { name, startDate, endDate } = req.body
-    const plan = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(planId)
-    if (!plan) return res.status(404).json({ error: 'Test plan not found' })
+    const planId = await resolvePlanId(db, req.params.planId ?? '')
+    if (!planId) return res.status(404).json({ error: 'Test plan not found' })
+    const { name, startDate, endDate, slug: slugBody } = req.body as {
+      name?: unknown
+      startDate?: unknown
+      endDate?: unknown
+      slug?: unknown
+    }
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'name required' })
+    }
+
+    let slugVal: string
+    if (typeof slugBody === 'string' && slugBody.trim()) {
+      const normalized = slugBody.trim().toLowerCase()
+      const err = validateTestSlugFormat(normalized)
+      if (err) return res.status(400).json({ error: err })
+      if (!(await isTestSlugAvailable(db, planId, normalized))) {
+        return res.status(409).json({ error: 'A test with this slug already exists in this plan' })
+      }
+      slugVal = normalized
+    } else {
+      slugVal = await allocateUniqueTestSlug(db, planId, name.trim())
     }
 
     const id = uuidv4()
@@ -151,9 +176,9 @@ router.post(
     const endDateVal = typeof endDate === 'string' && endDate.trim() ? endDate.trim() : null
     await db
       .prepare(
-        'INSERT INTO tests (id, test_plan_id, name, start_date, end_date, archived) VALUES (?, ?, ?, ?, ?, 0)'
+        'INSERT INTO tests (id, test_plan_id, name, slug, start_date, end_date, archived) VALUES (?, ?, ?, ?, ?, ?, 0)'
       )
-      .run(id, planId, name.trim(), startDateVal, endDateVal)
+      .run(id, planId, name.trim(), slugVal, startDateVal, endDateVal)
 
     const row = (await db.prepare('SELECT * FROM tests WHERE id = ?').get(id)) as {
       id: string
@@ -167,6 +192,7 @@ router.post(
     const createdNorm = toIsoUtcString(row.created_at) ?? row.created_at
     res.status(201).json({
       id: row.id,
+      slug: (row as { slug?: string | null }).slug ?? slugVal,
       testPlanId: row.test_plan_id,
       name: row.name,
       startDate: row.start_date ?? undefined,
@@ -182,13 +208,13 @@ router.post(
 router.get(
   '/:testId',
   asyncRoute(async (req, res) => {
-    const planId = req.params.planId
-    const testId = req.params.testId
-    const plan = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(planId)
-    if (!plan) return res.status(404).json({ error: 'Test plan not found' })
+    const planId = await resolvePlanId(db, req.params.planId ?? '')
+    if (!planId) return res.status(404).json({ error: 'Test plan not found' })
+    const testId = await resolveTestId(db, planId, req.params.testId ?? '')
+    if (!testId) return res.status(404).json({ error: 'Test not found' })
     const row = (await db
       .prepare(
-        `SELECT t.id, t.test_plan_id, t.name, t.start_date, t.end_date, t.archived, t.created_at, t.updated_at,
+        `SELECT t.id, t.test_plan_id, t.name, t.slug, t.start_date, t.end_date, t.archived, t.created_at, t.updated_at,
        (SELECT COUNT(*) FROM test_runs tr WHERE tr.test_id = t.id) as record_count
        FROM tests t
        WHERE t.id = ? AND t.test_plan_id = ?`
@@ -197,6 +223,7 @@ router.get(
       id: string
       test_plan_id: string
       name: string
+      slug: string | null
       start_date: string | null
       end_date: string | null
       archived: number
@@ -208,6 +235,7 @@ router.get(
 
     res.json({
       id: row.id,
+      slug: row.slug ?? '',
       testPlanId: row.test_plan_id,
       name: row.name,
       startDate: row.start_date ?? undefined,
@@ -225,16 +253,22 @@ router.put(
   '/:testId',
   requirePermission('testing.tests.manage'),
   asyncRoute(async (req, res) => {
-    const planId = req.params.planId
-    const testId = req.params.testId
-    if (typeof testId !== 'string' || !testId.trim()) {
-      return res.status(400).json({ error: 'Test id required' })
+    const planId = await resolvePlanId(db, req.params.planId ?? '')
+    if (!planId) return res.status(404).json({ error: 'Test plan not found' })
+    const testId = await resolveTestId(db, planId, req.params.testId ?? '')
+    if (!testId) return res.status(404).json({ error: 'Test not found' })
+    const { name, startDate, endDate, archived, slug: bodySlug } = req.body as {
+      name?: unknown
+      startDate?: unknown
+      endDate?: unknown
+      archived?: unknown
+      slug?: unknown
     }
-    const { name, startDate, endDate, archived } = req.body
 
     const test = (await db.prepare('SELECT * FROM tests WHERE id = ? AND test_plan_id = ?').get(testId, planId)) as {
       id: string
       name: string
+      slug: string | null
       start_date: string | null
       end_date: string | null
       archived: number
@@ -247,6 +281,19 @@ router.put(
     if (name !== undefined && typeof name === 'string') {
       updates.push('name = ?')
       values.push(name.trim() || test.name)
+    }
+    if (bodySlug !== undefined) {
+      if (typeof bodySlug !== 'string') {
+        return res.status(400).json({ error: 'Invalid slug' })
+      }
+      const normalized = bodySlug.trim().toLowerCase()
+      const err = validateTestSlugFormat(normalized)
+      if (err) return res.status(400).json({ error: err })
+      if (!(await isTestSlugAvailable(db, planId, normalized, testId))) {
+        return res.status(409).json({ error: 'A test with this slug already exists in this plan' })
+      }
+      updates.push('slug = ?')
+      values.push(normalized)
     }
     if (startDate !== undefined) {
       updates.push('start_date = ?')
@@ -267,6 +314,7 @@ router.put(
       }
       return res.json({
         id: testId,
+        slug: test.slug ?? '',
         testPlanId: planId,
         name: test.name,
         startDate: test.start_date ?? undefined,
@@ -286,6 +334,7 @@ router.put(
       id: string
       test_plan_id: string
       name: string
+      slug: string | null
       start_date: string | null
       end_date: string | null
       archived: number
@@ -297,6 +346,7 @@ router.put(
     }
     res.json({
       id: row.id,
+      slug: row.slug ?? '',
       testPlanId: row.test_plan_id,
       name: row.name,
       startDate: row.start_date ?? undefined,
@@ -314,8 +364,10 @@ router.delete(
   '/:testId',
   requirePermission('testing.tests.manage'),
   asyncRoute(async (req, res) => {
-    const planId = req.params.planId
-    const testId = req.params.testId
+    const planId = await resolvePlanId(db, req.params.planId ?? '')
+    if (!planId) return res.status(404).json({ error: 'Test plan not found' })
+    const testId = await resolveTestId(db, planId, req.params.testId ?? '')
+    if (!testId) return res.status(404).json({ error: 'Test not found' })
     const test = await db.prepare('SELECT id FROM tests WHERE id = ? AND test_plan_id = ?').get(testId, planId)
     if (!test) return res.status(404).json({ error: 'Test not found' })
     await db.prepare('DELETE FROM test_runs WHERE test_id = ?').run(testId)

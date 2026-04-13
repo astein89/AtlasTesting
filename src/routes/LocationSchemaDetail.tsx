@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   DndContext,
   closestCenter,
@@ -28,9 +28,11 @@ import {
   type NormalizedLocationSchemaComponent,
 } from '../utils/locationApiRows'
 import { useAuthStore } from '../store/authStore'
+import { isLocationUuidParam, locationsPath } from '../lib/appPaths'
 
 interface LocationSchema {
   id: string
+  slug?: string | null
   name: string
   description?: string | null
 }
@@ -246,6 +248,7 @@ export function LocationSchemaDetail() {
   const canWrite = useAuthStore((s) => s.canEditLocationSchemas())
   const { showConfirm, showAlert } = useAlertConfirm()
   const navigate = useNavigate()
+  const location = useLocation()
   const { schemaId } = useParams<{ schemaId: string }>()
   const [schema, setSchema] = useState<LocationSchema | null>(null)
   const [components, setComponents] = useState<SchemaComponent[]>([])
@@ -292,7 +295,12 @@ export function LocationSchemaDetail() {
         api.get<LocationSchema[]>('/locations/schemas', { signal }),
         api.get<SchemaComponent[]>(`/locations/schemas/${id}/components`, { signal }),
       ])
-      setSchema(schemasResp.data.find((s) => s.id === id) || null)
+      setSchema(
+        schemasResp.data.find(
+          (s) =>
+            s.id === id || (s.slug && s.slug.toLowerCase() === id.toLowerCase())
+        ) || null
+      )
       setComponents(compsResp.data.map((row) => normalizeLocationSchemaComponent(row)))
     } catch (e) {
       if (isAbortLikeError(e)) return
@@ -311,6 +319,17 @@ export function LocationSchemaDetail() {
     },
     [schemaId]
   )
+
+  useEffect(() => {
+    if (!schema?.slug || !schemaId) return
+    const canonical = locationsPath('schemas', schema.slug)
+    if (
+      location.pathname !== canonical &&
+      (isLocationUuidParam(schemaId) || schemaId !== schema.slug)
+    ) {
+      navigate({ pathname: canonical, search: location.search }, { replace: true })
+    }
+  }, [schema?.slug, schemaId, location.pathname, location.search, navigate])
 
   function openNewComponentModal() {
     newComponentKeyManualRef.current = false
@@ -463,7 +482,7 @@ export function LocationSchemaDetail() {
         description: duplicateNewDescription.trim(),
       })
       setDuplicateModalOpen(false)
-      navigate(`/locations/schemas/${data.id}`)
+      navigate(locationsPath('schemas', data.slug || data.id))
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??

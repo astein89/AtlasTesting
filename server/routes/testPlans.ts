@@ -5,6 +5,12 @@ import { sqlUtcNowExpr, sqlUnixEpochFromXTs, toIsoUtcString } from '../lib/times
 import { authMiddleware, requirePermission } from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
 import { testsRouter } from './tests.js'
+import {
+  allocateUniquePlanSlug,
+  isPlanSlugAvailable,
+  resolvePlanId,
+  validatePlanSlugFormat,
+} from '../lib/testingSlugs.js'
 
 const router = Router()
 
@@ -141,6 +147,7 @@ router.get(
 
       return {
         id: r.id,
+        slug: (r as { slug?: string | null }).slug ?? '',
         name: r.name,
         description: (r as { short_description?: string | null }).short_description ?? null,
         testPlan: r.description,
@@ -163,6 +170,7 @@ router.get(
         conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
           (r as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
         ),
+        mainStatusFieldId: (r as { main_status_field_id?: string | null }).main_status_field_id ?? null,
         createdAt: createdAtNorm,
         updatedAt: updatedAtNorm,
         lastEditedAt,
@@ -431,7 +439,9 @@ function conditionalStatusRuleOrderToJson(body: unknown): string | null | undefi
 router.get(
   '/:id',
   asyncRoute(async (req, res) => {
-    const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(req.params.id)) as {
+    const planId = await resolvePlanId(db, req.params.id)
+    if (!planId) return res.status(404).json({ error: 'Test plan not found' })
+    const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(planId)) as {
     id: string
     name: string
     description: string | null
@@ -445,10 +455,12 @@ router.get(
     key_field?: string | null
     created_at: string
     default_visible_columns?: string | null
+    slug?: string | null
   } | undefined
   if (!row) return res.status(404).json({ error: 'Test plan not found' })
   res.json({
     id: row.id,
+    slug: row.slug ?? '',
     name: row.name,
     description: (row as { short_description?: string | null }).short_description ?? null,
     testPlan: row.description,
@@ -473,6 +485,7 @@ router.get(
     conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
       (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
     ),
+    mainStatusFieldId: (row as { main_status_field_id?: string | null }).main_status_field_id ?? null,
     createdAt: row.created_at,
   })
   })
@@ -522,8 +535,28 @@ router.post(
     conditionalStatusRuleOrderToJson(
       (req.body as { conditionalStatusRuleOrder?: unknown }).conditionalStatusRuleOrder
     ) ?? null
+  const mainStatusFieldIdBody = (req.body as { mainStatusFieldId?: unknown }).mainStatusFieldId
+  const mainStatusFieldIdVal =
+    typeof mainStatusFieldIdBody === 'string' && mainStatusFieldIdBody.trim()
+      ? mainStatusFieldIdBody.trim()
+      : null
+
+  const slugBody = (req.body as { slug?: unknown }).slug
+  let slugVal: string
+  if (typeof slugBody === 'string' && slugBody.trim()) {
+    const normalized = slugBody.trim().toLowerCase()
+    const err = validatePlanSlugFormat(normalized)
+    if (err) return res.status(400).json({ error: err })
+    if (!(await isPlanSlugAvailable(db, normalized))) {
+      return res.status(409).json({ error: 'A test plan with this slug already exists' })
+    }
+    slugVal = normalized
+  } else {
+    slugVal = await allocateUniquePlanSlug(db, typeof name === 'string' ? name : '')
+  }
+
   await db.prepare(
-    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids, default_visible_columns, conditional_status_rules, conditional_status_rule_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_plans (id, name, description, constraints, short_description, field_ids, field_layout, form_layout, default_sort_order, field_defaults, key_field, start_date, end_date, archived_runs, hidden_field_ids, required_field_ids, default_visible_columns, conditional_status_rules, conditional_status_rule_order, main_status_field_id, slug) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     name,
@@ -543,7 +576,9 @@ router.post(
     requiredFieldIdsJson,
     defaultVisibleColumnsJson,
     conditionalStatusJson,
-    conditionalStatusRuleOrderJson
+    conditionalStatusRuleOrderJson,
+    mainStatusFieldIdVal,
+    slugVal
   )
 
   const row = (await db.prepare('SELECT * FROM test_plans WHERE id = ?').get(id)) as {
@@ -562,6 +597,7 @@ router.post(
   }
   res.status(201).json({
     id: row.id,
+    slug: (row as { slug?: string | null }).slug ?? slugVal,
     name: row.name,
     description: (row as { short_description?: string | null }).short_description ?? null,
     testPlan: row.description,
@@ -586,6 +622,7 @@ router.post(
     conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
       (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
     ),
+    mainStatusFieldId: (row as { main_status_field_id?: string | null }).main_status_field_id ?? null,
     createdAt: row.created_at,
   })
   })
@@ -614,8 +651,11 @@ router.put(
     defaultVisibleColumnIds,
     conditionalStatusRules,
     conditionalStatusRuleOrder,
+    mainStatusFieldId,
+    slug: bodySlug,
   } = req.body
-  const { id } = req.params
+  const id = await resolvePlanId(db, req.params.id)
+  if (!id) return res.status(404).json({ error: 'Test plan not found' })
 
   const existing = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })
@@ -735,6 +775,25 @@ router.put(
       values.push(ser)
     }
   }
+  if (mainStatusFieldId !== undefined) {
+    updates.push('main_status_field_id = ?')
+    values.push(
+      typeof mainStatusFieldId === 'string' && mainStatusFieldId.trim() ? mainStatusFieldId.trim() : null
+    )
+  }
+  if (bodySlug !== undefined) {
+    if (typeof bodySlug !== 'string') {
+      return res.status(400).json({ error: 'Invalid slug' })
+    }
+    const normalized = bodySlug.trim().toLowerCase()
+    const err = validatePlanSlugFormat(normalized)
+    if (err) return res.status(400).json({ error: err })
+    if (!(await isPlanSlugAvailable(db, normalized, id))) {
+      return res.status(409).json({ error: 'A test plan with this slug already exists' })
+    }
+    updates.push('slug = ?')
+    values.push(normalized)
+  }
   if (archivedRuns !== undefined && Array.isArray(archivedRuns)) {
     const planRow = (await db.prepare('SELECT archived_runs FROM test_plans WHERE id = ?').get(id)) as
       | { archived_runs: string | null }
@@ -808,6 +867,7 @@ router.put(
     }
     return res.json({
       id: row.id,
+      slug: (row as { slug?: string | null }).slug ?? '',
       name: row.name,
       description: (row as { short_description?: string | null }).short_description ?? null,
       testPlan: row.description,
@@ -832,6 +892,7 @@ router.put(
       conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
         (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
       ),
+      mainStatusFieldId: (row as { main_status_field_id?: string | null }).main_status_field_id ?? null,
       createdAt: row.created_at,
       updatedAt: (row as { updated_at?: string | null }).updated_at ?? null,
     })
@@ -857,6 +918,7 @@ router.put(
   }
   res.json({
     id: row.id,
+    slug: (row as { slug?: string | null }).slug ?? '',
     name: row.name,
     description: (row as { short_description?: string | null }).short_description ?? null,
     testPlan: row.description,
@@ -881,6 +943,7 @@ router.put(
     conditionalStatusRuleOrder: parseConditionalStatusRuleOrder(
       (row as { conditional_status_rule_order?: string | null }).conditional_status_rule_order ?? null
     ),
+    mainStatusFieldId: (row as { main_status_field_id?: string | null }).main_status_field_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
   })
@@ -891,7 +954,8 @@ router.delete(
   '/:id',
   requirePermission('testing.plans.manage'),
   asyncRoute(async (req, res) => {
-  const id = req.params.id
+  const id = await resolvePlanId(db, req.params.id)
+  if (!id) return res.status(404).json({ error: 'Test plan not found' })
   const existing = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(id)
   if (!existing) return res.status(404).json({ error: 'Test plan not found' })
   await db.prepare('DELETE FROM test_runs WHERE test_plan_id = ?').run(id)

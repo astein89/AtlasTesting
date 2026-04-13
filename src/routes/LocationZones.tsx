@@ -7,12 +7,14 @@ import { SimpleDataTable } from '../components/data/SimpleDataTable'
 import { LocationBreadcrumb } from '../components/locations/LocationBreadcrumb'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { useAuthStore } from '../store/authStore'
+import { locationsPath } from '../lib/appPaths'
 import { normalizeLocationZone, type NormalizedLocationZone } from '../utils/locationApiRows'
 
 type Zone = NormalizedLocationZone
 
 interface LocationSchema {
   id: string
+  slug?: string | null
   name: string
 }
 
@@ -41,12 +43,12 @@ export function LocationZones() {
       api.get<Zone[]>('/locations/zones'),
       api.get<LocationSchema[]>('/locations/schemas'),
     ])
-    setZones((zonesResp.data ?? []).map((z) => normalizeLocationZone(z as Record<string, unknown>)))
+    setZones((zonesResp.data ?? []).map((z) => normalizeLocationZone(z as unknown as Record<string, unknown>)))
     setSchemas(schemasResp.data)
     setSelectedZoneIds((prev) => {
       const next = new Set<string>()
       const existing = new Set(
-        (zonesResp.data ?? []).map((z) => normalizeLocationZone(z as Record<string, unknown>).id)
+        (zonesResp.data ?? []).map((z) => normalizeLocationZone(z as unknown as Record<string, unknown>).id)
       )
       for (const id of prev) if (existing.has(id)) next.add(id)
       return next
@@ -371,7 +373,7 @@ export function LocationZones() {
         selectedKeys={selectedZoneIds}
         onSelectedKeysChange={setSelectedZoneIds}
         onRowClick={(z) => {
-          navigate(`/locations/zones/${z.id}`)
+          navigate(locationsPath('zones', z.slug || z.id))
         }}
         columns={[
           { key: 'name', label: 'Zone', getValue: (z) => z.name, width: '16rem' },

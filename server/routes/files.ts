@@ -14,9 +14,25 @@ import { folderAccessibleToUser, storedFileAccessibleToUser } from '../lib/fileA
 import { db } from '../db/index.js'
 import { getFilesRecycleRetentionDays } from '../lib/filesRecycleSettings.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
+import {
+  allocateUniqueFileFolderSlug,
+  isFileFolderSlugAvailable,
+  resolveFileFolderId,
+  validateFileFolderSlugFormat,
+} from '../lib/fileFolderSlugs.js'
 
 const router = Router()
 router.use(authMiddleware)
+
+router.param('folderId', (req, res, next, raw) => {
+  void resolveFileFolderId(db, String(raw ?? ''))
+    .then((id) => {
+      if (!id) return res.status(404).json({ error: 'Folder not found' })
+      ;(req.params as Record<string, string>).folderId = id
+      next()
+    })
+    .catch(next)
+})
 
 const FILES_SEGMENT = 'files'
 function filesUploadDir(): string {
@@ -237,9 +253,9 @@ function isFileInRecycle(row: { deleted_at?: string | null }): boolean {
   return Boolean(row.deleted_at && String(row.deleted_at).trim() !== '')
 }
 
-async function fileFolderExistsInDb(folderId: string): Promise<boolean> {
-  const r = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(folderId)) as { id: string } | undefined
-  return Boolean(r)
+async function fileFolderExistsInDb(folderKey: string): Promise<boolean> {
+  const id = await resolveFileFolderId(db, folderKey)
+  return Boolean(id)
 }
 
 type ResolveRestoreTarget =
@@ -282,8 +298,9 @@ async function resolveRestoreTargetFolderId(
   if (typeof raw !== 'string' || !raw.trim()) {
     return { ok: false, error: 'folderId must be a string or null', status: 400 }
   }
-  const fid = raw.trim()
-  if (!(await fileFolderExistsInDb(fid))) {
+  const fidRaw = raw.trim()
+  const fid = await resolveFileFolderId(db, fidRaw)
+  if (!fid) {
     return { ok: false, error: 'Folder not found', status: 400 }
   }
   if (!(await folderChainAccessibleFromNode(fid, user))) {
@@ -295,6 +312,7 @@ async function resolveRestoreTargetFolderId(
 export type FileFolderRow = {
   id: string
   parent_id: string | null
+  slug?: string | null
   name: string
   created_at: string | null
   allowed_role_slugs: string | null
@@ -457,7 +475,7 @@ router.get(
   asyncRoute(async (req: AuthRequest, res) => {
     const rows = (await db
       .prepare(
-        `SELECT id, parent_id, name, created_at, allowed_role_slugs, created_by
+        `SELECT id, parent_id, slug, name, created_at, allowed_role_slugs, created_by
        FROM file_folders ORDER BY LOWER(name) ASC`
       )
       .all()) as FileFolderRow[]
@@ -475,10 +493,15 @@ router.get(
   requirePermission('module.files'),
   asyncRoute(async (req: AuthRequest, res) => {
     const parentRaw = req.query.parentId
-    const parentId = typeof parentRaw === 'string' && parentRaw.trim() ? parentRaw.trim() : null
+    let parentId: string | null = null
+    if (typeof parentRaw === 'string' && parentRaw.trim()) {
+      const resolved = await resolveFileFolderId(db, parentRaw.trim())
+      if (!resolved) return res.status(400).json({ error: 'Parent folder not found' })
+      parentId = resolved
+    }
     const rows = (await db
       .prepare(
-        `SELECT id, parent_id, name, created_at, allowed_role_slugs, created_by FROM file_folders
+        `SELECT id, parent_id, slug, name, created_at, allowed_role_slugs, created_by FROM file_folders
        WHERE ((parent_id = ?) OR (parent_id IS NULL AND (CAST(? AS TEXT) IS NULL)))
        ORDER BY LOWER(name) ASC`
       )
@@ -679,10 +702,11 @@ router.post(
     const name = normalizeFolderName(req.body?.name)
     if (!name) return res.status(400).json({ error: 'Invalid folder name' })
     const parentRaw = req.body?.parentId
-    const parentId = typeof parentRaw === 'string' && parentRaw.trim() ? parentRaw.trim() : null
-    if (parentId) {
-      const p = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(parentId)) as { id: string } | undefined
-      if (!p) return res.status(400).json({ error: 'Parent folder not found' })
+    let parentId: string | null = null
+    if (typeof parentRaw === 'string' && parentRaw.trim()) {
+      const resolved = await resolveFileFolderId(db, parentRaw.trim())
+      if (!resolved) return res.status(400).json({ error: 'Parent folder not found' })
+      parentId = resolved
     }
 
     let allowed_role_slugs: string | null = null
@@ -703,18 +727,19 @@ router.post(
     }
 
     const id = randomUUID()
+    const folderSlug = await allocateUniqueFileFolderSlug(db, name)
     try {
       await db
         .prepare(
-          `INSERT INTO file_folders (id, parent_id, name, created_by, allowed_role_slugs) VALUES (?, ?, ?, ?, ?)`
+          `INSERT INTO file_folders (id, parent_id, name, created_by, allowed_role_slugs, slug) VALUES (?, ?, ?, ?, ?, ?)`
         )
-        .run(id, parentId, name, req.user!.id, allowed_role_slugs)
+        .run(id, parentId, name, req.user!.id, allowed_role_slugs, folderSlug)
     } catch {
       return res.status(409).json({ error: 'A folder with that name already exists here' })
     }
     const row = (await db
       .prepare(
-        `SELECT id, parent_id, name, created_at, allowed_role_slugs, created_by FROM file_folders WHERE id = ?`
+        `SELECT id, parent_id, slug, name, created_at, allowed_role_slugs, created_by FROM file_folders WHERE id = ?`
       )
       .get(id)) as FileFolderRow
     res.status(201).json(row)
@@ -728,9 +753,9 @@ router.patch(
   asyncRoute(async (req: AuthRequest, res) => {
     const folderId = req.params.folderId
     const existing = (await db
-      .prepare('SELECT id, parent_id, name, allowed_role_slugs FROM file_folders WHERE id = ?')
+      .prepare('SELECT id, parent_id, name, allowed_role_slugs, slug FROM file_folders WHERE id = ?')
       .get(folderId)) as
-      | { id: string; parent_id: string | null; name: string; allowed_role_slugs: string | null }
+      | { id: string; parent_id: string | null; name: string; allowed_role_slugs: string | null; slug: string | null }
       | undefined
     if (!existing) return res.status(404).json({ error: 'Not found' })
 
@@ -740,17 +765,15 @@ router.patch(
       if (pr === null || pr === '') {
         nextParent = null
       } else if (typeof pr === 'string' && pr.trim()) {
-        nextParent = pr.trim()
+        const resolvedParent = await resolveFileFolderId(db, pr.trim())
+        if (!resolvedParent) return res.status(400).json({ error: 'Parent folder not found' })
+        nextParent = resolvedParent
         if (nextParent === folderId) {
           return res.status(400).json({ error: 'Cannot move folder into itself' })
         }
         if (await isFolderUnderAncestor(nextParent, folderId)) {
           return res.status(400).json({ error: 'Cannot move folder under its descendant' })
         }
-        const p = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(nextParent)) as
-          | { id: string }
-          | undefined
-        if (!p) return res.status(400).json({ error: 'Parent folder not found' })
       }
     }
 
@@ -773,21 +796,44 @@ router.patch(
       }
     }
 
+    let nextSlugParam: string | null | undefined
+    if ('slug' in (req.body ?? {})) {
+      const rawS = (req.body as { slug?: unknown }).slug
+      if (rawS === null || rawS === '') {
+        return res.status(400).json({ error: 'slug cannot be empty' })
+      }
+      if (typeof rawS !== 'string') {
+        return res.status(400).json({ error: 'slug must be a string' })
+      }
+      const err = validateFileFolderSlugFormat(rawS)
+      if (err) return res.status(400).json({ error: err })
+      const ok = await isFileFolderSlugAvailable(db, rawS, folderId)
+      if (!ok) return res.status(400).json({ error: 'Slug already in use' })
+      nextSlugParam = rawS.trim().toLowerCase()
+    }
+
     const body = req.body as Record<string, unknown>
-    if (!('parentId' in body) && !('name' in body) && !('allowedRoleSlugs' in body)) {
+    if (
+      !('parentId' in body) &&
+      !('name' in body) &&
+      !('allowedRoleSlugs' in body) &&
+      !('slug' in body)
+    ) {
       return res.status(400).json({ error: 'No updates' })
     }
 
     try {
       await db
-        .prepare('UPDATE file_folders SET parent_id = ?, name = ?, allowed_role_slugs = ? WHERE id = ?')
-        .run(nextParent, nextName, nextSlugs, folderId)
+        .prepare(
+          'UPDATE file_folders SET parent_id = ?, name = ?, allowed_role_slugs = ?, slug = COALESCE(?, slug) WHERE id = ?'
+        )
+        .run(nextParent, nextName, nextSlugs, nextSlugParam !== undefined ? nextSlugParam : null, folderId)
     } catch {
       return res.status(409).json({ error: 'A folder with that name already exists here' })
     }
     const row = (await db
       .prepare(
-        `SELECT id, parent_id, name, created_at, allowed_role_slugs, created_by FROM file_folders WHERE id = ?`
+        `SELECT id, parent_id, slug, name, created_at, allowed_role_slugs, created_by FROM file_folders WHERE id = ?`
       )
       .get(folderId)) as FileFolderRow
     res.json(row)
@@ -867,7 +913,12 @@ router.get(
   requirePermission('module.files'),
   asyncRoute(async (req: AuthRequest, res) => {
     const folderRaw = req.query.folderId
-    const folderId = typeof folderRaw === 'string' && folderRaw.trim() ? folderRaw.trim() : null
+    let folderId: string | null = null
+    if (typeof folderRaw === 'string' && folderRaw.trim()) {
+      const resolved = await resolveFileFolderId(db, folderRaw.trim())
+      if (!resolved) return res.status(404).json({ error: 'Folder not found' })
+      folderId = resolved
+    }
     const { sortBy, order } = parseSort(req)
     const rows = await listFilesInFolder(folderId, sortBy, order)
     const user = req.user!
@@ -939,7 +990,7 @@ router.get(
 
     const folderRows = (await db
       .prepare(
-        `SELECT id, parent_id, name, created_at, allowed_role_slugs, created_by
+        `SELECT id, parent_id, slug, name, created_at, allowed_role_slugs, created_by
          FROM file_folders
          WHERE LOWER(name) LIKE ?
          ORDER BY LOWER(name) ASC
@@ -1068,9 +1119,9 @@ router.post(
     let folderId: string | null = null
     const body = req.body as { folderId?: string }
     if (typeof body.folderId === 'string' && body.folderId.trim()) {
-      folderId = body.folderId.trim()
-      const f = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(folderId)) as { id: string } | undefined
-      if (!f) return res.status(400).json({ error: 'Folder not found' })
+      const resolved = await resolveFileFolderId(db, body.folderId.trim())
+      if (!resolved) return res.status(400).json({ error: 'Folder not found' })
+      folderId = resolved
     }
 
     let allowed_role_slugs: string | null = null
@@ -1125,9 +1176,9 @@ router.put(
       if (pr === null || pr === '') {
         folder_id = null
       } else if (typeof pr === 'string' && pr.trim()) {
-        folder_id = pr.trim()
-        const f = (await db.prepare('SELECT id FROM file_folders WHERE id = ?').get(folder_id)) as { id: string } | undefined
-        if (!f) return res.status(400).json({ error: 'Folder not found' })
+        const resolved = await resolveFileFolderId(db, pr.trim())
+        if (!resolved) return res.status(400).json({ error: 'Folder not found' })
+        folder_id = resolved
       }
     }
 

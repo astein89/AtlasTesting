@@ -3,8 +3,11 @@ import cors from 'cors'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { initDatabase } from './db/index.js'
+import { db, initDatabase } from './db/index.js'
 import { runSeed } from './db/seed.js'
+import { ensureTestingSlugsBackfilled } from './lib/testingSlugs.js'
+import { ensureLocationSlugsBackfilled } from './lib/locationSlugs.js'
+import { ensureFileFolderSlugsBackfilled } from './lib/fileFolderSlugs.js'
 import { authRouter } from './routes/auth.js'
 import { adminRouter } from './routes/admin.js'
 import { fieldsRouter } from './routes/fields.js'
@@ -177,6 +180,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 void (async () => {
   await initDatabase()
   await runSeed()
+  await ensureTestingSlugsBackfilled(db)
+  await ensureLocationSlugsBackfilled(db)
+  await ensureFileFolderSlugsBackfilled(db)
   seedWikiDefaults()
   scheduleRecyclePurgeAtMidnight()
   scheduleWikiRecyclePurgeAtMidnight()

@@ -54,6 +54,7 @@ export const BASELINE_PG_STATEMENTS: string[] = [
     archived_runs TEXT,
     conditional_status_rules TEXT,
     conditional_status_rule_order TEXT,
+    main_status_field_id TEXT,
     constraints TEXT,
     short_description TEXT,
     updated_at TEXT,
@@ -244,6 +245,12 @@ export const BASELINE_PG_STATEMENTS: string[] = [
  * so the migration script matches `initSchemaPg` (SQLite may include columns not in the CREATE TABLE baseline).
  */
 export const PG_POST_BASELINE_STATEMENTS: string[] = [
+  `ALTER TABLE test_plans ADD COLUMN IF NOT EXISTS slug TEXT`,
+  `ALTER TABLE tests ADD COLUMN IF NOT EXISTS slug TEXT`,
+  `ALTER TABLE location_schemas ADD COLUMN IF NOT EXISTS slug TEXT`,
+  `ALTER TABLE zones ADD COLUMN IF NOT EXISTS slug TEXT`,
+  `ALTER TABLE file_folders ADD COLUMN IF NOT EXISTS slug TEXT`,
+  `ALTER TABLE test_plans ADD COLUMN IF NOT EXISTS main_status_field_id TEXT`,
   `ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS deleted_at TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_stored_files_deleted_at ON stored_files(deleted_at)`,
   `ALTER TABLE stored_files ADD COLUMN IF NOT EXISTS recycle_original_folder_id TEXT`,

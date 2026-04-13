@@ -11,6 +11,17 @@ export const WIKI_PREFIX = '/wiki'
 export const FILES_PREFIX = '/files'
 export const ADMIN_PREFIX = '/admin'
 
+/** True if `s` looks like a UUID (matches server `resolvePlanId` / `resolveTestId`). */
+export function isTestingUuidParam(s: string | undefined): boolean {
+  if (!s) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.trim())
+}
+
+/** Same rule as {@link isTestingUuidParam} — used to canonicalize legacy location detail URLs. */
+export function isLocationUuidParam(s: string | undefined): boolean {
+  return isTestingUuidParam(s)
+}
+
 /** Path under the Testing module, e.g. testingPath('test-plans', planId, 'data') */
 export function testingPath(...segments: string[]): string {
   if (segments.length === 0) return TESTING_PREFIX

@@ -8,6 +8,16 @@ import {
   normalizeLocationMixedGeneratePartOrNull,
   validateLocationPatternMask,
 } from '../utils/locationPatternMask.js'
+import {
+  allocateUniqueLocationSchemaSlug,
+  allocateUniqueZoneSlug,
+  isLocationSchemaSlugAvailable,
+  isZoneSlugAvailable,
+  resolveLocationSchemaId,
+  resolveZoneId,
+  validateLocationSchemaSlugFormat,
+  validateZoneSlugFormat,
+} from '../lib/locationSlugs.js'
 
 const router = Router()
 
@@ -78,6 +88,28 @@ router.use((req: AuthRequest, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
   const key = req.path.startsWith('/schemas') ? 'locations.schemas.manage' : 'locations.data.write'
   return requirePermission(key)(req, res, next)
+})
+
+router.param('schemaId', (req, res, next, raw) => {
+  const id = String(raw ?? '')
+  void resolveLocationSchemaId(db, id)
+    .then((resolved) => {
+      if (!resolved) return res.status(404).json({ error: 'Schema not found' })
+      ;(req.params as Record<string, string>).schemaId = resolved
+      next()
+    })
+    .catch(next)
+})
+
+router.param('zoneId', (req, res, next, raw) => {
+  const id = String(raw ?? '')
+  void resolveZoneId(db, id)
+    .then((resolved) => {
+      if (!resolved) return res.status(404).json({ error: 'Zone not found' })
+      ;(req.params as Record<string, string>).zoneId = resolved
+      next()
+    })
+    .catch(next)
 })
 
 /** Cap for cartesian product size in POST .../locations/generate (memory + insert time). Override with LOCATION_GENERATE_MAX_ROWS (cannot exceed absolute cap). */
@@ -256,7 +288,7 @@ router.get(
   asyncRoute(async (_req, res) => {
     const rows = await db
       .prepare(
-        `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
+        `SELECT id, slug, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schemas
        ORDER BY name`
       )
@@ -276,12 +308,13 @@ router.post(
     return res.status(400).json({ error: 'Name is required' })
   }
   const id = uuidv4()
+  const slug = await allocateUniqueLocationSchemaSlug(db, name.trim())
   await db.prepare(
-    `INSERT INTO location_schemas (id, name, description) VALUES (?, ?, ?)`
-  ).run(id, name.trim(), description ?? null)
+    `INSERT INTO location_schemas (id, name, description, slug) VALUES (?, ?, ?, ?)`
+  ).run(id, name.trim(), description ?? null, slug)
   const row = await db
     .prepare(
-      `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
+      `SELECT id, slug, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schemas WHERE id = ?`
     )
     .get(id)
@@ -312,9 +345,10 @@ router.post(
         : source.description
 
     const newId = uuidv4()
+    const newSlug = await allocateUniqueLocationSchemaSlug(db, nameTrim)
     await db
-      .prepare(`INSERT INTO location_schemas (id, name, description) VALUES (?, ?, ?)`)
-      .run(newId, nameTrim, descriptionNext ?? null)
+      .prepare(`INSERT INTO location_schemas (id, name, description, slug) VALUES (?, ?, ?, ?)`)
+      .run(newId, nameTrim, descriptionNext ?? null, newSlug)
 
     const components = (await db
       .prepare(
@@ -380,7 +414,7 @@ router.post(
 
     const row = await db
       .prepare(
-        `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
+        `SELECT id, slug, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
          FROM location_schemas WHERE id = ?`
       )
       .get(newId)
@@ -397,26 +431,36 @@ router.put(
     .get(schemaId)) as { id: string } | undefined
   if (!existing) return res.status(404).json({ error: 'Schema not found' })
 
-  const { name, description } = req.body as {
+  const { name, description, slug: slugBody } = req.body as {
     name?: string
     description?: string
+    slug?: string
+  }
+
+  if (slugBody !== undefined) {
+    const err = validateLocationSchemaSlugFormat(String(slugBody))
+    if (err) return res.status(400).json({ error: err })
+    const ok = await isLocationSchemaSlugAvailable(db, String(slugBody), schemaId)
+    if (!ok) return res.status(400).json({ error: 'Slug already in use' })
   }
 
   await db.prepare(
     `UPDATE location_schemas
      SET name = COALESCE(?, name),
          description = COALESCE(?, description),
+         slug = COALESCE(?, slug),
          updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ?`
   ).run(
     name != null ? String(name).trim() : null,
     description != null ? String(description) : null,
+    slugBody !== undefined ? String(slugBody).trim().toLowerCase() : null,
     schemaId
   )
 
   const row = await db
     .prepare(
-      `SELECT id, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
+      `SELECT id, slug, name, description, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM location_schemas WHERE id = ?`
     )
     .get(schemaId)
@@ -1009,6 +1053,7 @@ router.get(
     const rows = await db
       .prepare(
         `SELECT z.id,
+              z.slug,
               z.name,
               z.description,
               z.schema_id AS "schemaId",
@@ -1036,19 +1081,19 @@ router.post(
   if (!name || !schemaId) {
     return res.status(400).json({ error: 'name and schemaId are required' })
   }
-  const schema = (await db
-    .prepare(`SELECT id FROM location_schemas WHERE id = ?`)
-    .get(schemaId)) as { id: string } | undefined
-  if (!schema) return res.status(400).json({ error: 'Invalid schemaId' })
+  const resolvedSchemaId = await resolveLocationSchemaId(db, String(schemaId))
+  if (!resolvedSchemaId) return res.status(400).json({ error: 'Invalid schemaId' })
   const id = uuidv4()
+  const zoneSlug = await allocateUniqueZoneSlug(db, name.trim())
   await db.prepare(
-    `INSERT INTO zones (id, name, description, schema_id)
-     VALUES (?, ?, ?, ?)`
-  ).run(id, name.trim(), description ?? null, schemaId)
+    `INSERT INTO zones (id, name, description, schema_id, slug)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(id, name.trim(), description ?? null, resolvedSchemaId, zoneSlug)
 
   const row = await db
     .prepare(
       `SELECT z.id,
+              z.slug,
               z.name,
               z.description,
               z.schema_id AS "schemaId",
@@ -1074,18 +1119,35 @@ router.put(
     .get(zoneId)) as { id: string } | undefined
   if (!existing) return res.status(404).json({ error: 'Zone not found' })
 
-  const { name, description } = req.body as { name?: string; description?: string }
+  const { name, description, slug: slugBody } = req.body as {
+    name?: string
+    description?: string
+    slug?: string
+  }
+  if (slugBody !== undefined) {
+    const err = validateZoneSlugFormat(String(slugBody))
+    if (err) return res.status(400).json({ error: err })
+    const ok = await isZoneSlugAvailable(db, String(slugBody), zoneId)
+    if (!ok) return res.status(400).json({ error: 'Slug already in use' })
+  }
   await db.prepare(
     `UPDATE zones
      SET name = COALESCE(?, name),
          description = COALESCE(?, description),
+         slug = COALESCE(?, slug),
          updated_at = ${sqlUtcNowExpr(isUsingPostgres())}
      WHERE id = ?`
-  ).run(name != null ? String(name).trim() : null, description ?? null, zoneId)
+  ).run(
+    name != null ? String(name).trim() : null,
+    description ?? null,
+    slugBody !== undefined ? String(slugBody).trim().toLowerCase() : null,
+    zoneId
+  )
 
   const row = await db
     .prepare(
       `SELECT z.id,
+              z.slug,
               z.name,
               z.description,
               z.schema_id AS "schemaId",
@@ -1934,12 +1996,21 @@ router.get(
   '/export',
   asyncRoute(async (req: AuthRequest, res) => {
   const idsParam = (req.query.zoneIds as string | undefined) ?? ''
-  const zoneIds = idsParam
+  const zoneIdParams = idsParam
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  if (zoneIds.length === 0) {
+  if (zoneIdParams.length === 0) {
     return res.status(400).json({ error: 'zoneIds query parameter is required' })
+  }
+
+  const zoneIds: string[] = []
+  for (const raw of zoneIdParams) {
+    const resolved = await resolveZoneId(db, raw)
+    if (!resolved) {
+      return res.status(400).json({ error: `Unknown zone: ${raw}` })
+    }
+    zoneIds.push(resolved)
   }
 
   const placeholders = zoneIds.map(() => '?').join(',')

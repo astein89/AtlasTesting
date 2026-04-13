@@ -12,6 +12,8 @@ interface SelectInputProps {
   options: string[]
   className?: string
   placeholder?: string
+  /** Label for the empty value row (value stored as ''). Default None. */
+  emptyOptionLabel?: string
   /** Optional background color for the selected value (e.g. status colors) */
   valueColor?: string
   /** Optional map of option value -> hex color to show in the dropdown list */
@@ -90,6 +92,7 @@ export function SelectInput({
   options,
   className = '',
   placeholder = '(Select)',
+  emptyOptionLabel = 'None',
   valueColor,
   optionColors,
 }: SelectInputProps) {
@@ -222,13 +225,14 @@ export function SelectInput({
           <button
             type="button"
             onClick={() => select('')}
-            className={`block w-full px-3 py-2 text-left text-sm text-foreground/70 hover:bg-background ${
+            className={`block w-full min-w-0 truncate px-3 py-2 text-left text-sm text-foreground/70 hover:bg-background ${
               !value ? 'bg-primary/10 font-medium' : ''
             } ${open && highlightIndex === 0 ? 'bg-primary/15 ring-1 ring-inset ring-primary/40' : ''}`}
             role="option"
             aria-selected={!value}
+            title={emptyOptionLabel}
           >
-            —
+            {emptyOptionLabel}
           </button>
           {options.map((opt, optIdx) => {
             const flatIndex = optIdx + 1
@@ -279,8 +283,10 @@ export function SelectInput({
       </div>
     ) : null
 
+  const triggerLabel = value ? value : placeholder
+
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative min-w-0 ${className}`}>
       <button
         ref={buttonRef}
         type="button"
@@ -292,14 +298,17 @@ export function SelectInput({
             moveValueByArrow(e.key === 'ArrowDown' ? 1 : -1)
           }
         }}
-        className="min-h-[44px] w-full rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
+        className="flex min-h-[44px] min-w-0 w-full items-center rounded border border-border bg-background px-3 py-2 text-left text-foreground hover:bg-card"
         style={triggerStyle}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={open ? listDomId : undefined}
+        title={triggerLabel}
       >
-        <span className={!value ? (hasColor ? '' : 'text-foreground/60') : ''}>
-          {value ? value : placeholder}
+        <span
+          className={`min-w-0 flex-1 truncate text-left ${!value ? (hasColor ? '' : 'text-foreground/60') : ''}`}
+        >
+          {triggerLabel}
         </span>
       </button>
 

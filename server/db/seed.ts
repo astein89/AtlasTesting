@@ -52,11 +52,11 @@ export async function runSeed(): Promise<void> {
   await db
     .prepare(
       `
-    INSERT INTO test_plans (id, name, description, field_ids)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO test_plans (id, name, description, field_ids, slug)
+    VALUES (?, ?, ?, ?, ?)
   `
     )
-    .run(planId, 'Pallet Cycle Plan', 'Standard pallet cycle validation tests', JSON.stringify(fieldIds))
+    .run(planId, 'Pallet Cycle Plan', 'Standard pallet cycle validation tests', JSON.stringify(fieldIds), 'pallet-cycle-plan')
 
   await db
     .prepare(

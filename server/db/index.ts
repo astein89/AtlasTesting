@@ -10,6 +10,9 @@ import {
   type AsyncPreparedStatement,
 } from './schema.js'
 import { initSchemaPg } from './schema-pg.js'
+import { ensureTestingSlugsBackfilled } from '../lib/testingSlugs.js'
+import { ensureLocationSlugsBackfilled } from '../lib/locationSlugs.js'
+import { ensureFileFolderSlugsBackfilled } from '../lib/fileFolderSlugs.js'
 import { createPgPoolWrapper } from './pg.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -101,6 +104,9 @@ export async function initDatabase(): Promise<void> {
     pgPool = new pg.Pool({ connectionString: url })
     db = createPgPoolWrapper(pgPool)
     await initSchemaPg(db)
+    await ensureTestingSlugsBackfilled(db)
+    await ensureLocationSlugsBackfilled(db)
+    await ensureFileFolderSlugsBackfilled(db)
     // eslint-disable-next-line no-console
     console.log('[db] PostgreSQL ready (baseline schema)')
     return
@@ -143,6 +149,9 @@ See README.md (Tech Stack / troubleshooting).
   const syncWrapper = createSqliteSyncWrapper(sqlite)
   initSchema(syncWrapper)
   db = createAsyncSqliteWrapper(sqlite)
+  await ensureTestingSlugsBackfilled(db)
+  await ensureLocationSlugsBackfilled(db)
+  await ensureFileFolderSlugsBackfilled(db)
   // eslint-disable-next-line no-console
   console.log('[db] Ready (SQLite)')
 }

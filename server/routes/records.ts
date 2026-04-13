@@ -8,6 +8,7 @@ import {
   type AuthRequest,
 } from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
+import { resolvePlanId, resolveTestId } from '../lib/testingSlugs.js'
 
 const router = Router()
 
@@ -55,13 +56,26 @@ router.get(
   `
     const params: unknown[] = []
 
+    let resolvedPlan: string | null = null
     if (testPlanId) {
+      resolvedPlan = await resolvePlanId(db, String(testPlanId))
+      if (!resolvedPlan) {
+        return res.json([])
+      }
       sql += ' AND tr.test_plan_id = ?'
-      params.push(testPlanId)
+      params.push(resolvedPlan)
     }
     if (testId) {
+      const planForTest = resolvedPlan ?? (testPlanId ? await resolvePlanId(db, String(testPlanId)) : null)
+      if (!planForTest) {
+        return res.status(400).json({ error: 'testPlanId is required when filtering by testId' })
+      }
+      const resolvedTest = await resolveTestId(db, planForTest, String(testId))
+      if (!resolvedTest) {
+        return res.json([])
+      }
       sql += ' AND tr.test_id = ?'
-      params.push(testId)
+      params.push(resolvedTest)
     }
     if (from) {
       sql += ' AND tr.run_at >= ?'
@@ -234,10 +248,10 @@ router.post(
       return res.status(400).json({ error: 'status required (pass, fail, or partial)' })
     }
 
-    const plan = await db.prepare('SELECT id FROM test_plans WHERE id = ?').get(testPlanId)
-    if (!plan) return res.status(404).json({ error: 'Test plan not found' })
-    const test = await db.prepare('SELECT id FROM tests WHERE id = ? AND test_plan_id = ?').get(testId.trim(), testPlanId)
-    if (!test) return res.status(404).json({ error: 'Test not found' })
+    const planResolved = await resolvePlanId(db, String(testPlanId))
+    if (!planResolved) return res.status(404).json({ error: 'Test plan not found' })
+    const testResolved = await resolveTestId(db, planResolved, testId.trim())
+    if (!testResolved) return res.status(404).json({ error: 'Test not found' })
 
     const id = uuidv4()
     let recordedAt: string
@@ -253,7 +267,7 @@ router.post(
       .prepare(
         'INSERT INTO test_runs (id, test_plan_id, test_id, run_at, entered_by, status, data, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       )
-      .run(id, testPlanId, testId.trim(), recordedAt, req.user.id, status, newData, null)
+      .run(id, planResolved, testResolved, recordedAt, req.user.id, status, newData, null)
 
     await insertRecordHistory(id, 'created', null, null, newData, status, req.user.id)
 
@@ -307,11 +321,19 @@ router.put(
     } | undefined
     if (!existing) return res.status(404).json({ error: 'Record not found' })
 
+    let resolvedBodyTestId: string | null | undefined = undefined
     if (bodyTestId !== undefined) {
-      const targetTest = await db
-        .prepare('SELECT id FROM tests WHERE id = ? AND test_plan_id = ?')
-        .get(bodyTestId, existing.test_plan_id)
-      if (!targetTest) return res.status(400).json({ error: 'Target test not found or does not belong to this plan' })
+      if (bodyTestId === null || (typeof bodyTestId === 'string' && !bodyTestId.trim())) {
+        resolvedBodyTestId = null
+      } else if (typeof bodyTestId === 'string') {
+        const rt = await resolveTestId(db, existing.test_plan_id, bodyTestId.trim())
+        if (!rt) {
+          return res.status(400).json({ error: 'Target test not found or does not belong to this plan' })
+        }
+        resolvedBodyTestId = rt
+      } else {
+        return res.status(400).json({ error: 'Invalid testId' })
+      }
     }
 
     const updates: string[] = []
@@ -326,7 +348,7 @@ router.put(
     }
     if (bodyTestId !== undefined) {
       updates.push('test_id = ?')
-      values.push(typeof bodyTestId === 'string' && bodyTestId.trim() ? bodyTestId.trim() : null)
+      values.push(resolvedBodyTestId ?? null)
     }
     if (updates.length === 0) {
       const planRow = (await db.prepare('SELECT name FROM test_plans WHERE id = ?').get(existing.test_plan_id)) as {

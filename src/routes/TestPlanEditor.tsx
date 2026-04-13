@@ -19,6 +19,7 @@ import {
 import { getFormulaReferencedFieldKeys } from '../utils/formulaEvaluator'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
 import { testingPath } from '../lib/appPaths'
+import { parseWikiPathSegment, slugifyWikiTitleToSegment } from '../lib/wikiPaths'
 import {
   dateInputValueToIsoOrNowIfToday,
   isoToDateInputValue,
@@ -41,6 +42,7 @@ import {
   normalizeStatusStandardClauses,
   planConditionalRulesReferenceFieldKey,
 } from '../utils/planConditionalStatus'
+import { MAIN_STATUS_NONE } from '../utils/headerStatusField'
 
 const CELL_STANDARD_OP_OPTIONS: Array<{
   value: NonNullable<ConditionalFormatRule['standardOp']>
@@ -92,6 +94,8 @@ export function TestPlanEditor() {
   const canManagePlans = useAuthStore((s) => s.hasPermission('testing.plans.manage'))
   const isNew = !planId
   const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const slugTouchedRef = useRef(false)
   const [nameError, setNameError] = useState<string | null>(null)
   const [description, setDescription] = useState('')
   const [testPlan, setTestPlan] = useState('')
@@ -110,6 +114,8 @@ export function TestPlanEditor() {
   const [requiredFieldIds, setRequiredFieldIds] = useState<string[]>([])
   const [conditionalStatusRules, setConditionalStatusRules] = useState<TestPlan['conditionalStatusRules']>({})
   const [conditionalStatusRuleOrder, setConditionalStatusRuleOrder] = useState<Record<string, string[]>>({})
+  /** Default status field for row header (field id); null = automatic / first status field in plan. */
+  const [mainStatusFieldId, setMainStatusFieldId] = useState<string | null>(null)
   const [statusAutomationHelpOpen, setStatusAutomationHelpOpen] = useState(false)
   const [statusConditionalFormulaModal, setStatusConditionalFormulaModal] = useState<{
     fieldId: string
@@ -151,6 +157,7 @@ export function TestPlanEditor() {
       .get<TestPlan>(`/test-plans/${planId}`)
       .then((r) => {
         setName(r.data.name)
+        setSlug(r.data.slug ?? '')
         setDescription(r.data.description || '')
         setTestPlan(r.data.testPlan || '')
         setConstraints(r.data.constraints || '')
@@ -173,6 +180,7 @@ export function TestPlanEditor() {
         setDefaultVisibleColumnIds(r.data.defaultVisibleColumnIds ?? [])
         setConditionalStatusRules(r.data.conditionalStatusRules ?? {})
         setConditionalStatusRuleOrder(r.data.conditionalStatusRuleOrder ?? {})
+        setMainStatusFieldId(r.data.mainStatusFieldId ?? null)
         if (!r.data.name) {
           // New/unnamed plan: focus name field
           setTimeout(() => {
@@ -284,6 +292,7 @@ export function TestPlanEditor() {
         for (const rid of removedIds) delete next[rid]
         return next
       })
+      setMainStatusFieldId((prev) => (prev && removedIds.includes(prev) ? null : prev))
     }
     setFormLayoutOrder(order)
     setFieldIds(newIds)
@@ -317,11 +326,17 @@ export function TestPlanEditor() {
       showAlert('Set a key field before saving.')
       return
     }
+    const slugParsed = slug.trim() ? parseWikiPathSegment(slug) : null
+    if (slug.trim() && !slugParsed) {
+      showAlert('URL slug: use lowercase letters, digits, and hyphens only (e.g. my-plan).')
+      return
+    }
     setSubmitting(true)
     try {
       if (isNew) {
-        const { data } = await api.post<{ id: string }>('/test-plans', {
+        const { data } = await api.post<{ id: string; slug: string }>('/test-plans', {
           name: name.trim(),
+          ...(slugParsed ? { slug: slugParsed } : {}),
           description: description.trim() || undefined,
           testPlan: testPlan.trim() || undefined,
           constraints: constraints.trim() || undefined,
@@ -340,11 +355,18 @@ export function TestPlanEditor() {
               : undefined,
           conditionalStatusRuleOrder:
             Object.keys(conditionalStatusRuleOrder).length > 0 ? conditionalStatusRuleOrder : undefined,
+          mainStatusFieldId: mainStatusFieldId ?? undefined,
         })
-        navigate(returnTo ?? testingPath('test-plans', data.id, 'edit'), { replace: true })
+        navigate(returnTo ?? testingPath('test-plans', data.slug || data.id, 'edit'), { replace: true })
       } else {
+        if (!slugParsed) {
+          showAlert('URL slug is required.')
+          setSubmitting(false)
+          return
+        }
         await api.put(`/test-plans/${planId}`, {
           name: name.trim(),
+          slug: slugParsed,
           description: description.trim() || undefined,
           testPlan: testPlan.trim() || undefined,
           constraints: constraints.trim() || undefined,
@@ -358,6 +380,7 @@ export function TestPlanEditor() {
           defaultVisibleColumnIds,
           conditionalStatusRules,
           conditionalStatusRuleOrder,
+          mainStatusFieldId,
         })
         navigate(returnTo ?? testingPath('test-plans'), { replace: true })
       }
@@ -431,12 +454,33 @@ export function TestPlanEditor() {
             ref={nameInputRef}
             value={name}
             onChange={(e) => {
-              setName(e.target.value)
+              const v = e.target.value
+              setName(v)
               if (nameError) setNameError(null)
+              if (isNew && !slugTouchedRef.current) {
+                setSlug(slugifyWikiTitleToSegment(v))
+              }
             }}
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
           />
           {nameError && <p className="mt-1 text-sm text-red-500">{nameError}</p>}
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">URL slug</label>
+          <p className="mt-1 mb-1 text-sm text-foreground/60">
+            Used in the address bar (/testing/test-plans/…). Lowercase letters, digits, and hyphens. Leave blank on new
+            plans to auto-generate from the name.
+          </p>
+          <input
+            value={slug}
+            onChange={(e) => {
+              slugTouchedRef.current = true
+              setSlug(e.target.value)
+            }}
+            className="mt-1 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+            placeholder="e.g. ac-mechanical"
+            autoComplete="off"
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground">
@@ -490,119 +534,41 @@ export function TestPlanEditor() {
             />
           </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground">
-            Default sort order (data view)
-          </label>
-          <p className="mt-1 mb-2 text-sm text-foreground/60">
-            Initial sort when viewing this plan&apos;s data. First row is primary, then secondary, etc.
-          </p>
-            <div className="mt-2 space-y-2">
-            {defaultSortOrder.map((level, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-2">
-                <span className="shrink-0 text-sm text-foreground/60">{i + 1}.</span>
-                <div className="w-full flex-1 sm:w-1/2 sm:max-w-[14rem]">
-                  <PopupSelect
-                    label=""
-                    value={level.key}
-                    onChange={(v) =>
-                      setDefaultSortOrder((prev) =>
-                        prev.map((s, j) => (j === i ? { ...s, key: v } : s))
-                      )
-                    }
-                    options={[
-                      { value: 'date', label: 'Date' },
-                      ...planFields.map((f) => ({ value: f.key, label: f.label })),
-                    ]}
-                  />
-                </div>
-                <PopupSelect
-                  label=""
-                  value={level.dir}
-                  onChange={(v) =>
-                    setDefaultSortOrder((prev) =>
-                      prev.map((s, j) => (j === i ? { ...s, dir: v as 'asc' | 'desc' } : s))
-                    )
-                  }
-                  options={[
-                    { value: 'asc', label: '↓ Ascending' },
-                    { value: 'desc', label: '↑ Descending' },
-                  ]}
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDefaultSortOrder((prev) =>
-                      prev.length > 1 ? prev.filter((_, j) => j !== i) : prev
-                    )
-                  }
-                  className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background hover:text-foreground"
-                  title="Remove sort"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() =>
-                setDefaultSortOrder((prev) => [...prev, { key: 'date', dir: 'asc' }])
-              }
-              className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
-            >
-              + Add sort
-            </button>
+        {planFields.filter((f) => f.type === 'status').length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-foreground">Default status field</label>
+            <p className="mt-1 mb-1 text-sm text-foreground/60">
+              Optional. Which status field appears next to the date in the Add row / Edit row header. Automatic uses the
+              first status field in the plan; None hides the header status (all status fields stay in the form). Other
+              status fields are unchanged.
+            </p>
+            <div className="w-full sm:w-1/2 sm:max-w-[14rem]">
+              <PopupSelect
+                label=""
+                value={
+                  mainStatusFieldId === MAIN_STATUS_NONE
+                    ? MAIN_STATUS_NONE
+                    : mainStatusFieldId &&
+                        planFields.some((f) => f.id === mainStatusFieldId && f.type === 'status')
+                      ? mainStatusFieldId
+                      : ''
+                }
+                onChange={(v) => {
+                  if (v === '') setMainStatusFieldId(null)
+                  else if (v === MAIN_STATUS_NONE) setMainStatusFieldId(MAIN_STATUS_NONE)
+                  else setMainStatusFieldId(v)
+                }}
+                options={[
+                  { value: '', label: 'Automatic' },
+                  { value: MAIN_STATUS_NONE, label: 'None' },
+                  ...planFields
+                    .filter((f) => f.type === 'status')
+                    .map((f) => ({ value: f.id, label: f.label })),
+                ]}
+              />
+            </div>
           </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-foreground">
-            Default table columns (data view)
-          </label>
-          <p className="mt-1 mb-2 text-sm text-foreground/60">
-            Which fields are shown by default in the data table. Users can change their own view; the
-            Clear button resets back to this selection. Hidden fields are listed but off by default.
-          </p>
-          <div className="mt-2 grid gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2">
-            {planFields.map((f) => {
-              const isHidden = hiddenFieldIds.includes(f.id)
-              const isChecked = defaultVisibleColumnIds.length
-                ? defaultVisibleColumnIds.includes(f.id)
-                : !isHidden
-              return (
-                <label
-                  key={f.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background"
-                >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4"
-                    checked={isChecked}
-                    onChange={(e) => {
-                      const checked = e.target.checked
-                      setDefaultVisibleColumnIds((prev) => {
-                        // When first editing, seed from current implicit default if prev empty
-                        const base =
-                          prev.length === 0
-                            ? planFields
-                                .filter((pf) => !hiddenFieldIds.includes(pf.id))
-                                .map((pf) => pf.id)
-                            : prev
-                        if (checked) {
-                          return base.includes(f.id) ? base : [...base, f.id]
-                        }
-                        return base.filter((id) => id !== f.id)
-                      })
-                    }}
-                  />
-                  <span className="truncate text-sm text-foreground">
-                    {f.label}
-                    {isHidden && <span className="ml-1 text-xs text-foreground/50">(hidden)</span>}
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        </div>
+        )}
         {planFields.some((f) => f.type === 'status' && !f.config?.formula) && (
           <div>
             <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1060,6 +1026,119 @@ export function TestPlanEditor() {
         )}
         <div>
           <label className="block text-sm font-medium text-foreground">
+            Default sort order (data view)
+          </label>
+          <p className="mt-1 mb-2 text-sm text-foreground/60">
+            Initial sort when viewing this plan&apos;s data. First row is primary, then secondary, etc.
+          </p>
+            <div className="mt-2 space-y-2">
+            {defaultSortOrder.map((level, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <span className="shrink-0 text-sm text-foreground/60">{i + 1}.</span>
+                <div className="w-full flex-1 sm:w-1/2 sm:max-w-[14rem]">
+                  <PopupSelect
+                    label=""
+                    value={level.key}
+                    onChange={(v) =>
+                      setDefaultSortOrder((prev) =>
+                        prev.map((s, j) => (j === i ? { ...s, key: v } : s))
+                      )
+                    }
+                    options={[
+                      { value: 'date', label: 'Date' },
+                      ...planFields.map((f) => ({ value: f.key, label: f.label })),
+                    ]}
+                  />
+                </div>
+                <PopupSelect
+                  label=""
+                  value={level.dir}
+                  onChange={(v) =>
+                    setDefaultSortOrder((prev) =>
+                      prev.map((s, j) => (j === i ? { ...s, dir: v as 'asc' | 'desc' } : s))
+                    )
+                  }
+                  options={[
+                    { value: 'asc', label: '↓ Ascending' },
+                    { value: 'desc', label: '↑ Descending' },
+                  ]}
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDefaultSortOrder((prev) =>
+                      prev.length > 1 ? prev.filter((_, j) => j !== i) : prev
+                    )
+                  }
+                  className="rounded px-2 py-1 text-sm text-foreground/70 hover:bg-background hover:text-foreground"
+                  title="Remove sort"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setDefaultSortOrder((prev) => [...prev, { key: 'date', dir: 'asc' }])
+              }
+              className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-background"
+            >
+              + Add sort
+            </button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
+            Default table columns (data view)
+          </label>
+          <p className="mt-1 mb-2 text-sm text-foreground/60">
+            Which fields are shown by default in the data table. Users can change their own view; the
+            Clear button resets back to this selection. Hidden fields are listed but off by default.
+          </p>
+          <div className="mt-2 grid gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2">
+            {planFields.map((f) => {
+              const isHidden = hiddenFieldIds.includes(f.id)
+              const isChecked = defaultVisibleColumnIds.length
+                ? defaultVisibleColumnIds.includes(f.id)
+                : !isHidden
+              return (
+                <label
+                  key={f.id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-background"
+                >
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={isChecked}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      setDefaultVisibleColumnIds((prev) => {
+                        // When first editing, seed from current implicit default if prev empty
+                        const base =
+                          prev.length === 0
+                            ? planFields
+                                .filter((pf) => !hiddenFieldIds.includes(pf.id))
+                                .map((pf) => pf.id)
+                            : prev
+                        if (checked) {
+                          return base.includes(f.id) ? base : [...base, f.id]
+                        }
+                        return base.filter((id) => id !== f.id)
+                      })
+                    }}
+                  />
+                  <span className="truncate text-sm text-foreground">
+                    {f.label}
+                    {isHidden && <span className="ml-1 text-xs text-foreground/50">(hidden)</span>}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground">
             Data collection fields
           </label>
           <p className="mt-1 mb-2 text-sm text-foreground/60">
@@ -1083,8 +1162,14 @@ export function TestPlanEditor() {
                   }
                   // First create the plan, then go to FieldEditor with context
                   try {
-                    const { data } = await api.post<{ id: string }>('/test-plans', {
+                    const sp = slug.trim() ? parseWikiPathSegment(slug) : null
+                    if (slug.trim() && !sp) {
+                      showAlert('URL slug: use lowercase letters, digits, and hyphens only.')
+                      return
+                    }
+                    const { data } = await api.post<{ id: string; slug: string }>('/test-plans', {
                       name: name.trim(),
+                      ...(sp ? { slug: sp } : {}),
                       description: description.trim() || undefined,
                       testPlan: testPlan.trim() || undefined,
                       constraints: constraints.trim() || undefined,
@@ -1111,7 +1196,7 @@ export function TestPlanEditor() {
                       state: {
                         fromPlan: true,
                         ownerTestPlanId: data.id,
-                        returnTo: testingPath('test-plans', data.id, 'edit'),
+                        returnTo: testingPath('test-plans', data.slug || data.id, 'edit'),
                         createdInline: true,
                       },
                     })
@@ -1207,6 +1292,7 @@ export function TestPlanEditor() {
                                   onChange={(v) => setVal(v)}
                                   options={f.config?.options || []}
                                   placeholder="(none)"
+                                  emptyOptionLabel="—"
                                   className="w-full"
                                 />
                               )}
@@ -1216,6 +1302,7 @@ export function TestPlanEditor() {
                                   onChange={(v) => setVal(v)}
                                   options={f.config?.options || []}
                                   placeholder="(none)"
+                                  emptyOptionLabel="—"
                                   className="w-full"
                                 />
                               )}
@@ -1246,7 +1333,7 @@ export function TestPlanEditor() {
                                   value={val === undefined ? '' : String(val)}
                                   onChange={(v) => setVal(v)}
                                   options={getStatusOptions(f)}
-                                  placeholder="(none)"
+                                  placeholder="None"
                                   className="w-full"
                                 />
                               )}
