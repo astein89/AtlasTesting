@@ -255,8 +255,8 @@ export function BackupPage() {
   const [nextMirrorRunAt, setNextMirrorRunAt] = useState<string | null>(null)
   const [history, setHistory] = useState<BackupHistoryEntry[]>([])
   const [form, setForm] = useState<BackupSettings | null>(null)
-  const [runBusy, setRunBusy] = useState<'idle' | 'database' | 'database_full' | 'mirror' | 'both'>('idle')
-  const [runExpect, setRunExpect] = useState<'database' | 'database_full' | 'mirror' | 'both' | null>(null)
+  const [runBusy, setRunBusy] = useState<'idle' | 'database' | 'database_full' | 'mirror' | 'both' | 'all'>('idle')
+  const [runExpect, setRunExpect] = useState<'database' | 'database_full' | 'mirror' | 'both' | 'all' | null>(null)
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
   const [statusPoll, setStatusPoll] = useState(0)
   const [discordTestLoading, setDiscordTestLoading] = useState(false)
@@ -309,6 +309,7 @@ export function BackupPage() {
           else if (runExpect === 'database_full') done = hasDbFull
           else if (runExpect === 'mirror') done = hasMir
           else if (runExpect === 'both') done = hasDb && hasMir
+          else if (runExpect === 'all') done = hasDb && hasDbFull && hasMir
           if (done) {
             setForm(r.data.settings)
             setHistory(r.data.history)
@@ -385,7 +386,7 @@ export function BackupPage() {
     await persistSettings({ showSavedNotice: true })
   }
 
-  const runTarget = async (target: 'database' | 'database_full' | 'mirror' | 'both') => {
+  const runTarget = async (target: 'database' | 'database_full' | 'mirror' | 'both' | 'all') => {
     const persisted = await persistSettings({ showSavedNotice: false })
     if (!persisted) return
     try {
@@ -555,6 +556,58 @@ export function BackupPage() {
             <p className="mt-1 text-foreground/55">No mirror run yet.</p>
           )}
         </div>
+      </div>
+
+      <div className="sticky top-0 z-20 mb-8 rounded-lg border border-border bg-background px-4 py-4 shadow-sm">
+        <p className="mb-3 text-sm font-medium text-foreground">Save &amp; run everything</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void save()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save settings'}
+          </button>
+          {saveNotice ? (
+            <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400" role="status">
+              Saved
+            </span>
+          ) : null}
+          <button
+            type="button"
+            disabled={runBusy !== 'idle' || saving}
+            onClick={() => void runTarget('all')}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-background/80 disabled:opacity-50"
+          >
+            Run all backups now
+          </button>
+          <button
+            type="button"
+            onClick={() => load()}
+            className="rounded-lg px-3 py-2 text-sm text-foreground/80 underline hover:text-foreground"
+          >
+            Refresh status
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-foreground/55">
+          Run buttons save your settings first, then start the job (the server only sees saved configuration).{' '}
+          <strong className="font-medium text-foreground/70">Run all backups now</strong> runs the database snapshot, the full
+          database archive (when that scope is enabled below), and the files mirror, in that order.
+        </p>
+        {runBusy !== 'idle' ? (
+          <p className="mt-3 border-t border-border/60 pt-3 text-sm text-foreground/70" role="status">
+            Running{' '}
+            {runBusy === 'all'
+              ? 'snapshot, full database, and files'
+              : runBusy === 'both'
+                ? 'database and files'
+                : runBusy === 'database_full'
+                  ? 'full database'
+                  : runBusy}{' '}
+            backup…
+          </p>
+        ) : null}
       </div>
 
       <SettingsCollapsible
@@ -1111,54 +1164,6 @@ export function BackupPage() {
           </div>
         )}
       </SettingsCollapsible>
-
-      <div className="mb-8 rounded-lg border border-border bg-card/30 px-4 py-4">
-        <p className="mb-3 text-sm font-medium text-foreground">Save &amp; run everything</p>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => void save()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save settings'}
-          </button>
-          {saveNotice ? (
-            <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400" role="status">
-              Saved
-            </span>
-          ) : null}
-          <button
-            type="button"
-            disabled={runBusy !== 'idle' || saving}
-            onClick={() => void runTarget('both')}
-            className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-background/80 disabled:opacity-50"
-          >
-            Run database + files now
-          </button>
-          <button
-            type="button"
-            onClick={() => load()}
-            className="rounded-lg px-3 py-2 text-sm text-foreground/80 underline hover:text-foreground"
-          >
-            Refresh status
-          </button>
-        </div>
-        <p className="mt-2 text-xs text-foreground/55">
-          Run buttons save your settings first, then start the job (the server only sees saved configuration).
-        </p>
-      </div>
-      {runBusy !== 'idle' ? (
-        <p className="text-sm text-foreground/70" role="status">
-          Running{' '}
-          {runBusy === 'both'
-            ? 'database and files'
-            : runBusy === 'database_full'
-              ? 'full database'
-              : runBusy}{' '}
-          backup…
-        </p>
-      ) : null}
     </div>
   )
 }

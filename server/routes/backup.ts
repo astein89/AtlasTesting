@@ -142,9 +142,11 @@ router.post(
   asyncRoute(async (req: AuthRequest, res) => {
     const raw = (req.query.target as string | undefined) ?? (req.body as { target?: string })?.target ?? 'both'
     const target =
-      raw === 'database' || raw === 'database_full' || raw === 'mirror' || raw === 'both' ? raw : null
+      raw === 'database' || raw === 'database_full' || raw === 'mirror' || raw === 'both' || raw === 'all'
+        ? raw
+        : null
     if (!target) {
-      return res.status(400).json({ error: 'target must be database, database_full, mirror, or both' })
+      return res.status(400).json({ error: 'target must be database, database_full, mirror, both, or all' })
     }
     const jobId = randomUUID()
     lastBackupJob = { jobId, target, startedAt: new Date().toISOString() }

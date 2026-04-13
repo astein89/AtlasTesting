@@ -858,20 +858,20 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
 }
 
 export async function runBackupTarget(
-  target: 'database' | 'database_full' | 'mirror' | 'both'
+  target: 'database' | 'database_full' | 'mirror' | 'both' | 'all'
 ): Promise<{
   database?: BackupRunResult
   databaseFull?: BackupRunResult
   mirror?: BackupRunResult
 }> {
   const out: { database?: BackupRunResult; databaseFull?: BackupRunResult; mirror?: BackupRunResult } = {}
-  if (target === 'database' || target === 'both') {
+  if (target === 'database' || target === 'both' || target === 'all') {
     out.database = await runDatabaseBackup()
   }
-  if (target === 'database_full') {
+  if (target === 'database_full' || target === 'all') {
     out.databaseFull = await runDatabaseFullBackup()
   }
-  if (target === 'mirror' || target === 'both') {
+  if (target === 'mirror' || target === 'both' || target === 'all') {
     out.mirror = await runMirrorBackup()
   }
   return out
