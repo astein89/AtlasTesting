@@ -707,6 +707,12 @@ export function TestPlanDataView() {
     setAddSessionBaseline(null)
   }
 
+  /** True only when the user changed something vs. the initial add-row defaults (not merely pre-filled status, etc.). */
+  const addRowHasUnsavedChanges = useMemo(
+    () => addSessionBaseline != null && recordFormDataChanged(addSessionBaseline, addData),
+    [addSessionBaseline, addData]
+  )
+
   const saveAdd = async () => {
     if (!planId || !testId) return
     setSubmitting(true)
@@ -1348,6 +1354,7 @@ export function TestPlanDataView() {
           submitting={submitting}
           formLayoutOrder={plan?.formLayoutOrder}
           plan={plan ?? undefined}
+          unsavedChanges={addRowHasUnsavedChanges}
         />
       )}
       {showBulkAddRowsModal && plan && testId && (

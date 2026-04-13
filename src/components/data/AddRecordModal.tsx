@@ -24,6 +24,11 @@ interface AddRecordModalProps {
     requiredFieldIds?: string[]
     mainStatusFieldId?: string | null
   }
+  /**
+   * When set, exit confirmation (backdrop, Cancel, Escape) uses this instead of `hasData(data)`.
+   * Prefer comparing the form to its initial baseline so default-filled fields do not count as “edits”.
+   */
+  unsavedChanges?: boolean
 }
 
 function hasData(data: Record<string, string | number | boolean | string[] | TimerValue>): boolean {
@@ -48,6 +53,7 @@ export function AddRecordModal({
   submitting,
   formLayoutOrder = [],
   plan,
+  unsavedChanges,
 }: AddRecordModalProps) {
   /** Stable “record” time for header (matches Edit row — … layout). */
   const [headerRecordedAt] = useState(() => new Date().toISOString())
@@ -65,12 +71,13 @@ export function AddRecordModal({
   )
 
   const handleClose = useCallback(() => {
-    if (hasData(data)) {
+    const dirty = unsavedChanges !== undefined ? unsavedChanges : hasData(data)
+    if (dirty) {
       setShowDiscardPrompt(true)
     } else {
       onCancel()
     }
-  }, [data, onCancel])
+  }, [data, onCancel, unsavedChanges])
 
   const handleDiscardAndClose = useCallback(() => {
     setShowDiscardPrompt(false)
