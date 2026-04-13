@@ -4,7 +4,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import Database from 'better-sqlite3'
 import { resolveDatabaseUrl } from '../config.js'
-import { getSqliteDatabaseForBackup, isUsingPostgres } from '../db/index.js'
+import { db, getSqliteDatabaseForBackup, isUsingPostgres } from '../db/index.js'
 import {
   appendBackupHistory,
   backupProjectRoot,
@@ -143,11 +143,18 @@ export type BackupRunResult = {
   bytesTransferred?: number
 }
 
-export async function runDatabaseBackup(): Promise<BackupRunResult> {
+async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<BackupRunResult> {
   const started = Date.now()
   const settings = await getBackupSettings()
-  if (!settings.includeDatabase) {
-    return { ok: true, skipped: true, message: 'Database backup not included in scope', durationMs: Date.now() - started }
+  const include = variant === 'standard' ? settings.includeDatabase : settings.includeDatabaseFull
+  if (!include) {
+    return {
+      ok: true,
+      skipped: true,
+      message:
+        variant === 'standard' ? 'Database backup not included in scope' : 'Full database backup is not enabled',
+      durationMs: Date.now() - started,
+    }
   }
 
   const staging = path.resolve(settings.localStagingDir)
@@ -155,8 +162,17 @@ export async function runDatabaseBackup(): Promise<BackupRunResult> {
   fs.mkdirSync(staging, { recursive: true })
   const release = acquireLock(lockPath)
   if (!release) {
-    return { ok: true, skipped: true, message: 'Database backup already in progress', durationMs: Date.now() - started }
+    return {
+      ok: true,
+      skipped: true,
+      message: 'Database backup already in progress',
+      durationMs: Date.now() - started,
+    }
   }
+
+  const localDirName = variant === 'standard' ? 'db-snapshots' : 'db-full-snapshots'
+  const scopeLine = variant === 'standard' ? databaseScopeSummary() : databaseFullScopeSummary()
+  const historyKind = variant === 'standard' ? 'database' : 'database_full'
 
   try {
     if (settings.uploadToDropbox && settings.dropboxRclonePath) {
@@ -182,7 +198,7 @@ export async function runDatabaseBackup(): Promise<BackupRunResult> {
     }
 
     const stamp = timeStamp()
-    const snapDir = path.join(staging, 'db-snapshots', stamp)
+    const snapDir = path.join(staging, localDirName, stamp)
     fs.mkdirSync(snapDir, { recursive: true })
 
     if (isUsingPostgres()) {
@@ -209,16 +225,20 @@ export async function runDatabaseBackup(): Promise<BackupRunResult> {
 
     const manifest = {
       stamp,
+      variant: variant === 'full' ? 'full' : 'standard',
       databaseKind: isUsingPostgres() ? 'postgres' : 'sqlite',
       createdAt: new Date().toISOString(),
-      scope: { includeDatabase: settings.includeDatabase },
+      scope:
+        variant === 'standard'
+          ? { includeDatabase: settings.includeDatabase }
+          : { includeDatabaseFull: settings.includeDatabaseFull },
     }
     fs.writeFileSync(path.join(snapDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
 
     if (settings.uploadToDropbox && settings.dropboxRclonePath) {
       const remoteBase = settings.dropboxRclonePath.replace(/\/+$/, '')
-      const remoteFinal = `${remoteBase}/db-snapshots/${stamp}`
-      const remoteUploading = `${remoteBase}/db-snapshots/${stamp}.uploading`
+      const remoteFinal = `${remoteBase}/${localDirName}/${stamp}`
+      const remoteUploading = `${remoteBase}/${localDirName}/${stamp}.uploading`
       await runRclone(['copy', snapDir, remoteUploading], settings)
       try {
         await runRclone(['moveto', remoteUploading, remoteFinal], settings)
@@ -232,51 +252,69 @@ export async function runDatabaseBackup(): Promise<BackupRunResult> {
       }
     }
 
-    await pruneDbSnapshots(settings)
+    await pruneDbSnapshotsForVariant(settings, variant)
 
     const durationMs = Date.now() - started
     const s2 = await getBackupSettings()
-    s2.lastDatabaseRunAt = new Date().toISOString()
-    s2.lastDatabaseRunOk = true
-    s2.lastDatabaseRunMessage = `OK ${stamp}`
+    if (variant === 'standard') {
+      s2.lastDatabaseRunAt = new Date().toISOString()
+      s2.lastDatabaseRunOk = true
+      s2.lastDatabaseRunMessage = `OK ${stamp}`
+    } else {
+      s2.lastDatabaseFullRunAt = new Date().toISOString()
+      s2.lastDatabaseFullRunOk = true
+      s2.lastDatabaseFullRunMessage = `OK ${stamp}`
+    }
     await setBackupSettings(s2)
 
     await appendBackupHistory({
-      kind: 'database',
+      kind: historyKind,
       startedAt: new Date(started).toISOString(),
       finishedAt: new Date().toISOString(),
       durationMs,
       ok: true,
       message: stamp,
-      scopeSummary: databaseScopeSummary(),
+      scopeSummary: scopeLine,
     })
 
-    await notify(settings, true, 'Database backup', `Snapshot **${stamp}** completed successfully.`, [
+    const titleOk = variant === 'full' ? 'Full database backup' : 'Database backup'
+    const descOk =
+      variant === 'full'
+        ? `Full archive **${stamp}** completed (db-full-snapshots).`
+        : `Snapshot **${stamp}** completed successfully.`
+    await notify(settings, true, titleOk, descOk, [
       { name: 'Engine', value: isUsingPostgres() ? 'PostgreSQL' : 'SQLite', inline: true },
       { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)} s`, inline: true },
-      { name: 'Scope', value: databaseScopeSummary(), inline: true },
+      { name: 'Scope', value: scopeLine, inline: true },
     ])
     return { ok: true, message: stamp, durationMs }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     const durationMs = Date.now() - started
     const s2 = await getBackupSettings()
-    s2.lastDatabaseRunAt = new Date().toISOString()
-    s2.lastDatabaseRunOk = false
-    s2.lastDatabaseRunMessage = msg
+    if (variant === 'standard') {
+      s2.lastDatabaseRunAt = new Date().toISOString()
+      s2.lastDatabaseRunOk = false
+      s2.lastDatabaseRunMessage = msg
+    } else {
+      s2.lastDatabaseFullRunAt = new Date().toISOString()
+      s2.lastDatabaseFullRunOk = false
+      s2.lastDatabaseFullRunMessage = msg
+    }
     await setBackupSettings(s2)
     await appendBackupHistory({
-      kind: 'database',
+      kind: historyKind,
       startedAt: new Date(started).toISOString(),
       finishedAt: new Date().toISOString(),
       durationMs,
       ok: false,
       message: msg,
-      scopeSummary: databaseScopeSummary(),
+      scopeSummary: scopeLine,
     })
-    await notify(settings, false, 'Database backup failed', msg, [
+    const titleFail = variant === 'full' ? 'Full database backup failed' : 'Database backup failed'
+    await notify(settings, false, titleFail, msg, [
       { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)} s`, inline: true },
-      { name: 'Scope', value: databaseScopeSummary(), inline: true },
+      { name: 'Scope', value: scopeLine, inline: true },
     ])
     return { ok: false, message: msg, durationMs }
   } finally {
@@ -284,9 +322,18 @@ export async function runDatabaseBackup(): Promise<BackupRunResult> {
   }
 }
 
-async function pruneDbSnapshots(settings: BackupSettings): Promise<void> {
+export async function runDatabaseBackup(): Promise<BackupRunResult> {
+  return runDatabaseSnapshotVariant('standard')
+}
+
+export async function runDatabaseFullBackup(): Promise<BackupRunResult> {
+  return runDatabaseSnapshotVariant('full')
+}
+
+async function pruneDbSnapshotsForVariant(settings: BackupSettings, variant: DbSnapshotVariant): Promise<void> {
   const staging = path.resolve(settings.localStagingDir)
-  const root = path.join(staging, 'db-snapshots')
+  const localDirName = variant === 'standard' ? 'db-snapshots' : 'db-full-snapshots'
+  const root = path.join(staging, localDirName)
   if (!fs.existsSync(root)) return
 
   const dirs = fs
@@ -296,8 +343,9 @@ async function pruneDbSnapshots(settings: BackupSettings): Promise<void> {
     .sort()
     .reverse()
 
-  const keep = settings.keepLastBackups
-  const maxAgeMs = settings.maxAgeDays > 0 ? settings.maxAgeDays * 24 * 60 * 60 * 1000 : 0
+  const keep = variant === 'standard' ? settings.keepLastBackups : settings.keepLastFullDatabaseBackups
+  const maxAgeDays = variant === 'standard' ? settings.maxAgeDays : settings.maxAgeDaysFullDatabase
+  const maxAgeMs = maxAgeDays > 0 ? maxAgeDays * 24 * 60 * 60 * 1000 : 0
   const cutoff = maxAgeMs > 0 ? Date.now() - maxAgeMs : 0
 
   const remoteBase = settings.dropboxRclonePath?.replace(/\/+$/, '')
@@ -316,7 +364,7 @@ async function pruneDbSnapshots(settings: BackupSettings): Promise<void> {
     }
     if (settings.uploadToDropbox && remoteBase) {
       try {
-        await runRclone(['purge', `${remoteBase}/db-snapshots/${name}`], settings)
+        await runRclone(['purge', `${remoteBase}/${localDirName}/${name}`], settings)
       } catch {
         /* */
       }
@@ -328,10 +376,19 @@ function databaseScopeSummary(): string {
   return 'database'
 }
 
+function databaseFullScopeSummary(): string {
+  return 'database (full archive)'
+}
+
+type DbSnapshotVariant = 'standard' | 'full'
+
 function mirrorScopeSummary(settings: BackupSettings): string {
   const parts: string[] = []
   if (settings.includeWiki) parts.push('wiki')
-  if (settings.includeUploadsFiles) parts.push('uploads/files')
+  if (settings.includeUploadsFiles) {
+    parts.push('uploads/files (UUID on disk)')
+    parts.push('uploads/files-original (library names)')
+  }
   if (settings.includeUploadsTesting) parts.push('uploads/testing')
   if (settings.includeUploadsHome) parts.push('uploads/home')
   if (settings.includeWikiSeed) parts.push('wiki-seed')
@@ -375,6 +432,96 @@ function mirrorRoots(settings: BackupSettings): { rel: string; abs: string }[] {
   return roots
 }
 
+function safeBackupFolderSegment(name: string): string {
+  const t = (name || '_').replace(/[\u0000-\u001f\u007f/\\]/g, '-').trim() || '_'
+  return t.slice(0, 200)
+}
+
+/** Match Files module display names; strip path chars so tree layout is safe on all platforms. */
+function safeBackupOriginalFilename(name: string): string {
+  const t = (name || 'upload').replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  const base = (t ? t.slice(0, 500) : 'upload').replace(/[/\\]/g, '-')
+  return base.slice(0, 255) || 'upload'
+}
+
+async function folderPathSegmentsForStoredFileFolder(folderId: string | null): Promise<string[]> {
+  const segments: string[] = []
+  let id: string | null = folderId?.trim() || null
+  const guard = new Set<string>()
+  while (id) {
+    if (guard.has(id)) break
+    guard.add(id)
+    const row = (await db
+      .prepare('SELECT parent_id, name FROM file_folders WHERE id = ?')
+      .get(id)) as { parent_id: string | null; name: string } | undefined
+    if (!row) break
+    segments.unshift(safeBackupFolderSegment(row.name))
+    id = row.parent_id?.trim() || null
+  }
+  return segments
+}
+
+/**
+ * Second mirror of the Files library: same bytes as `uploads/files/` but paths follow folder + **original_filename**
+ * from `stored_files` (human-readable on Dropbox). The raw UUID tree under `mirror/uploads/files/` remains for restore.
+ */
+async function mirrorUploadsFilesOriginalNamesLayout(
+  stagingAbs: string,
+  remoteBase: string,
+  settings: BackupSettings
+): Promise<{ stdout: string; stderr: string } | null> {
+  const filesRoot = path.join(backupProjectRoot, 'uploads', 'files')
+  if (!fs.existsSync(filesRoot)) return null
+
+  const layoutDir = path.join(stagingAbs, 'mirror-files-original-layout')
+  fs.rmSync(layoutDir, { recursive: true, force: true })
+  fs.mkdirSync(layoutDir, { recursive: true })
+
+  const rows = (await db
+    .prepare(
+      `SELECT original_filename, storage_filename, folder_id FROM stored_files
+       WHERE (deleted_at IS NULL OR deleted_at = '')`
+    )
+    .all()) as { original_filename: string; storage_filename: string; folder_id: string | null }[]
+
+  const usedLowerByDir = new Map<string, Set<string>>()
+  function pickUniqueFilename(dirKey: string, proposed: string): string {
+    let set = usedLowerByDir.get(dirKey)
+    if (!set) {
+      set = new Set<string>()
+      usedLowerByDir.set(dirKey, set)
+    }
+    const ext = path.extname(proposed)
+    const stem = ext ? proposed.slice(0, -ext.length) : proposed
+    let n = 0
+    let candidate = proposed
+    while (set.has(candidate.toLowerCase())) {
+      n += 1
+      candidate = `${stem}_${n}${ext}`
+    }
+    set.add(candidate.toLowerCase())
+    return candidate
+  }
+
+  for (const row of rows) {
+    const src = path.join(filesRoot, row.storage_filename)
+    if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue
+
+    const segments = await folderPathSegmentsForStoredFileFolder(row.folder_id)
+    const dirKey = segments.length > 0 ? segments.join('/') : '_library_root'
+    const proposed = safeBackupOriginalFilename(row.original_filename)
+    const finalName = pickUniqueFilename(dirKey, proposed)
+
+    const destDir =
+      segments.length > 0 ? path.join(layoutDir, ...segments) : path.join(layoutDir, '_library_root')
+    fs.mkdirSync(destDir, { recursive: true })
+    fs.copyFileSync(src, path.join(destDir, finalName))
+  }
+
+  const remoteDest = `${remoteBase}/mirror/uploads/files-original`
+  return runRclone(['sync', layoutDir, remoteDest, '--stats-one-line'], settings)
+}
+
 export async function runMirrorBackup(): Promise<BackupRunResult> {
   const started = Date.now()
   const settings = await getBackupSettings()
@@ -412,6 +559,15 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
     const remoteBase = settings.dropboxRclonePath.replace(/\/+$/, '')
     const sub = settings.onDiskMirrorMode === 'sync' ? 'sync' : 'copy'
     let bytes = 0
+
+    const uploadsFilesDir = path.join(backupProjectRoot, 'uploads', 'files')
+    if (settings.includeUploadsFiles && fs.existsSync(uploadsFilesDir)) {
+      const statOrig = await mirrorUploadsFilesOriginalNamesLayout(staging, remoteBase, settings)
+      if (statOrig) {
+        const m0 = /([0-9,]+)\s*Bytes/i.exec(statOrig.stderr + statOrig.stdout)
+        if (m0) bytes += parseInt(m0[1].replace(/,/g, ''), 10) || 0
+      }
+    }
 
     for (const { rel, abs } of roots) {
       if (!fs.existsSync(abs)) continue
@@ -477,13 +633,19 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
   }
 }
 
-export async function runBackupTarget(target: 'database' | 'mirror' | 'both'): Promise<{
+export async function runBackupTarget(
+  target: 'database' | 'database_full' | 'mirror' | 'both'
+): Promise<{
   database?: BackupRunResult
+  databaseFull?: BackupRunResult
   mirror?: BackupRunResult
 }> {
-  const out: { database?: BackupRunResult; mirror?: BackupRunResult } = {}
+  const out: { database?: BackupRunResult; databaseFull?: BackupRunResult; mirror?: BackupRunResult } = {}
   if (target === 'database' || target === 'both') {
     out.database = await runDatabaseBackup()
+  }
+  if (target === 'database_full') {
+    out.databaseFull = await runDatabaseFullBackup()
   }
   if (target === 'mirror' || target === 'both') {
     out.mirror = await runMirrorBackup()

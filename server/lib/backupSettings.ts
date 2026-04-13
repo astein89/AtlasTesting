@@ -30,8 +30,10 @@ export const backupSettingsBodySchema = z.object({
   dropboxRclonePath: z.string().nullable().optional(),
   uploadToDropbox: z.boolean().optional(),
   databaseSchedule: backupScheduleBlockSchema.optional(),
+  databaseFullSchedule: backupScheduleBlockSchema.optional(),
   mirrorSchedule: backupScheduleBlockSchema.optional(),
   includeDatabase: z.boolean().optional(),
+  includeDatabaseFull: z.boolean().optional(),
   includeWiki: z.boolean().optional(),
   /** @deprecated Prefer includeUploadsFiles/Testing/Home; still accepted for older clients. */
   includeUploads: z.boolean().optional(),
@@ -45,6 +47,8 @@ export const backupSettingsBodySchema = z.object({
   localStagingDir: z.string().optional(),
   keepLastBackups: z.number().int().min(1).max(500).optional(),
   maxAgeDays: z.number().int().min(0).max(3650).optional(),
+  keepLastFullDatabaseBackups: z.number().int().min(1).max(500).optional(),
+  maxAgeDaysFullDatabase: z.number().int().min(0).max(3650).optional(),
   minFreeDiskMb: z.number().int().min(0).optional().nullable(),
   rcloneBwlimit: z.string().optional(),
   onDiskMirrorMode: onDiskMirrorModeSchema.optional(),
@@ -58,8 +62,12 @@ export type BackupSettings = {
   dropboxRclonePath: string | null
   uploadToDropbox: boolean
   databaseSchedule: BackupScheduleBlock
+  /** Separate full logical dump schedule; stores under db-full-snapshots/ with its own retention. */
+  databaseFullSchedule: BackupScheduleBlock
   mirrorSchedule: BackupScheduleBlock
   includeDatabase: boolean
+  /** Second job: same dump format as snapshots, different schedule/retention (db-full-snapshots/). */
+  includeDatabaseFull: boolean
   includeWiki: boolean
   /** Mirror uploads/files/ (Files module library). */
   includeUploadsFiles: boolean
@@ -74,6 +82,8 @@ export type BackupSettings = {
   localStagingDir: string
   keepLastBackups: number
   maxAgeDays: number
+  keepLastFullDatabaseBackups: number
+  maxAgeDaysFullDatabase: number
   minFreeDiskMb: number | null
   rcloneBwlimit: string
   onDiskMirrorMode: z.infer<typeof onDiskMirrorModeSchema>
@@ -84,6 +94,9 @@ export type BackupSettings = {
   lastDatabaseRunAt: string | null
   lastDatabaseRunOk: boolean | null
   lastDatabaseRunMessage: string | null
+  lastDatabaseFullRunAt: string | null
+  lastDatabaseFullRunOk: boolean | null
+  lastDatabaseFullRunMessage: string | null
   lastMirrorRunAt: string | null
   lastMirrorRunOk: boolean | null
   lastMirrorRunMessage: string | null
@@ -103,8 +116,10 @@ export function defaultBackupSettings(): BackupSettings {
     dropboxRclonePath: null,
     uploadToDropbox: true,
     databaseSchedule: defaultSchedule(),
+    databaseFullSchedule: { ...defaultSchedule(), enabled: false, frequency: 'weekly', timeLocal: '04:00' },
     mirrorSchedule: { ...defaultSchedule(), timeLocal: '03:00' },
     includeDatabase: true,
+    includeDatabaseFull: false,
     includeWiki: true,
     includeUploadsFiles: true,
     includeUploadsTesting: true,
@@ -116,6 +131,8 @@ export function defaultBackupSettings(): BackupSettings {
     localStagingDir: path.join(backupProjectRoot, 'backup-staging'),
     keepLastBackups: 24,
     maxAgeDays: 0,
+    keepLastFullDatabaseBackups: 12,
+    maxAgeDaysFullDatabase: 365,
     minFreeDiskMb: 500,
     rcloneBwlimit: '',
     onDiskMirrorMode: 'sync',
@@ -126,6 +143,9 @@ export function defaultBackupSettings(): BackupSettings {
     lastDatabaseRunAt: null,
     lastDatabaseRunOk: null,
     lastDatabaseRunMessage: null,
+    lastDatabaseFullRunAt: null,
+    lastDatabaseFullRunOk: null,
+    lastDatabaseFullRunMessage: null,
     lastMirrorRunAt: null,
     lastMirrorRunOk: null,
     lastMirrorRunMessage: null,
@@ -177,8 +197,10 @@ function mergeSettings(raw: unknown): BackupSettings {
           : base.dropboxRclonePath,
     uploadToDropbox: typeof o.uploadToDropbox === 'boolean' ? o.uploadToDropbox : base.uploadToDropbox,
     databaseSchedule: parseBlock(o.databaseSchedule, base.databaseSchedule),
+    databaseFullSchedule: parseBlock(o.databaseFullSchedule, base.databaseFullSchedule),
     mirrorSchedule: parseBlock(o.mirrorSchedule, base.mirrorSchedule),
     includeDatabase: typeof o.includeDatabase === 'boolean' ? o.includeDatabase : base.includeDatabase,
+    includeDatabaseFull: typeof o.includeDatabaseFull === 'boolean' ? o.includeDatabaseFull : base.includeDatabaseFull,
     includeWiki: typeof o.includeWiki === 'boolean' ? o.includeWiki : base.includeWiki,
     ...migrateUploadsMirrorFlags(o, base),
     includeWikiSeed: typeof o.includeWikiSeed === 'boolean' ? o.includeWikiSeed : base.includeWikiSeed,
@@ -196,6 +218,14 @@ function mergeSettings(raw: unknown): BackupSettings {
       typeof o.maxAgeDays === 'number' && Number.isFinite(o.maxAgeDays)
         ? Math.min(3650, Math.max(0, Math.floor(o.maxAgeDays)))
         : base.maxAgeDays,
+    keepLastFullDatabaseBackups:
+      typeof o.keepLastFullDatabaseBackups === 'number' && Number.isFinite(o.keepLastFullDatabaseBackups)
+        ? Math.min(500, Math.max(1, Math.floor(o.keepLastFullDatabaseBackups)))
+        : base.keepLastFullDatabaseBackups,
+    maxAgeDaysFullDatabase:
+      typeof o.maxAgeDaysFullDatabase === 'number' && Number.isFinite(o.maxAgeDaysFullDatabase)
+        ? Math.min(3650, Math.max(0, Math.floor(o.maxAgeDaysFullDatabase)))
+        : base.maxAgeDaysFullDatabase,
     minFreeDiskMb:
       o.minFreeDiskMb === null || o.minFreeDiskMb === undefined
         ? base.minFreeDiskMb
@@ -213,6 +243,12 @@ function mergeSettings(raw: unknown): BackupSettings {
     lastDatabaseRunOk: typeof o.lastDatabaseRunOk === 'boolean' ? o.lastDatabaseRunOk : base.lastDatabaseRunOk,
     lastDatabaseRunMessage:
       typeof o.lastDatabaseRunMessage === 'string' ? o.lastDatabaseRunMessage : base.lastDatabaseRunMessage,
+    lastDatabaseFullRunAt:
+      typeof o.lastDatabaseFullRunAt === 'string' ? o.lastDatabaseFullRunAt : base.lastDatabaseFullRunAt,
+    lastDatabaseFullRunOk:
+      typeof o.lastDatabaseFullRunOk === 'boolean' ? o.lastDatabaseFullRunOk : base.lastDatabaseFullRunOk,
+    lastDatabaseFullRunMessage:
+      typeof o.lastDatabaseFullRunMessage === 'string' ? o.lastDatabaseFullRunMessage : base.lastDatabaseFullRunMessage,
     lastMirrorRunAt: typeof o.lastMirrorRunAt === 'string' ? o.lastMirrorRunAt : base.lastMirrorRunAt,
     lastMirrorRunOk: typeof o.lastMirrorRunOk === 'boolean' ? o.lastMirrorRunOk : base.lastMirrorRunOk,
     lastMirrorRunMessage:
@@ -244,7 +280,7 @@ export async function setBackupSettings(settings: BackupSettings): Promise<void>
 
 export type BackupHistoryEntry = {
   id: string
-  kind: 'database' | 'mirror'
+  kind: 'database' | 'database_full' | 'mirror'
   startedAt: string
   finishedAt: string
   durationMs: number
@@ -268,7 +304,9 @@ export async function getBackupHistory(): Promise<BackupHistoryEntry[]> {
         typeof x === 'object' &&
         x !== null &&
         typeof (x as BackupHistoryEntry).id === 'string' &&
-        ((x as BackupHistoryEntry).kind === 'database' || (x as BackupHistoryEntry).kind === 'mirror')
+        ((x as BackupHistoryEntry).kind === 'database' ||
+          (x as BackupHistoryEntry).kind === 'database_full' ||
+          (x as BackupHistoryEntry).kind === 'mirror')
     ) as BackupHistoryEntry[]
   } catch {
     return []
@@ -317,10 +355,14 @@ export function mergeBackupPatch(current: BackupSettings, patch: z.infer<typeof 
   if (p.databaseSchedule !== undefined) {
     raw.databaseSchedule = { ...current.databaseSchedule, ...p.databaseSchedule }
   }
+  if (p.databaseFullSchedule !== undefined) {
+    raw.databaseFullSchedule = { ...current.databaseFullSchedule, ...p.databaseFullSchedule }
+  }
   if (p.mirrorSchedule !== undefined) {
     raw.mirrorSchedule = { ...current.mirrorSchedule, ...p.mirrorSchedule }
   }
   if (p.includeDatabase !== undefined) raw.includeDatabase = p.includeDatabase
+  if (p.includeDatabaseFull !== undefined) raw.includeDatabaseFull = p.includeDatabaseFull
   if (p.includeWiki !== undefined) raw.includeWiki = p.includeWiki
   if (p.includeUploadsFiles !== undefined) raw.includeUploadsFiles = p.includeUploadsFiles
   if (p.includeUploadsTesting !== undefined) raw.includeUploadsTesting = p.includeUploadsTesting
@@ -337,6 +379,8 @@ export function mergeBackupPatch(current: BackupSettings, patch: z.infer<typeof 
   if (p.localStagingDir !== undefined) raw.localStagingDir = p.localStagingDir
   if (p.keepLastBackups !== undefined) raw.keepLastBackups = p.keepLastBackups
   if (p.maxAgeDays !== undefined) raw.maxAgeDays = p.maxAgeDays
+  if (p.keepLastFullDatabaseBackups !== undefined) raw.keepLastFullDatabaseBackups = p.keepLastFullDatabaseBackups
+  if (p.maxAgeDaysFullDatabase !== undefined) raw.maxAgeDaysFullDatabase = p.maxAgeDaysFullDatabase
   if (p.minFreeDiskMb !== undefined) raw.minFreeDiskMb = p.minFreeDiskMb
   if (p.rcloneBwlimit !== undefined) raw.rcloneBwlimit = p.rcloneBwlimit
   if (p.onDiskMirrorMode !== undefined) raw.onDiskMirrorMode = p.onDiskMirrorMode

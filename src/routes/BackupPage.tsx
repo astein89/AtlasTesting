@@ -18,8 +18,10 @@ type BackupSettings = {
   dropboxRclonePath: string | null
   uploadToDropbox: boolean
   databaseSchedule: BackupScheduleBlock
+  databaseFullSchedule: BackupScheduleBlock
   mirrorSchedule: BackupScheduleBlock
   includeDatabase: boolean
+  includeDatabaseFull: boolean
   includeWiki: boolean
   includeUploadsFiles: boolean
   includeUploadsTesting: boolean
@@ -31,6 +33,8 @@ type BackupSettings = {
   localStagingDir: string
   keepLastBackups: number
   maxAgeDays: number
+  keepLastFullDatabaseBackups: number
+  maxAgeDaysFullDatabase: number
   minFreeDiskMb: number | null
   rcloneBwlimit: string
   onDiskMirrorMode: 'sync' | 'copy'
@@ -41,6 +45,9 @@ type BackupSettings = {
   lastDatabaseRunAt: string | null
   lastDatabaseRunOk: boolean | null
   lastDatabaseRunMessage: string | null
+  lastDatabaseFullRunAt: string | null
+  lastDatabaseFullRunOk: boolean | null
+  lastDatabaseFullRunMessage: string | null
   lastMirrorRunAt: string | null
   lastMirrorRunOk: boolean | null
   lastMirrorRunMessage: string | null
@@ -48,7 +55,7 @@ type BackupSettings = {
 
 type BackupHistoryEntry = {
   id: string
-  kind: 'database' | 'mirror'
+  kind: 'database' | 'database_full' | 'mirror'
   startedAt: string
   finishedAt: string
   durationMs: number
@@ -63,6 +70,7 @@ type BackupGetResponse = {
   history: BackupHistoryEntry[]
   databaseKind: 'postgres' | 'sqlite'
   nextDatabaseRunAt: string | null
+  nextDatabaseFullRunAt: string | null
   nextMirrorRunAt: string | null
 }
 
@@ -241,11 +249,12 @@ export function BackupPage() {
   const [saveNotice, setSaveNotice] = useState(false)
   const [databaseKind, setDatabaseKind] = useState<'postgres' | 'sqlite'>('sqlite')
   const [nextDatabaseRunAt, setNextDatabaseRunAt] = useState<string | null>(null)
+  const [nextDatabaseFullRunAt, setNextDatabaseFullRunAt] = useState<string | null>(null)
   const [nextMirrorRunAt, setNextMirrorRunAt] = useState<string | null>(null)
   const [history, setHistory] = useState<BackupHistoryEntry[]>([])
   const [form, setForm] = useState<BackupSettings | null>(null)
-  const [runBusy, setRunBusy] = useState<'idle' | 'database' | 'mirror' | 'both'>('idle')
-  const [runExpect, setRunExpect] = useState<'database' | 'mirror' | 'both' | null>(null)
+  const [runBusy, setRunBusy] = useState<'idle' | 'database' | 'database_full' | 'mirror' | 'both'>('idle')
+  const [runExpect, setRunExpect] = useState<'database' | 'database_full' | 'mirror' | 'both' | null>(null)
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
   const [statusPoll, setStatusPoll] = useState(0)
   const [discordTestLoading, setDiscordTestLoading] = useState(false)
@@ -260,6 +269,7 @@ export function BackupPage() {
         setHistory(r.data.history)
         setDatabaseKind(r.data.databaseKind)
         setNextDatabaseRunAt(r.data.nextDatabaseRunAt)
+        setNextDatabaseFullRunAt(r.data.nextDatabaseFullRunAt)
         setNextMirrorRunAt(r.data.nextMirrorRunAt)
       })
       .catch((e) => {
@@ -290,9 +300,11 @@ export function BackupPage() {
           const since = runStartedAt - 2000
           const recent = h.filter((x) => new Date(x.startedAt).getTime() >= since)
           const hasDb = recent.some((x) => x.kind === 'database')
+          const hasDbFull = recent.some((x) => x.kind === 'database_full')
           const hasMir = recent.some((x) => x.kind === 'mirror')
           let done = false
           if (runExpect === 'database') done = hasDb
+          else if (runExpect === 'database_full') done = hasDbFull
           else if (runExpect === 'mirror') done = hasMir
           else if (runExpect === 'both') done = hasDb && hasMir
           if (done) {
@@ -300,6 +312,7 @@ export function BackupPage() {
             setHistory(r.data.history)
             setDatabaseKind(r.data.databaseKind)
             setNextDatabaseRunAt(r.data.nextDatabaseRunAt)
+            setNextDatabaseFullRunAt(r.data.nextDatabaseFullRunAt)
             setNextMirrorRunAt(r.data.nextMirrorRunAt)
             setRunBusy('idle')
             setRunExpect(null)
@@ -314,16 +327,19 @@ export function BackupPage() {
     return () => window.clearInterval(t)
   }, [statusPoll, runExpect, runStartedAt])
 
-  const save = async () => {
-    if (!form) return
+  /** Persists current form to the server (backup jobs always read from server KV). */
+  const persistSettings = async (opts?: { showSavedNotice?: boolean }): Promise<boolean> => {
+    if (!form) return false
     setSaving(true)
     try {
       const { data } = await api.put<BackupGetResponse>('/backup', {
         dropboxRclonePath: form.dropboxRclonePath,
         uploadToDropbox: form.uploadToDropbox,
         databaseSchedule: form.databaseSchedule,
+        databaseFullSchedule: form.databaseFullSchedule,
         mirrorSchedule: form.mirrorSchedule,
         includeDatabase: form.includeDatabase,
+        includeDatabaseFull: form.includeDatabaseFull,
         includeWiki: form.includeWiki,
         includeUploadsFiles: form.includeUploadsFiles,
         includeUploadsTesting: form.includeUploadsTesting,
@@ -335,6 +351,8 @@ export function BackupPage() {
         localStagingDir: form.localStagingDir,
         keepLastBackups: form.keepLastBackups,
         maxAgeDays: form.maxAgeDays,
+        keepLastFullDatabaseBackups: form.keepLastFullDatabaseBackups,
+        maxAgeDaysFullDatabase: form.maxAgeDaysFullDatabase,
         minFreeDiskMb: form.minFreeDiskMb,
         rcloneBwlimit: form.rcloneBwlimit,
         onDiskMirrorMode: form.onDiskMirrorMode,
@@ -347,17 +365,26 @@ export function BackupPage() {
       setHistory(data.history)
       setDatabaseKind(data.databaseKind)
       setNextDatabaseRunAt(data.nextDatabaseRunAt)
+      setNextDatabaseFullRunAt(data.nextDatabaseFullRunAt)
       setNextMirrorRunAt(data.nextMirrorRunAt)
-      setSaveNotice(true)
+      if (opts?.showSavedNotice !== false) setSaveNotice(true)
+      return true
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to save'
       showAlert(msg)
+      return false
     } finally {
       setSaving(false)
     }
   }
 
-  const runTarget = async (target: 'database' | 'mirror' | 'both') => {
+  const save = async () => {
+    await persistSettings({ showSavedNotice: true })
+  }
+
+  const runTarget = async (target: 'database' | 'database_full' | 'mirror' | 'both') => {
+    const persisted = await persistSettings({ showSavedNotice: false })
+    if (!persisted) return
     try {
       const started = Date.now()
       setRunStartedAt(started)
@@ -389,9 +416,12 @@ export function BackupPage() {
     }
   }
 
-  const downloadLatest = async () => {
+  const downloadLatest = async (variant: 'standard' | 'full' = 'standard') => {
     try {
-      const res = await api.get<Blob>('/backup/download/latest', { responseType: 'blob' })
+      const res = await api.get<Blob>('/backup/download/latest', {
+        responseType: 'blob',
+        params: variant === 'full' ? { variant: 'full' } : {},
+      })
       const blob = res.data
       if (blob.type === 'application/json' || blob.size < 500) {
         const txt = await blob.text()
@@ -406,7 +436,7 @@ export function BackupPage() {
         }
       }
       const cd = res.headers['content-disposition'] as string | undefined
-      let name = 'db-snapshot.zip'
+      let name = variant === 'full' ? 'db-full-snapshot.zip' : 'db-snapshot.zip'
       const m = cd && /filename="([^"]+)"/.exec(cd)
       if (m?.[1]) name = m[1]
       const url = URL.createObjectURL(blob)
@@ -453,16 +483,16 @@ export function BackupPage() {
     <div>
       <h1 className="mb-2 text-2xl font-semibold text-foreground">Backup</h1>
       <p className="mb-6 max-w-3xl text-sm leading-relaxed text-foreground/75">
-        Backups are <strong className="font-medium text-foreground">two separate jobs</strong>: a{' '}
-        <strong className="font-medium text-sky-600 dark:text-sky-400">database</strong> snapshot (timestamped folders) and
-        a <strong className="font-medium text-emerald-700 dark:text-emerald-400">files</strong> mirror (wiki, uploads, optional
+        Backups include <strong className="font-medium text-foreground">database snapshots</strong>, an optional{' '}
+        <strong className="font-medium text-foreground">full database archive</strong> (separate schedule/retention), and a{' '}
+        <strong className="font-medium text-emerald-700 dark:text-emerald-400">files</strong> mirror (wiki, uploads, optional
         paths). Configure each below. Requires <code className="text-xs">rclone</code> on the server for Dropbox. Never backs
         up <code className="text-xs">.env</code>.
       </p>
 
-      <div className="mb-8 grid gap-4 md:grid-cols-2">
+      <div className="mb-8 grid gap-4 md:grid-cols-3">
         <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-4 text-sm dark:bg-sky-950/20">
-          <h3 className="text-sm font-semibold text-sky-800 dark:text-sky-300">Database backup</h3>
+          <h3 className="text-sm font-semibold text-sky-800 dark:text-sky-300">Database snapshots</h3>
           <p className="mt-0.5 text-xs text-foreground/65">Engine: {databaseKind === 'postgres' ? 'PostgreSQL' : 'SQLite'}</p>
           <p className="mt-2 text-foreground/85">
             <span className="font-medium text-foreground">Next run:</span>{' '}
@@ -478,6 +508,26 @@ export function BackupPage() {
             </p>
           ) : (
             <p className="mt-1 text-foreground/55">No database run yet.</p>
+          )}
+        </div>
+        <div className="rounded-xl border border-sky-400/25 bg-sky-500/[0.03] p-4 text-sm dark:bg-sky-950/10">
+          <h3 className="text-sm font-semibold text-sky-900 dark:text-sky-200">Full database archive</h3>
+          <p className="mt-0.5 text-xs text-foreground/65">Separate schedule &amp; retention · db-full-snapshots/</p>
+          <p className="mt-2 text-foreground/85">
+            <span className="font-medium text-foreground">Next run:</span>{' '}
+            {nextDatabaseFullRunAt ? new Date(nextDatabaseFullRunAt).toLocaleString() : '—'}
+          </p>
+          {form.lastDatabaseFullRunAt ? (
+            <p className="mt-1 text-foreground/80">
+              <span className="font-medium text-foreground">Last:</span>{' '}
+              {new Date(form.lastDatabaseFullRunAt).toLocaleString()}{' '}
+              {form.lastDatabaseFullRunOk === true ? '· OK' : form.lastDatabaseFullRunOk === false ? '· failed' : ''}
+              {form.lastDatabaseFullRunMessage ? (
+                <span className="text-foreground/65"> ({form.lastDatabaseFullRunMessage})</span>
+              ) : null}
+            </p>
+          ) : (
+            <p className="mt-1 text-foreground/55">No full archive run yet.</p>
           )}
         </div>
         <div className="rounded-xl border border-emerald-600/30 bg-emerald-500/5 p-4 text-sm dark:bg-emerald-950/20">
@@ -504,7 +554,7 @@ export function BackupPage() {
       <SettingsCollapsible
         kicker="Shared"
         title="Dropbox &amp; this server"
-        subtitle="One remote path for both jobs: database snapshots live under db-snapshots/; files under mirror/. Staging holds local DB copies and lock files."
+        subtitle="One remote path: db-snapshots/ (frequent), db-full-snapshots/ (optional second DB job), mirror/ for files. Staging holds local copies and lock files."
         variant="shared"
         defaultOpen
       >
@@ -515,7 +565,9 @@ export function BackupPage() {
             onChange={(e) => setForm((f) => (f ? { ...f, uploadToDropbox: e.target.checked } : f))}
             className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
           />
-          <span className="text-sm font-medium text-foreground">Upload to Dropbox (database snapshots and files mirror)</span>
+          <span className="text-sm font-medium text-foreground">
+            Upload to Dropbox (database snapshots, full database archives, files mirror)
+          </span>
         </label>
         <div className="max-w-xl">
           <label className="mb-1 block text-sm font-medium text-foreground" htmlFor="dropbox-path">
@@ -585,7 +637,7 @@ export function BackupPage() {
       <SettingsCollapsible
         kicker="Job 1"
         title="Database"
-        subtitle="PostgreSQL (pg_dump) or SQLite online copy into db-snapshots/&lt;stamp&gt;/. Old snapshots are pruned by count and age below—not the rolling files mirror."
+        subtitle="PostgreSQL (pg_dump) or SQLite online copy into db-snapshots/&lt;stamp&gt;/. Prune settings below apply only to this tree. A separate full archive job (db-full-snapshots/) is below."
         variant="database"
         defaultOpen
       >
@@ -657,7 +709,7 @@ export function BackupPage() {
         <div className="flex flex-wrap gap-2 border-t border-border pt-4">
           <button
             type="button"
-            disabled={runBusy !== 'idle'}
+            disabled={runBusy !== 'idle' || saving}
             onClick={() => void runTarget('database')}
             className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm font-medium text-sky-900 hover:bg-sky-500/20 disabled:opacity-50 dark:text-sky-100"
           >
@@ -665,11 +717,109 @@ export function BackupPage() {
           </button>
           <button
             type="button"
-            onClick={() => void downloadLatest()}
+            onClick={() => void downloadLatest('standard')}
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-background/80"
           >
             Download latest DB snapshot (zip)
           </button>
+        </div>
+
+        <div className="border-t border-border pt-6">
+          <p className="mb-2 text-sm font-medium text-foreground">Full database archive</p>
+          <p className="mb-3 text-xs text-foreground/60">
+            Optional second job: same logical dump as above, written under <code className="text-xs">db-full-snapshots/</code> on
+            the remote with its own schedule and retention (for example weekly copies you keep longer than frequent snapshots).
+          </p>
+          <label className="flex cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={form.includeDatabaseFull}
+              onChange={(e) => setForm((f) => (f ? { ...f, includeDatabaseFull: e.target.checked } : f))}
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+            />
+            <span className="text-sm font-medium text-foreground">Enable full database archive job</span>
+          </label>
+          <div className="mt-4">
+            <p className="mb-2 text-sm font-medium text-foreground">When to run (full archive only)</p>
+            {scheduleBlockFields('dbf', form.databaseFullSchedule, (databaseFullSchedule) =>
+              setForm((f) => (f ? { ...f, databaseFullSchedule } : f))
+            )}
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium text-foreground">Keep full archives on disk and Dropbox</p>
+            <p className="mb-3 text-xs text-foreground/60">Applies only to db-full-snapshots/, not db-snapshots/.</p>
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <label className="mb-1 block text-sm text-foreground" htmlFor="keep-full">
+                  Keep last N
+                </label>
+                <input
+                  id="keep-full"
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={form.keepLastFullDatabaseBackups}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            keepLastFullDatabaseBackups: Math.min(
+                              500,
+                              Math.max(1, parseInt(e.target.value, 10) || 1)
+                            ),
+                          }
+                        : f
+                    )
+                  }
+                  className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm text-foreground" htmlFor="maxage-full">
+                  Max age (days, 0 = off)
+                </label>
+                <input
+                  id="maxage-full"
+                  type="number"
+                  min={0}
+                  max={3650}
+                  value={form.maxAgeDaysFullDatabase}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            maxAgeDaysFullDatabase: Math.min(
+                              3650,
+                              Math.max(0, parseInt(e.target.value, 10) || 0)
+                            ),
+                          }
+                        : f
+                    )
+                  }
+                  className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={runBusy !== 'idle' || saving}
+              onClick={() => void runTarget('database_full')}
+              className="rounded-lg border border-sky-600/35 bg-sky-500/15 px-3 py-2 text-sm font-medium text-sky-950 hover:bg-sky-500/25 disabled:opacity-50 dark:text-sky-50"
+            >
+              Run full database backup now
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadLatest('full')}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-background/80"
+            >
+              Download latest full archive (zip)
+            </button>
+          </div>
         </div>
       </SettingsCollapsible>
 
@@ -714,6 +864,11 @@ export function BackupPage() {
                   <code className="text-xs">uploads/files/</code> — Files module library
                 </span>
               </label>
+              <p className="mb-1 ml-7 text-xs text-foreground/55">
+                Also mirrors <code className="text-xs">mirror/uploads/files-original/</code> on the remote: same files with
+                library folder paths and original filenames (the UUID-on-disk tree remains under{' '}
+                <code className="text-xs">mirror/uploads/files/</code> for restore).
+              </p>
               <label className="flex cursor-pointer items-start gap-3">
                 <input
                   type="checkbox"
@@ -814,7 +969,7 @@ export function BackupPage() {
         <div className="border-t border-border pt-4">
           <button
             type="button"
-            disabled={runBusy !== 'idle'}
+            disabled={runBusy !== 'idle' || saving}
             onClick={() => void runTarget('mirror')}
             className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
           >
@@ -825,7 +980,7 @@ export function BackupPage() {
 
       <SettingsCollapsible
         title="Notifications"
-        subtitle="Discord webhook and optional mail apply to both database and mirror runs."
+        subtitle="Discord webhook and optional mail apply to database, full database, and mirror runs."
         defaultOpen={false}
       >
         <div className="max-w-xl space-y-3">
@@ -883,7 +1038,11 @@ export function BackupPage() {
         </div>
       </SettingsCollapsible>
 
-      <SettingsCollapsible title="Run history" subtitle="Last 20 runs (database and mirror)." defaultOpen={false}>
+      <SettingsCollapsible
+        title="Run history"
+        subtitle="Last 20 runs (database snapshots, full database, mirror)."
+        defaultOpen={false}
+      >
         {history.length === 0 ? (
           <p className="text-sm text-foreground/60">No runs yet.</p>
         ) : (
@@ -902,7 +1061,9 @@ export function BackupPage() {
               <tbody>
                 {history.map((h) => (
                   <tr key={h.id} className="border-b border-border/60">
-                    <td className="py-2 pr-4 font-mono text-xs">{h.kind}</td>
+                    <td className="py-2 pr-4 font-mono text-xs">
+                      {h.kind === 'database_full' ? 'database_full' : h.kind}
+                    </td>
                     <td className="max-w-[180px] truncate py-2 pr-4 text-xs text-foreground/75" title={h.scopeSummary}>
                       {h.scopeSummary ?? '—'}
                     </td>
@@ -939,7 +1100,7 @@ export function BackupPage() {
           ) : null}
           <button
             type="button"
-            disabled={runBusy !== 'idle'}
+            disabled={runBusy !== 'idle' || saving}
             onClick={() => void runTarget('both')}
             className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-background/80 disabled:opacity-50"
           >
@@ -954,12 +1115,18 @@ export function BackupPage() {
           </button>
         </div>
         <p className="mt-2 text-xs text-foreground/55">
-          Use the sections above to run or download only the database or only the files mirror.
+          Run buttons save your settings first, then start the job (the server only sees saved configuration).
         </p>
       </div>
       {runBusy !== 'idle' ? (
         <p className="text-sm text-foreground/70" role="status">
-          Running {runBusy === 'both' ? 'database and files' : runBusy} backup…
+          Running{' '}
+          {runBusy === 'both'
+            ? 'database and files'
+            : runBusy === 'database_full'
+              ? 'full database'
+              : runBusy}{' '}
+          backup…
         </p>
       ) : null}
     </div>

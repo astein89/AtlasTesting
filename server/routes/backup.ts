@@ -30,8 +30,9 @@ function lockPath(stagingAbs: string, name: string) {
   return path.join(stagingAbs, name)
 }
 
-function latestSnapshotDir(settings: BackupSettings): string | null {
-  const root = path.join(path.resolve(settings.localStagingDir), 'db-snapshots')
+function latestSnapshotDir(settings: BackupSettings, variant: 'standard' | 'full' = 'standard'): string | null {
+  const sub = variant === 'full' ? 'db-full-snapshots' : 'db-snapshots'
+  const root = path.join(path.resolve(settings.localStagingDir), sub)
   if (!fs.existsSync(root)) return null
   const dirs = fs
     .readdirSync(root, { withFileTypes: true })
@@ -69,12 +70,14 @@ router.get(
     const history = await getBackupHistory()
     const now = new Date()
     const nextDb = getNextScheduleRun(now, settings.databaseSchedule)
+    const nextDbFull = getNextScheduleRun(now, settings.databaseFullSchedule)
     const nextMir = getNextScheduleRun(now, settings.mirrorSchedule)
     res.json({
       settings,
       history,
       databaseKind: isUsingPostgres() ? 'postgres' : 'sqlite',
       nextDatabaseRunAt: nextDb?.toISOString() ?? null,
+      nextDatabaseFullRunAt: nextDbFull?.toISOString() ?? null,
       nextMirrorRunAt: nextMir?.toISOString() ?? null,
     })
   })
@@ -105,6 +108,7 @@ router.put(
       history,
       databaseKind: isUsingPostgres() ? 'postgres' : 'sqlite',
       nextDatabaseRunAt: getNextScheduleRun(nowAfter, settings.databaseSchedule)?.toISOString() ?? null,
+      nextDatabaseFullRunAt: getNextScheduleRun(nowAfter, settings.databaseFullSchedule)?.toISOString() ?? null,
       nextMirrorRunAt: getNextScheduleRun(nowAfter, settings.mirrorSchedule)?.toISOString() ?? null,
     })
   })
@@ -135,9 +139,10 @@ router.post(
   requirePermission('backup.manage'),
   asyncRoute(async (req: AuthRequest, res) => {
     const raw = (req.query.target as string | undefined) ?? (req.body as { target?: string })?.target ?? 'both'
-    const target = raw === 'database' || raw === 'mirror' || raw === 'both' ? raw : null
+    const target =
+      raw === 'database' || raw === 'database_full' || raw === 'mirror' || raw === 'both' ? raw : null
     if (!target) {
-      return res.status(400).json({ error: 'target must be database, mirror, or both' })
+      return res.status(400).json({ error: 'target must be database, database_full, mirror, or both' })
     }
     const jobId = randomUUID()
     lastBackupJob = { jobId, target, startedAt: new Date().toISOString() }
@@ -166,6 +171,12 @@ router.get(
         lastRunAt: settings.lastDatabaseRunAt,
         lastOk: settings.lastDatabaseRunOk,
       },
+      databaseFull: {
+        running: dbLock,
+        lastMessage: settings.lastDatabaseFullRunMessage,
+        lastRunAt: settings.lastDatabaseFullRunAt,
+        lastOk: settings.lastDatabaseFullRunOk,
+      },
       mirror: {
         running: mirrorLock,
         lastMessage: settings.lastMirrorRunMessage,
@@ -181,9 +192,11 @@ router.get(
   '/download/latest',
   authMiddleware,
   requirePermission('backup.manage'),
-  asyncRoute(async (_req: AuthRequest, res) => {
+  asyncRoute(async (req: AuthRequest, res) => {
     const settings = await getBackupSettings()
-    const dir = latestSnapshotDir(settings)
+    const variant =
+      req.query.variant === 'full' || req.query.kind === 'full' ? ('full' as const) : ('standard' as const)
+    const dir = latestSnapshotDir(settings, variant)
     if (!dir || !fs.existsSync(dir)) {
       return res.status(404).json({ error: 'No local database snapshot found' })
     }
@@ -194,8 +207,9 @@ router.get(
     }
     const stamp = path.basename(resolvedDir)
     const stream = zipSnapshotToNodeStream(resolvedDir, stamp)
+    const prefix = variant === 'full' ? 'db-full-snapshot' : 'db-snapshot'
     res.setHeader('Content-Type', 'application/zip')
-    res.setHeader('Content-Disposition', `attachment; filename="db-snapshot-${stamp}.zip"`)
+    res.setHeader('Content-Disposition', `attachment; filename="${prefix}-${stamp}.zip"`)
     stream.on('error', (err) => {
       console.error('[backup download]', err)
       if (!res.headersSent) {

@@ -1,18 +1,20 @@
 # DC Automation — backup setup (database + on-disk files)
 
-Production backups are **two independent jobs**:
+Production backups combine **database** dumps and **on-disk** data (independent concerns):
 
 1. **Database** — either the **SQLite** file (`dc-automation.db` / `DB_PATH`) or a **PostgreSQL** logical dump (`pg_dump`), depending on whether the app uses **`DATABASE_URL`**.
 2. **On-disk user data** — wiki trees, uploaded files, and optional small config files that **never** appear inside the database dump alone.
+
+The in-app scheduler can run **two database jobs** (frequent **`db-snapshots/`** and optional separate full archives under **`db-full-snapshots/`**) plus a **files mirror** — see below.
 
 ### In-app backup (UI)
 
 The app can run the same style of backups from **`/admin/backup`** (permission **`backup.manage`** — separate from **App settings** / `settings.access`). You configure:
 
 - A single **rclone remote path** (e.g. `dropbox:Backups/dc-automation`) — tokens live in **`rclone config`** on the host, not in the app. For **Dropbox**, which options to pick in `rclone config` (storage type, blank app key/secret, OAuth) is spelled out in **[rclone remote (Dropbox or other)](#rclone-remote-dropbox-or-other)** below.
-- **Two schedules**: one for **database** snapshots under `db-snapshots/<stamp>/`, and one for the **incremental file mirror** under `mirror/…` (rclone sync/copy; only changed files transfer).
-- **Scope** (database, wiki, **uploads** split into `uploads/files/`, `uploads/testing/`, and `uploads/home/` — older saved settings that only had a single “uploads” toggle apply to all three), optional small files), **retention** for DB snapshots only (`keepLastBackups` / `maxAgeDays`), **mirror mode** (sync vs additive copy), optional **Discord** / **mail** notifications, and **download** of the latest local DB snapshot as a zip (streamed; **`rcloneBwlimit`** applies to rclone jobs).
-- **Dropbox database upload:** The app copies each snapshot to `…/db-snapshots/<stamp>.uploading` on the remote, then **moves** it to `…/db-snapshots/<stamp>/` so the final path does not appear until the upload is complete. If the move fails, it attempts to purge the `.uploading` path.
+- **Schedules**: **database snapshots** under `db-snapshots/<stamp>/`, optional **full database archive** under `db-full-snapshots/<stamp>/` (same dump format, separate schedule and retention), and the **incremental file mirror** under `mirror/…` (rclone sync/copy; only changed files transfer). When **Files** uploads are included, the app also writes **`mirror/uploads/files-original/`** — the same file bytes as `uploads/files/` but laid out with **library folder names and original filenames** from the database (for readable archives); the **`mirror/uploads/files/`** tree still mirrors on-disk UUID names for full restore.
+- **Scope** (database, optional full database archive, wiki, **uploads** split into `uploads/files/`, `uploads/testing/`, and `uploads/home/` — older saved settings that only had a single “uploads” toggle apply to all three), optional small files), **retention** for each DB tree (`keepLastBackups` / `maxAgeDays` vs `keepLastFullDatabaseBackups` / `maxAgeDaysFullDatabase`), **mirror mode** (sync vs additive copy), optional **Discord** / **mail** notifications, and **download** of the latest local snapshot zips (streamed; **`rcloneBwlimit`** applies to rclone jobs).
+- **Dropbox database upload:** Each job copies a snapshot folder to `…/<db-snapshots|db-full-snapshots>/<stamp>.uploading` on the remote, then **moves** it to `…/<stamp>/` so the final path does not appear until the upload is complete. If the move fails, it attempts to purge the `.uploading` path.
 - **Roles:** Grant **Configure backups** (`backup.manage`) under **Admin → Roles** for operators who should use this page. It is **not** implied by **App settings** (`settings.access`). The seeded **admin** role uses `*` (all permissions); other roles need `backup.manage` explicitly if they should configure backups without full access.
 
 There is **no in-app encryption at rest**; use an **rclone crypt** remote or host/ Dropbox controls if you need encryption.
@@ -116,7 +118,7 @@ Use **no trailing slash** in paths.
 
 | Where | Example remote path | What goes there |
 | --- | --- | --- |
-| **Admin → Backup** (in-app jobs) | **`dropbox:Backups/dc-automation`** | One prefix; the app writes **`db-snapshots/`** and **`mirror/`** under it. |
+| **Admin → Backup** (in-app jobs) | **`dropbox:Backups/dc-automation`** | One prefix; the app writes **`db-snapshots/`** (frequent snapshots), optional **`db-full-snapshots/`** (second full logical dump with its own schedule/retention), and **`mirror/`** (files) under it. |
 | **`backup.conf`** / SQLite script | **`dropbox:Backups/dc-automation/sqlite`** | Timestamped folders under **`…/snapshots/`**. |
 | **PostgreSQL** `pg_dump` example | **`dropbox:Backups/dc-automation/postgres`** | Dedicated DB dump prefix. |
 | **`backup-on-disk-files.sh`** | **`dropbox:Backups/dc-automation/on-disk`** | Optional **`RCLONE_REMOTE_BASE`**. |
