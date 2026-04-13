@@ -268,6 +268,7 @@ async function notify(
       title,
       description: body,
       fields: embedFields,
+      notifyLabel: settings.discordNotifyLabel?.trim() || null,
     })
   }
   if (settings.mailTo?.trim()) {

@@ -119,13 +119,15 @@ router.post(
   authMiddleware,
   requirePermission('backup.manage'),
   asyncRoute(async (req: AuthRequest, res) => {
+    const body = req.body as { discordWebhook?: unknown; discordNotifyLabel?: unknown }
     const fromBody =
-      typeof (req.body as { discordWebhook?: unknown })?.discordWebhook === 'string'
-        ? (req.body as { discordWebhook: string }).discordWebhook.trim()
-        : ''
+      typeof body?.discordWebhook === 'string' ? (body.discordWebhook as string).trim() : ''
+    const labelFromBody =
+      typeof body?.discordNotifyLabel === 'string' ? (body.discordNotifyLabel as string).trim() : ''
     const settings = await getBackupSettings()
     const url = fromBody || settings.discordWebhook?.trim() || ''
-    const result = await sendDiscordBackupTest(url)
+    const notifyLabel = labelFromBody || settings.discordNotifyLabel?.trim() || ''
+    const result = await sendDiscordBackupTest(url, { notifyLabel: notifyLabel || null })
     if (!result.ok) {
       return res.status(400).json({ error: result.error })
     }

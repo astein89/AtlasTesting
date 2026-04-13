@@ -39,6 +39,8 @@ type BackupSettings = {
   rcloneBwlimit: string
   onDiskMirrorMode: 'sync' | 'copy'
   discordWebhook: string
+  /** Shown in Discord so multiple apps can share one webhook. */
+  discordNotifyLabel: string
   mailTo: string
   notifyOnFailure: boolean
   notifyOnSuccess: boolean
@@ -357,6 +359,7 @@ export function BackupPage() {
         rcloneBwlimit: form.rcloneBwlimit,
         onDiskMirrorMode: form.onDiskMirrorMode,
         discordWebhook: form.discordWebhook,
+        discordNotifyLabel: form.discordNotifyLabel,
         mailTo: form.mailTo,
         notifyOnFailure: form.notifyOnFailure,
         notifyOnSuccess: form.notifyOnSuccess,
@@ -404,7 +407,10 @@ export function BackupPage() {
     if (!form) return
     setDiscordTestLoading(true)
     try {
-      await api.post('/backup/test-discord', { discordWebhook: form.discordWebhook })
+      await api.post('/backup/test-discord', {
+        discordWebhook: form.discordWebhook,
+        discordNotifyLabel: form.discordNotifyLabel,
+      })
       showAlert('Test message sent. Check the Discord channel for this webhook.')
     } catch (e: unknown) {
       const msg =
@@ -987,7 +993,7 @@ export function BackupPage() {
 
       <SettingsCollapsible
         title="Notifications"
-        subtitle="Discord webhook and optional mail apply to database, full database, and mirror runs."
+        subtitle="Discord webhook, optional label for this server, and optional mail apply to database, full database, and mirror runs."
         defaultOpen={false}
       >
         <div className="max-w-xl space-y-3">
@@ -1013,9 +1019,26 @@ export function BackupPage() {
                 {discordTestLoading ? 'Sending…' : 'Send test message'}
               </button>
               <span className="text-xs text-foreground/60">
-                Uses the URL in the field (save settings separately to persist it).
+                Uses the URL and label in the fields (save settings separately to persist them).
               </span>
             </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-foreground" htmlFor="discord-notify-label">
+              Discord notification label (optional)
+            </label>
+            <input
+              id="discord-notify-label"
+              type="text"
+              placeholder="e.g. prod, Salem, dc-auto-110"
+              maxLength={120}
+              value={form.discordNotifyLabel}
+              onChange={(e) => setForm((f) => (f ? { ...f, discordNotifyLabel: e.target.value } : f))}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+            />
+            <p className="mt-1 text-xs text-foreground/60">
+              Shown as the webhook display name and in message titles so you can tell this server apart when several apps use the same channel.
+            </p>
           </div>
           <input
             type="email"

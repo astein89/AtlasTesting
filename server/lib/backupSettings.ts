@@ -53,6 +53,8 @@ export const backupSettingsBodySchema = z.object({
   rcloneBwlimit: z.string().optional(),
   onDiskMirrorMode: onDiskMirrorModeSchema.optional(),
   discordWebhook: z.string().optional(),
+  /** Shown in Discord (webhook username + embed title) to tell deployments apart when one webhook is reused. */
+  discordNotifyLabel: z.string().max(120).optional(),
   mailTo: z.string().optional(),
   notifyOnFailure: z.boolean().optional(),
   notifyOnSuccess: z.boolean().optional(),
@@ -88,6 +90,7 @@ export type BackupSettings = {
   rcloneBwlimit: string
   onDiskMirrorMode: z.infer<typeof onDiskMirrorModeSchema>
   discordWebhook: string
+  discordNotifyLabel: string
   mailTo: string
   notifyOnFailure: boolean
   notifyOnSuccess: boolean
@@ -137,6 +140,7 @@ export function defaultBackupSettings(): BackupSettings {
     rcloneBwlimit: '',
     onDiskMirrorMode: 'sync',
     discordWebhook: '',
+    discordNotifyLabel: '',
     mailTo: '',
     notifyOnFailure: true,
     notifyOnSuccess: false,
@@ -236,6 +240,10 @@ function mergeSettings(raw: unknown): BackupSettings {
     onDiskMirrorMode:
       o.onDiskMirrorMode === 'sync' || o.onDiskMirrorMode === 'copy' ? o.onDiskMirrorMode : base.onDiskMirrorMode,
     discordWebhook: typeof o.discordWebhook === 'string' ? o.discordWebhook.trim() : base.discordWebhook,
+    discordNotifyLabel:
+      typeof o.discordNotifyLabel === 'string'
+        ? o.discordNotifyLabel.trim().slice(0, 120)
+        : base.discordNotifyLabel,
     mailTo: typeof o.mailTo === 'string' ? o.mailTo.trim() : base.mailTo,
     notifyOnFailure: typeof o.notifyOnFailure === 'boolean' ? o.notifyOnFailure : base.notifyOnFailure,
     notifyOnSuccess: typeof o.notifyOnSuccess === 'boolean' ? o.notifyOnSuccess : base.notifyOnSuccess,
@@ -385,6 +393,7 @@ export function mergeBackupPatch(current: BackupSettings, patch: z.infer<typeof 
   if (p.rcloneBwlimit !== undefined) raw.rcloneBwlimit = p.rcloneBwlimit
   if (p.onDiskMirrorMode !== undefined) raw.onDiskMirrorMode = p.onDiskMirrorMode
   if (p.discordWebhook !== undefined) raw.discordWebhook = p.discordWebhook
+  if (p.discordNotifyLabel !== undefined) raw.discordNotifyLabel = p.discordNotifyLabel
   if (p.mailTo !== undefined) raw.mailTo = p.mailTo
   if (p.notifyOnFailure !== undefined) raw.notifyOnFailure = p.notifyOnFailure
   if (p.notifyOnSuccess !== undefined) raw.notifyOnSuccess = p.notifyOnSuccess
