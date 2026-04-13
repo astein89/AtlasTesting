@@ -109,11 +109,23 @@ This folder contains dc-automation-backup.db, a consistent online backup of the 
 
 Use a snapshot from a compatible app/schema era; run migrations after restore if the app version changed.`
 
+function globalsExportFailureLine(globalsError: string): string {
+  const compact = globalsError.replace(/\s+/g, ' ').trim()
+  const isPgAuthidDenied =
+    /pg_authid/i.test(compact) ||
+    (/permission denied/i.test(compact) && /pg_dumpall/i.test(compact))
+  if (isPgAuthidDenied) {
+    return 'globals.sql — not included. Non-superuser roles cannot run a full globals export (pg_dumpall needs access to system catalogs such as pg_authid). This is expected for a normal application login. database.dump still contains the full database; on the target, create a matching login role or use pg_restore with --no-owner --no-acl. Optional: run pg_dumpall --globals-only once as a superuser (e.g. postgres) on the source if you need a roles script.'
+  }
+  const truncated = compact.length > 320 ? `${compact.slice(0, 320)}…` : compact
+  return `globals.sql — not included (export failed: ${truncated}). Create roles manually or run pg_dumpall --globals-only as a superuser on the source.`
+}
+
 function buildPostgresRestoreReadme(o: { globalsExported: boolean; globalsError?: string }): string {
   const globalsExplain = o.globalsExported
     ? 'globals.sql — roles and other cluster-wide objects (pg_dumpall --globals-only). Review before applying on the target; you may need a superuser.'
     : o.globalsError
-      ? `globals.sql — not included (export failed: ${o.globalsError}). Create roles manually or run pg_dumpall --globals-only as a superuser on the source.`
+      ? globalsExportFailureLine(o.globalsError)
       : 'globals.sql — not generated.'
 
   return `PostgreSQL — restore notes
