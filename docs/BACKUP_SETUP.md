@@ -21,6 +21,8 @@ There is **no in-app encryption at rest**; use an **rclone crypt** remote or hos
 
 **Restore drill:** After a backup, confirm you can list the remote folder with `rclone lsd` / `rclone ls`, download the latest **`db-snapshots`** folder (or use **Download latest DB snapshot** in the UI), restore the database with `pg_restore` or by replacing the SQLite file while the app is stopped, and confirm wiki/uploads match a backup from **around the same time** as the database (restoring an old DB with a newer file tree, or the reverse, can be inconsistent).
 
+**PostgreSQL snapshot folder contents (in-app and same layout for scripted dumps if you match it):** `database.dump` (custom `pg_dump`, includes `--create` for `pg_restore --create`), optional `globals.sql` when `pg_dumpall --globals-only` succeeds (roles; may fail on hosted DBs without superuser — see `RESTORE_README.txt` in the folder), plus `RESTORE_README.txt` and `manifest.json`. **SQLite:** `dc-automation-backup.db` plus `RESTORE_README.txt`. A logical dump does not include other databases on the same cluster or provider-only cluster settings.
+
 **Single instance:** Scheduled backups use in-process timers; run **one** Node process for the app or use external scheduling only.
 
 ---

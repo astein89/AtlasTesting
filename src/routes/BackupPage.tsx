@@ -637,7 +637,7 @@ export function BackupPage() {
       <SettingsCollapsible
         kicker="Job 1"
         title="Database"
-        subtitle="PostgreSQL (pg_dump) or SQLite online copy into db-snapshots/&lt;stamp&gt;/. Prune settings below apply only to this tree. A separate full archive job (db-full-snapshots/) is below."
+        subtitle="PostgreSQL (pg_dump) or SQLite online copy into db-snapshots/&lt;stamp&gt;/. If nothing changed in the database since the last successful dump, the run is skipped (no new folder; same for the full archive job). Delete staging/db-backup-last-fingerprint.json to force the next run. Prune settings below apply only to this tree. A separate full archive job (db-full-snapshots/) is below."
         variant="database"
         defaultOpen
       >

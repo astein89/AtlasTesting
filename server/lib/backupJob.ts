@@ -16,6 +16,165 @@ import { sendDiscordBackupEmbed, type DiscordEmbedField } from './backupDiscordN
 
 const execFileAsync = promisify(execFile)
 
+/** Persisted after a successful DB dump so we can skip redundant runs (same idea as `PRAGMA data_version` in sqlite-dropbox-backup.sh). */
+const DB_FINGERPRINT_FILE = 'db-backup-last-fingerprint.json'
+
+type DbFingerprint = { engine: 'sqlite' | 'postgres'; token: string }
+
+function fingerprintFilePath(stagingAbs: string): string {
+  return path.join(stagingAbs, DB_FINGERPRINT_FILE)
+}
+
+function readStoredDbFingerprint(stagingAbs: string): DbFingerprint | null {
+  try {
+    const p = fingerprintFilePath(stagingAbs)
+    if (!fs.existsSync(p)) return null
+    const j = JSON.parse(fs.readFileSync(p, 'utf8')) as unknown
+    if (!j || typeof j !== 'object') return null
+    const o = j as Record<string, unknown>
+    const engine = o.engine === 'sqlite' || o.engine === 'postgres' ? o.engine : null
+    const token = typeof o.token === 'string' ? o.token : null
+    if (engine && token) return { engine, token }
+  } catch {
+    /* */
+  }
+  return null
+}
+
+function writeStoredDbFingerprint(stagingAbs: string, fp: DbFingerprint): void {
+  fs.mkdirSync(stagingAbs, { recursive: true })
+  fs.writeFileSync(fingerprintFilePath(stagingAbs), JSON.stringify(fp, null, 2), 'utf8')
+}
+
+/** SQLite: `PRAGMA data_version` (increments on writes). Postgres: WAL LSN, with pg_stat fallback. Returns null → do not skip (always backup). */
+async function computeLiveDbFingerprint(): Promise<DbFingerprint | null> {
+  if (isUsingPostgres()) {
+    try {
+      const row = (await db
+        .prepare(
+          `SELECT COALESCE(
+            NULLIF(pg_current_wal_lsn()::text, ''),
+            NULLIF(pg_last_wal_replay_lsn()::text, '')
+          ) AS wal`
+        )
+        .get()) as { wal: string | null } | undefined
+      const w = row?.wal?.trim()
+      if (w) return { engine: 'postgres', token: `wal:${w}` }
+    } catch {
+      /* */
+    }
+    try {
+      const row = (await db
+        .prepare(
+          `SELECT (xact_commit::text || ':' || tup_inserted::text || ':' || tup_updated::text || ':' || tup_deleted::text) AS s
+           FROM pg_stat_database WHERE datname = current_database()`
+        )
+        .get()) as { s: string | null } | undefined
+      const s = row?.s?.trim()
+      if (s) return { engine: 'postgres', token: `stats:${s}` }
+    } catch {
+      /* */
+    }
+    return null
+  }
+
+  const raw = getSqliteDatabaseForBackup()
+  if (!raw) return null
+  try {
+    const dv = raw.pragma('data_version', { simple: true }) as number | bigint | string | undefined
+    const n = typeof dv === 'bigint' ? Number(dv) : Number(dv)
+    if (Number.isFinite(n)) return { engine: 'sqlite', token: `data_version:${n}` }
+  } catch {
+    /* */
+  }
+  try {
+    const name = raw.name
+    if (name && name !== ':memory:' && !raw.memory) {
+      const st = fs.statSync(name)
+      return { engine: 'sqlite', token: `file:${st.size}:${Math.floor(st.mtimeMs)}` }
+    }
+  } catch {
+    /* */
+  }
+  return null
+}
+
+const SQLITE_RESTORE_README = `SQLite — restore notes
+============================
+This folder contains dc-automation-backup.db, a consistent online backup of the live SQLite database file.
+
+1. Stop the DC Automation app (and anything else using the database file).
+2. Replace the database file on disk (see DB_PATH; often dc-automation.db in the app root) with dc-automation-backup.db from this folder.
+3. Start the app.
+
+Use a snapshot from a compatible app/schema era; run migrations after restore if the app version changed.`
+
+function buildPostgresRestoreReadme(o: { globalsExported: boolean; globalsError?: string }): string {
+  const globalsExplain = o.globalsExported
+    ? 'globals.sql — roles and other cluster-wide objects (pg_dumpall --globals-only). Review before applying on the target; you may need a superuser.'
+    : o.globalsError
+      ? `globals.sql — not included (export failed: ${o.globalsError}). Create roles manually or run pg_dumpall --globals-only as a superuser on the source.`
+      : 'globals.sql — not generated.'
+
+  return `PostgreSQL — restore notes
+===========================
+Files in this folder:
+- database.dump — custom-format logical backup (pg_dump -Fc --create): schema, data, and objects in this database, plus commands to recreate the database when used with pg_restore --create.
+- ${globalsExplain}
+
+Typical restore to a new cluster (adjust -h -p -U; use pg_restore from a client version ≥ the server that produced the dump):
+
+1) Optional — roles:    psql -v ON_ERROR_STOP=1 -f globals.sql -d postgres
+2) Database + data:     pg_restore --verbose --create --clean --if-exists --no-owner --no-acl -d postgres database.dump
+
+To load into an already-created empty database, omit --create and pass -d your_db.
+
+Not included: other databases on the same server, replication configuration, and some provider-specific cluster settings. On hosted Postgres, globals export may be restricted — create roles in the provider UI if needed.`
+}
+
+async function writePostgresSnapshotArtifacts(
+  snapDir: string,
+  databaseUrl: string
+): Promise<{ globalsExported: boolean; globalsError?: string }> {
+  const dumpPath = path.join(snapDir, 'database.dump')
+  await execFileAsync(
+    'pg_dump',
+    ['--format=custom', '--create', '--file', dumpPath, databaseUrl],
+    {
+      maxBuffer: 256 * 1024 * 1024,
+      env: process.env,
+      timeout: 3_600_000,
+    }
+  )
+  try {
+    await execFileAsync('pg_restore', ['--list', dumpPath], { maxBuffer: 10 * 1024 * 1024 })
+  } catch {
+    /* list may fail on huge dumps; pg_dump already succeeded */
+  }
+
+  let globalsExported = false
+  let globalsError: string | undefined
+  const globalsPath = path.join(snapDir, 'globals.sql')
+  try {
+    await execFileAsync('pg_dumpall', ['--globals-only', '--file', globalsPath, '--dbname', databaseUrl], {
+      maxBuffer: 32 * 1024 * 1024,
+      env: process.env,
+      timeout: 300_000,
+    })
+    globalsExported = fs.existsSync(globalsPath) && fs.statSync(globalsPath).size > 0
+  } catch (e) {
+    globalsError = e instanceof Error ? e.message : String(e)
+    try {
+      if (fs.existsSync(globalsPath)) fs.unlinkSync(globalsPath)
+    } catch {
+      /* */
+    }
+  }
+
+  fs.writeFileSync(path.join(snapDir, 'RESTORE_README.txt'), buildPostgresRestoreReadme({ globalsExported, globalsError }), 'utf8')
+  return { globalsExported, globalsError }
+}
+
 function timeStamp(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
@@ -235,22 +394,32 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
       }
     }
 
+    const fpNow = await computeLiveDbFingerprint()
+    const fpStored = readStoredDbFingerprint(staging)
+    if (fpNow && fpStored && fpStored.engine === fpNow.engine && fpStored.token === fpNow.token) {
+      const msg = 'No database changes since last backup'
+      await recordDatabaseSnapshotSkipped(variant, started, msg)
+      return { ok: true, skipped: true, message: msg, durationMs: Date.now() - started }
+    }
+
     const stamp = timeStamp()
     const snapDir = path.join(staging, localDirName, stamp)
     fs.mkdirSync(snapDir, { recursive: true })
 
+    let postgresRestoreHints: {
+      dumpFile: string
+      globalsFile: string | null
+      globalsError?: string
+    } | null = null
+
     if (isUsingPostgres()) {
       const url = resolveDatabaseUrl()
       if (!url) throw new Error('DATABASE_URL not configured')
-      const dumpPath = path.join(snapDir, 'database.dump')
-      await execFileAsync('pg_dump', ['--format=custom', '--file', dumpPath, url], {
-        maxBuffer: 64 * 1024 * 1024,
-        env: process.env,
-      })
-      try {
-        await execFileAsync('pg_restore', ['--list', dumpPath], { maxBuffer: 10 * 1024 * 1024 })
-      } catch {
-        /* list may fail on huge; pg_dump already succeeded */
+      const pgExtra = await writePostgresSnapshotArtifacts(snapDir, url)
+      postgresRestoreHints = {
+        dumpFile: 'database.dump',
+        globalsFile: pgExtra.globalsExported ? 'globals.sql' : null,
+        ...(pgExtra.globalsError ? { globalsError: pgExtra.globalsError } : {}),
       }
     } else {
       const raw = getSqliteDatabaseForBackup()
@@ -259,6 +428,7 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
       await raw.backup(dest)
       const okInt = await sqliteIntegrityOnFile(dest)
       if (!okInt) throw new Error('SQLite backup failed integrity_check')
+      fs.writeFileSync(path.join(snapDir, 'RESTORE_README.txt'), SQLITE_RESTORE_README, 'utf8')
     }
 
     const manifest = {
@@ -270,6 +440,8 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
         variant === 'standard'
           ? { includeDatabase: settings.includeDatabase }
           : { includeDatabaseFull: settings.includeDatabaseFull },
+      ...(postgresRestoreHints ? { postgresRestore: postgresRestoreHints } : {}),
+      ...(isUsingPostgres() ? {} : { sqliteRestore: { dataFile: 'dc-automation-backup.db', readme: 'RESTORE_README.txt' } }),
     }
     fs.writeFileSync(path.join(snapDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
 
@@ -291,6 +463,9 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
     }
 
     await pruneDbSnapshotsForVariant(settings, variant)
+
+    const fpFinal = await computeLiveDbFingerprint()
+    if (fpFinal) writeStoredDbFingerprint(staging, fpFinal)
 
     const durationMs = Date.now() - started
     const s2 = await getBackupSettings()
