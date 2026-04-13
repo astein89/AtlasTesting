@@ -67,6 +67,16 @@ type BackupHistoryEntry = {
   scopeSummary?: string
 }
 
+type BackupRunPhase = 'database' | 'database_full' | 'mirror'
+
+type BackupActiveRun = {
+  jobId: string
+  target: 'database' | 'database_full' | 'mirror' | 'both' | 'all'
+  phase: BackupRunPhase
+  step: number
+  stepsTotal: number
+}
+
 type BackupGetResponse = {
   settings: BackupSettings
   history: BackupHistoryEntry[]
@@ -74,6 +84,18 @@ type BackupGetResponse = {
   nextDatabaseRunAt: string | null
   nextDatabaseFullRunAt: string | null
   nextMirrorRunAt: string | null
+  activeRun: BackupActiveRun | null
+}
+
+function backupPhaseLabel(phase: BackupRunPhase): string {
+  switch (phase) {
+    case 'database':
+      return 'Database snapshot'
+    case 'database_full':
+      return 'Full database archive'
+    case 'mirror':
+      return 'Files mirror'
+  }
 }
 
 function SettingsCollapsible({
@@ -259,6 +281,7 @@ export function BackupPage() {
   const [runExpect, setRunExpect] = useState<'database' | 'database_full' | 'mirror' | 'both' | 'all' | null>(null)
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
   const [statusPoll, setStatusPoll] = useState(0)
+  const [activeRun, setActiveRun] = useState<BackupActiveRun | null>(null)
   const [discordTestLoading, setDiscordTestLoading] = useState(false)
 
   const load = useCallback(() => {
@@ -273,6 +296,7 @@ export function BackupPage() {
         setNextDatabaseRunAt(r.data.nextDatabaseRunAt)
         setNextDatabaseFullRunAt(r.data.nextDatabaseFullRunAt)
         setNextMirrorRunAt(r.data.nextMirrorRunAt)
+        setActiveRun(r.data.activeRun ?? null)
       })
       .catch((e) => {
         if (isAbortLikeError(e)) return
@@ -294,10 +318,11 @@ export function BackupPage() {
 
   useEffect(() => {
     if (statusPoll <= 0 || !runExpect || runStartedAt == null) return
-    const t = window.setInterval(() => {
+    const poll = () => {
       void api
         .get<BackupGetResponse>('/backup')
         .then((r) => {
+          setActiveRun(r.data.activeRun ?? null)
           const h = r.data.history
           const since = runStartedAt - 2000
           const recent = h.filter((x) => new Date(x.startedAt).getTime() >= since)
@@ -317,6 +342,7 @@ export function BackupPage() {
             setNextDatabaseRunAt(r.data.nextDatabaseRunAt)
             setNextDatabaseFullRunAt(r.data.nextDatabaseFullRunAt)
             setNextMirrorRunAt(r.data.nextMirrorRunAt)
+            setActiveRun(null)
             setRunBusy('idle')
             setRunExpect(null)
             setRunStartedAt(null)
@@ -326,7 +352,9 @@ export function BackupPage() {
         .catch(() => {
           /* */
         })
-    }, 1400)
+    }
+    poll()
+    const t = window.setInterval(poll, 700)
     return () => window.clearInterval(t)
   }, [statusPoll, runExpect, runStartedAt])
 
@@ -371,6 +399,7 @@ export function BackupPage() {
       setNextDatabaseRunAt(data.nextDatabaseRunAt)
       setNextDatabaseFullRunAt(data.nextDatabaseFullRunAt)
       setNextMirrorRunAt(data.nextMirrorRunAt)
+      setActiveRun(data.activeRun ?? null)
       if (opts?.showSavedNotice !== false) setSaveNotice(true)
       return true
     } catch (e: unknown) {
@@ -393,12 +422,14 @@ export function BackupPage() {
       const started = Date.now()
       setRunStartedAt(started)
       setRunExpect(target)
+      setActiveRun(null)
       await api.post('/backup/run', { target })
       setRunBusy(target)
       setStatusPoll((n) => n + 1)
     } catch (e: unknown) {
       setRunStartedAt(null)
       setRunExpect(null)
+      setActiveRun(null)
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Run failed'
       showAlert(msg)
     }
@@ -596,17 +627,30 @@ export function BackupPage() {
           database archive (when that scope is enabled below), and the files mirror, in that order.
         </p>
         {runBusy !== 'idle' ? (
-          <p className="mt-3 border-t border-border/60 pt-3 text-sm text-foreground/70" role="status">
-            Running{' '}
-            {runBusy === 'all'
-              ? 'snapshot, full database, and files'
-              : runBusy === 'both'
-                ? 'database and files'
-                : runBusy === 'database_full'
-                  ? 'full database'
-                  : runBusy}{' '}
-            backup…
-          </p>
+          <div className="mt-3 border-t border-border/60 pt-3" role="status" aria-live="polite">
+            <p className="mb-2 text-sm text-foreground/80">
+              {activeRun ? (
+                <>
+                  Step {activeRun.step} of {activeRun.stepsTotal}:{' '}
+                  <span className="font-medium text-foreground">{backupPhaseLabel(activeRun.phase)}</span>
+                </>
+              ) : (
+                <span className="text-foreground/70">Starting backup…</span>
+              )}
+            </p>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-foreground/10">
+              {activeRun ? (
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                  style={{
+                    width: `${Math.min(100, Math.round((activeRun.step / activeRun.stepsTotal) * 100))}%`,
+                  }}
+                />
+              ) : (
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/80" />
+              )}
+            </div>
+          </div>
         ) : null}
       </div>
 

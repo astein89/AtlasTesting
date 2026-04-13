@@ -857,22 +857,78 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
   }
 }
 
-export async function runBackupTarget(
+/** Phases reported for manual POST /api/backup/run jobs (in-process only). */
+export type BackupRunPhase = 'database' | 'database_full' | 'mirror'
+
+export type BackupActiveRun = {
+  jobId: string
   target: 'database' | 'database_full' | 'mirror' | 'both' | 'all'
+  phase: BackupRunPhase
+  /** 1-based index of the current phase */
+  step: number
+  stepsTotal: number
+}
+
+let backupActiveRun: BackupActiveRun | null = null
+
+export function getBackupActiveRun(): BackupActiveRun | null {
+  return backupActiveRun
+}
+
+function phasesForTarget(target: BackupActiveRun['target']): BackupRunPhase[] {
+  switch (target) {
+    case 'database':
+      return ['database']
+    case 'database_full':
+      return ['database_full']
+    case 'mirror':
+      return ['mirror']
+    case 'both':
+      return ['database', 'mirror']
+    case 'all':
+      return ['database', 'database_full', 'mirror']
+    default:
+      return []
+  }
+}
+
+function setBackupActivePhase(jobId: string, target: BackupActiveRun['target'], phase: BackupRunPhase) {
+  const phases = phasesForTarget(target)
+  const step = Math.max(1, phases.indexOf(phase) + 1)
+  backupActiveRun = { jobId, target, phase, step, stepsTotal: phases.length }
+}
+
+function clearBackupActiveRun(jobId: string) {
+  if (backupActiveRun?.jobId === jobId) backupActiveRun = null
+}
+
+export async function runBackupTarget(
+  target: 'database' | 'database_full' | 'mirror' | 'both' | 'all',
+  jobId?: string
 ): Promise<{
   database?: BackupRunResult
   databaseFull?: BackupRunResult
   mirror?: BackupRunResult
 }> {
   const out: { database?: BackupRunResult; databaseFull?: BackupRunResult; mirror?: BackupRunResult } = {}
-  if (target === 'database' || target === 'both' || target === 'all') {
-    out.database = await runDatabaseBackup()
+  const track = (phase: BackupRunPhase) => {
+    if (jobId) setBackupActivePhase(jobId, target, phase)
   }
-  if (target === 'database_full' || target === 'all') {
-    out.databaseFull = await runDatabaseFullBackup()
-  }
-  if (target === 'mirror' || target === 'both' || target === 'all') {
-    out.mirror = await runMirrorBackup()
+  try {
+    if (target === 'database' || target === 'both' || target === 'all') {
+      track('database')
+      out.database = await runDatabaseBackup()
+    }
+    if (target === 'database_full' || target === 'all') {
+      track('database_full')
+      out.databaseFull = await runDatabaseFullBackup()
+    }
+    if (target === 'mirror' || target === 'both' || target === 'all') {
+      track('mirror')
+      out.mirror = await runMirrorBackup()
+    }
+  } finally {
+    if (jobId) clearBackupActiveRun(jobId)
   }
   return out
 }

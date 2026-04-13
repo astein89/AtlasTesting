@@ -15,7 +15,7 @@ import {
   validateBackupSettingsForSave,
   type BackupSettings,
 } from '../lib/backupSettings.js'
-import { runBackupTarget } from '../lib/backupJob.js'
+import { getBackupActiveRun, runBackupTarget } from '../lib/backupJob.js'
 import { scheduleBackupTimers } from '../lib/backupScheduler.js'
 import { sendDiscordBackupTest } from '../lib/backupDiscordNotify.js'
 import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
@@ -110,6 +110,7 @@ router.put(
       nextDatabaseRunAt: getNextScheduleRun(nowAfter, settings.databaseSchedule)?.toISOString() ?? null,
       nextDatabaseFullRunAt: getNextScheduleRun(nowAfter, settings.databaseFullSchedule)?.toISOString() ?? null,
       nextMirrorRunAt: getNextScheduleRun(nowAfter, settings.mirrorSchedule)?.toISOString() ?? null,
+      activeRun: getBackupActiveRun(),
     })
   })
 )
@@ -152,7 +153,7 @@ router.post(
     lastBackupJob = { jobId, target, startedAt: new Date().toISOString() }
     res.status(202).json({ jobId, target, accepted: true })
     setImmediate(() => {
-      void runBackupTarget(target).catch((e) => {
+      void runBackupTarget(target, jobId).catch((e) => {
         console.error('[backup run]', e)
       })
     })
