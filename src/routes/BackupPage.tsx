@@ -739,6 +739,13 @@ export function BackupPage() {
             />
             <span className="text-sm font-medium text-foreground">Enable full database archive job</span>
           </label>
+          <p className="mt-2 text-xs text-foreground/55">
+            <strong className="font-medium text-foreground/70">How it works:</strong> same SQLite / pg_dump output as snapshots, but
+            stored under <code className="text-xs">…/db-full-snapshots/&lt;stamp&gt;/</code> (local staging + Dropbox if upload is
+            on). Turn on <strong className="font-medium">Schedule enabled</strong> below for automatic runs; otherwise use
+            &quot;Run full database backup now&quot; (saves settings first). If this master switch is off, the job is skipped and
+            run history will show that message.
+          </p>
           <div className="mt-4">
             <p className="mb-2 text-sm font-medium text-foreground">When to run (full archive only)</p>
             {scheduleBlockFields('dbf', form.databaseFullSchedule, (databaseFullSchedule) =>

@@ -143,16 +143,52 @@ export type BackupRunResult = {
   bytesTransferred?: number
 }
 
+type DbSnapshotVariant = 'standard' | 'full'
+
+/** So skipped runs show up in history and last-run status (otherwise manual/scheduled skips look like no-op). */
+async function recordDatabaseSnapshotSkipped(
+  variant: DbSnapshotVariant,
+  started: number,
+  message: string
+): Promise<void> {
+  const durationMs = Date.now() - started
+  const scopeLine = variant === 'standard' ? databaseScopeSummary() : databaseFullScopeSummary()
+  const historyKind = variant === 'standard' ? 'database' : 'database_full'
+  const s2 = await getBackupSettings()
+  const now = new Date().toISOString()
+  if (variant === 'standard') {
+    s2.lastDatabaseRunAt = now
+    s2.lastDatabaseRunOk = true
+    s2.lastDatabaseRunMessage = message
+  } else {
+    s2.lastDatabaseFullRunAt = now
+    s2.lastDatabaseFullRunOk = true
+    s2.lastDatabaseFullRunMessage = message
+  }
+  await setBackupSettings(s2)
+  await appendBackupHistory({
+    kind: historyKind,
+    startedAt: new Date(started).toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs,
+    ok: true,
+    message,
+    scopeSummary: scopeLine,
+  })
+}
+
 async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<BackupRunResult> {
   const started = Date.now()
   const settings = await getBackupSettings()
   const include = variant === 'standard' ? settings.includeDatabase : settings.includeDatabaseFull
   if (!include) {
+    const msg =
+      variant === 'standard' ? 'Database backup not included in scope' : 'Full database backup is not enabled'
+    await recordDatabaseSnapshotSkipped(variant, started, msg)
     return {
       ok: true,
       skipped: true,
-      message:
-        variant === 'standard' ? 'Database backup not included in scope' : 'Full database backup is not enabled',
+      message: msg,
       durationMs: Date.now() - started,
     }
   }
@@ -162,10 +198,12 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
   fs.mkdirSync(staging, { recursive: true })
   const release = acquireLock(lockPath)
   if (!release) {
+    const msg = 'Database backup already in progress'
+    await recordDatabaseSnapshotSkipped(variant, started, msg)
     return {
       ok: true,
       skipped: true,
-      message: 'Database backup already in progress',
+      message: msg,
       durationMs: Date.now() - started,
     }
   }
@@ -379,8 +417,6 @@ function databaseScopeSummary(): string {
 function databaseFullScopeSummary(): string {
   return 'database (full archive)'
 }
-
-type DbSnapshotVariant = 'standard' | 'full'
 
 function mirrorScopeSummary(settings: BackupSettings): string {
   const parts: string[] = []

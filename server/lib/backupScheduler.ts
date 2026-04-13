@@ -24,6 +24,7 @@ function clearTimers() {
 function armDatabase() {
   void (async () => {
     const s = await getBackupSettings()
+    if (!s.includeDatabase) return
     const ms = msUntilNextRun(new Date(), s.databaseSchedule)
     if (ms == null) return
     dbTimer = setTimeout(() => {
@@ -41,6 +42,7 @@ function armDatabase() {
 function armDatabaseFull() {
   void (async () => {
     const s = await getBackupSettings()
+    if (!s.includeDatabaseFull) return
     const ms = msUntilNextRun(new Date(), s.databaseFullSchedule)
     if (ms == null) return
     dbFullTimer = setTimeout(() => {
