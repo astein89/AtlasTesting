@@ -96,7 +96,8 @@ export function DynamicDataEntryForm({
                 min={f.config?.min}
                 max={f.config?.max}
                 inputMode="decimal"
-                className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground"
+                placeholder="Click to enter"
+                className="min-h-[44px] w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground placeholder:text-foreground/60"
               />
             )}
             {f.type === 'text' && (

@@ -27,6 +27,9 @@ import {
 
 const INVALID_CHAR_WARNING_MS = 2500
 
+/** Same empty affordance as fraction/weight fields (Atlas uses a different phrase). */
+const EMPTY_NUMERIC_PLACEHOLDER = 'Click to enter'
+
 /** Format a number for input display without scientific notation (e.g. 1e+22 → full digits). */
 function formatNumberForDisplay(n: number, decimals: number | undefined): string {
   if (!Number.isFinite(n)) return ''
@@ -141,8 +144,9 @@ function NumberFieldInput({
         type="text"
         inputMode="decimal"
         value={displayVal}
+        placeholder={EMPTY_NUMERIC_PLACEHOLDER}
         onChange={handleChange}
-        className={inputClass}
+        className={`${inputClass} placeholder:text-foreground/60`}
         disabled={disabled}
         aria-valuemin={min}
         aria-valuemax={max}

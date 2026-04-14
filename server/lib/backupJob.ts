@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -18,6 +19,9 @@ const execFileAsync = promisify(execFile)
 
 /** Persisted after a successful DB dump so we can skip redundant runs (same idea as `PRAGMA data_version` in sqlite-dropbox-backup.sh). */
 const DB_FINGERPRINT_FILE = 'db-backup-last-fingerprint.json'
+
+/** After a successful files mirror, so scheduled runs can skip when on-disk trees (and DB, when needed for files-original) are unchanged. */
+const MIRROR_FINGERPRINT_FILE = 'mirror-last-fingerprint.json'
 
 type DbFingerprint = { engine: 'sqlite' | 'postgres'; token: string }
 
@@ -46,32 +50,88 @@ function writeStoredDbFingerprint(stagingAbs: string, fp: DbFingerprint): void {
   fs.writeFileSync(fingerprintFilePath(stagingAbs), JSON.stringify(fp, null, 2), 'utf8')
 }
 
-/** SQLite: `PRAGMA data_version` (increments on writes). Postgres: WAL LSN, with pg_stat fallback. Returns null → do not skip (always backup). */
+function mirrorFingerprintPath(stagingAbs: string): string {
+  return path.join(stagingAbs, MIRROR_FINGERPRINT_FILE)
+}
+
+function readStoredMirrorToken(stagingAbs: string): string | null {
+  try {
+    const p = mirrorFingerprintPath(stagingAbs)
+    if (!fs.existsSync(p)) return null
+    const j = JSON.parse(fs.readFileSync(p, 'utf8')) as unknown
+    if (!j || typeof j !== 'object') return null
+    const t = (j as Record<string, unknown>).token
+    return typeof t === 'string' && t.length > 0 ? t : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredMirrorToken(stagingAbs: string, token: string): void {
+  fs.mkdirSync(stagingAbs, { recursive: true })
+  fs.writeFileSync(mirrorFingerprintPath(stagingAbs), JSON.stringify({ token }, null, 2), 'utf8')
+}
+
+/** Sorted walk of mirror roots: path:size:mtime for each file (stable skip key for on-disk scope). */
+function hashMirrorFileTrees(roots: { rel: string; abs: string }[]): string {
+  const lines: string[] = []
+
+  function walk(absPath: string, relPath: string): void {
+    if (!fs.existsSync(absPath)) return
+    const st = fs.statSync(absPath)
+    if (st.isFile()) {
+      lines.push(`${relPath}:${st.size}:${Math.floor(st.mtimeMs)}`)
+      return
+    }
+    if (!st.isDirectory()) return
+    for (const name of fs.readdirSync(absPath)) {
+      walk(path.join(absPath, name), `${relPath}/${name}`)
+    }
+  }
+
+  for (const { rel, abs } of roots) {
+    walk(abs, rel)
+  }
+  lines.sort()
+  return createHash('sha256').update(lines.join('\n'), 'utf8').digest('hex')
+}
+
+/**
+ * When `uploads/files` + `files-original` mirror is enabled, include DB fingerprint so renames / folder moves
+ * (metadata-only) still invalidate the skip key.
+ */
+async function computeMirrorSkipToken(settings: BackupSettings): Promise<string | null> {
+  const roots = mirrorRoots(settings)
+  if (roots.length === 0) return null
+  const fileHash = hashMirrorFileTrees(roots)
+  if (settings.includeUploadsFiles) {
+    const dbFp = await computeLiveDbFingerprint()
+    return `v1:${fileHash}:${dbFp?.token ?? 'null'}`
+  }
+  return `v1:${fileHash}:`
+}
+
+/**
+ * SQLite: `PRAGMA data_version` (increments on writes).
+ * Postgres: cumulative tuple change counters from `pg_stat_user_tables` (stable across idle WAL/checkpoint activity).
+ * Do not use WAL LSN here — it advances even when application data is unchanged.
+ * Returns null → do not skip (always backup).
+ */
 async function computeLiveDbFingerprint(): Promise<DbFingerprint | null> {
   if (isUsingPostgres()) {
     try {
       const row = (await db
         .prepare(
-          `SELECT COALESCE(
-            NULLIF(pg_current_wal_lsn()::text, ''),
-            NULLIF(pg_last_wal_replay_lsn()::text, '')
-          ) AS wal`
+          `SELECT
+             COALESCE(SUM(COALESCE(n_tup_ins, 0))::bigint, 0)::text || ':' ||
+             COALESCE(SUM(COALESCE(n_tup_upd, 0))::bigint, 0)::text || ':' ||
+             COALESCE(SUM(COALESCE(n_tup_del, 0))::bigint, 0)::text || ':' ||
+             COUNT(*)::text AS fp
+           FROM pg_stat_user_tables`
         )
-        .get()) as { wal: string | null } | undefined
-      const w = row?.wal?.trim()
-      if (w) return { engine: 'postgres', token: `wal:${w}` }
-    } catch {
-      /* */
-    }
-    try {
-      const row = (await db
-        .prepare(
-          `SELECT (xact_commit::text || ':' || tup_inserted::text || ':' || tup_updated::text || ':' || tup_deleted::text) AS s
-           FROM pg_stat_database WHERE datname = current_database()`
-        )
-        .get()) as { s: string | null } | undefined
-      const s = row?.s?.trim()
-      if (s) return { engine: 'postgres', token: `stats:${s}` }
+        .get()) as { fp: string | null } | undefined
+      const fp = row?.fp?.trim()
+      if (fp) return { engine: 'postgres', token: `pg_tuples:${fp}` }
     } catch {
       /* */
     }
@@ -252,15 +312,28 @@ async function checkFreeDiskMb(dir: string): Promise<number | null> {
   }
 }
 
+type BackupNotifyKind = 'database' | 'database_full' | 'mirror'
+
+function shouldSendBackupNotify(settings: BackupSettings, ok: boolean, kind: BackupNotifyKind): boolean {
+  if (ok) {
+    if (kind === 'database') return settings.notifyDatabaseOnSuccess
+    if (kind === 'database_full') return settings.notifyDatabaseFullOnSuccess
+    return settings.notifyMirrorOnSuccess
+  }
+  if (kind === 'database') return settings.notifyDatabaseOnFailure
+  if (kind === 'database_full') return settings.notifyDatabaseFullOnFailure
+  return settings.notifyMirrorOnFailure
+}
+
 async function notify(
   settings: BackupSettings,
   ok: boolean,
+  kind: BackupNotifyKind,
   title: string,
   body: string,
   embedFields?: DiscordEmbedField[]
 ) {
-  if (ok && !settings.notifyOnSuccess) return
-  if (!ok && !settings.notifyOnFailure) return
+  if (!shouldSendBackupNotify(settings, ok, kind)) return
   const msg = `${title}\n${body}`
   if (settings.discordWebhook?.trim()) {
     await sendDiscordBackupEmbed(settings.discordWebhook.trim(), {
@@ -346,6 +419,25 @@ async function recordDatabaseSnapshotSkipped(
     ok: true,
     message,
     scopeSummary: scopeLine,
+  })
+}
+
+async function recordMirrorSkipped(started: number, message: string): Promise<void> {
+  const durationMs = Date.now() - started
+  const s2 = await getBackupSettings()
+  const now = new Date().toISOString()
+  s2.lastMirrorRunAt = now
+  s2.lastMirrorRunOk = true
+  s2.lastMirrorRunMessage = message
+  await setBackupSettings(s2)
+  await appendBackupHistory({
+    kind: 'mirror',
+    startedAt: new Date(started).toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs,
+    ok: true,
+    message,
+    scopeSummary: mirrorScopeSummary(s2),
   })
 }
 
@@ -508,7 +600,7 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
       variant === 'full'
         ? `Full archive **${stamp}** completed (db-full-snapshots).`
         : `Snapshot **${stamp}** completed successfully.`
-    await notify(settings, true, titleOk, descOk, [
+    await notify(settings, true, variant === 'full' ? 'database_full' : 'database', titleOk, descOk, [
       { name: 'Engine', value: isUsingPostgres() ? 'PostgreSQL' : 'SQLite', inline: true },
       { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)} s`, inline: true },
       { name: 'Scope', value: scopeLine, inline: true },
@@ -538,7 +630,7 @@ async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<B
       scopeSummary: scopeLine,
     })
     const titleFail = variant === 'full' ? 'Full database backup failed' : 'Database backup failed'
-    await notify(settings, false, titleFail, msg, [
+    await notify(settings, false, variant === 'full' ? 'database_full' : 'database', titleFail, msg, [
       { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)} s`, inline: true },
       { name: 'Scope', value: scopeLine, inline: true },
     ])
@@ -767,6 +859,14 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
       throw new Error('Dropbox upload is disabled or path missing — required for mirror backup')
     }
 
+    const mirrorTok = await computeMirrorSkipToken(settings)
+    const storedMt = readStoredMirrorToken(staging)
+    if (mirrorTok && storedMt && mirrorTok === storedMt) {
+      const msg = 'No file or database changes since last mirror'
+      await recordMirrorSkipped(started, msg)
+      return { ok: true, skipped: true, message: msg, durationMs: Date.now() - started }
+    }
+
     try {
       await execFileAsync('rclone', ['version'], { timeout: 15_000, env: process.env })
     } catch {
@@ -804,6 +904,9 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
       if (m) bytes += parseInt(m[1].replace(/,/g, ''), 10) || 0
     }
 
+    const mirrorTokFinal = await computeMirrorSkipToken(settings)
+    if (mirrorTokFinal) writeStoredMirrorToken(staging, mirrorTokFinal)
+
     const durationMs = Date.now() - started
     const s2 = await getBackupSettings()
     s2.lastMirrorRunAt = new Date().toISOString()
@@ -823,7 +926,7 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
     })
     const byteStr =
       bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(2)} MB (reported)` : `${bytes.toLocaleString()} B (reported)`
-    await notify(settings, true, 'Files mirror backup', 'Incremental mirror to Dropbox finished.', [
+    await notify(settings, true, 'mirror', 'Files mirror backup', 'Incremental mirror to Dropbox finished.', [
       { name: 'Mode', value: settings.onDiskMirrorMode, inline: true },
       { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)} s`, inline: true },
       { name: 'Scope', value: mirrorScopeSummary(settings), inline: false },
@@ -847,7 +950,7 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
       message: msg,
       scopeSummary: mirrorScopeSummary(settings),
     })
-    await notify(settings, false, 'Files mirror backup failed', msg, [
+    await notify(settings, false, 'mirror', 'Files mirror backup failed', msg, [
       { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)} s`, inline: true },
       { name: 'Scope', value: mirrorScopeSummary(settings), inline: false },
     ])

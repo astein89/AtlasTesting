@@ -56,8 +56,16 @@ export const backupSettingsBodySchema = z.object({
   /** Shown in Discord (webhook username + embed title) to tell deployments apart when one webhook is reused. */
   discordNotifyLabel: z.string().max(120).optional(),
   mailTo: z.string().optional(),
+  /** @deprecated Prefer notifyDatabase* / notifyDatabaseFull* / notifyMirror*; still applied when granular keys are omitted. */
   notifyOnFailure: z.boolean().optional(),
+  /** @deprecated Prefer per-type success toggles; still applied when granular keys are omitted. */
   notifyOnSuccess: z.boolean().optional(),
+  notifyDatabaseOnSuccess: z.boolean().optional(),
+  notifyDatabaseOnFailure: z.boolean().optional(),
+  notifyDatabaseFullOnSuccess: z.boolean().optional(),
+  notifyDatabaseFullOnFailure: z.boolean().optional(),
+  notifyMirrorOnSuccess: z.boolean().optional(),
+  notifyMirrorOnFailure: z.boolean().optional(),
 })
 
 export type BackupSettings = {
@@ -92,8 +100,12 @@ export type BackupSettings = {
   discordWebhook: string
   discordNotifyLabel: string
   mailTo: string
-  notifyOnFailure: boolean
-  notifyOnSuccess: boolean
+  notifyDatabaseOnSuccess: boolean
+  notifyDatabaseOnFailure: boolean
+  notifyDatabaseFullOnSuccess: boolean
+  notifyDatabaseFullOnFailure: boolean
+  notifyMirrorOnSuccess: boolean
+  notifyMirrorOnFailure: boolean
   lastDatabaseRunAt: string | null
   lastDatabaseRunOk: boolean | null
   lastDatabaseRunMessage: string | null
@@ -142,8 +154,12 @@ export function defaultBackupSettings(): BackupSettings {
     discordWebhook: '',
     discordNotifyLabel: '',
     mailTo: '',
-    notifyOnFailure: true,
-    notifyOnSuccess: false,
+    notifyDatabaseOnSuccess: false,
+    notifyDatabaseOnFailure: true,
+    notifyDatabaseFullOnSuccess: false,
+    notifyDatabaseFullOnFailure: true,
+    notifyMirrorOnSuccess: false,
+    notifyMirrorOnFailure: true,
     lastDatabaseRunAt: null,
     lastDatabaseRunOk: null,
     lastDatabaseRunMessage: null,
@@ -245,8 +261,42 @@ function mergeSettings(raw: unknown): BackupSettings {
         ? o.discordNotifyLabel.trim().slice(0, 120)
         : base.discordNotifyLabel,
     mailTo: typeof o.mailTo === 'string' ? o.mailTo.trim() : base.mailTo,
-    notifyOnFailure: typeof o.notifyOnFailure === 'boolean' ? o.notifyOnFailure : base.notifyOnFailure,
-    notifyOnSuccess: typeof o.notifyOnSuccess === 'boolean' ? o.notifyOnSuccess : base.notifyOnSuccess,
+    notifyDatabaseOnSuccess:
+      typeof o.notifyDatabaseOnSuccess === 'boolean'
+        ? o.notifyDatabaseOnSuccess
+        : typeof o.notifyOnSuccess === 'boolean'
+          ? o.notifyOnSuccess
+          : base.notifyDatabaseOnSuccess,
+    notifyDatabaseOnFailure:
+      typeof o.notifyDatabaseOnFailure === 'boolean'
+        ? o.notifyDatabaseOnFailure
+        : typeof o.notifyOnFailure === 'boolean'
+          ? o.notifyOnFailure
+          : base.notifyDatabaseOnFailure,
+    notifyDatabaseFullOnSuccess:
+      typeof o.notifyDatabaseFullOnSuccess === 'boolean'
+        ? o.notifyDatabaseFullOnSuccess
+        : typeof o.notifyOnSuccess === 'boolean'
+          ? o.notifyOnSuccess
+          : base.notifyDatabaseFullOnSuccess,
+    notifyDatabaseFullOnFailure:
+      typeof o.notifyDatabaseFullOnFailure === 'boolean'
+        ? o.notifyDatabaseFullOnFailure
+        : typeof o.notifyOnFailure === 'boolean'
+          ? o.notifyOnFailure
+          : base.notifyDatabaseFullOnFailure,
+    notifyMirrorOnSuccess:
+      typeof o.notifyMirrorOnSuccess === 'boolean'
+        ? o.notifyMirrorOnSuccess
+        : typeof o.notifyOnSuccess === 'boolean'
+          ? o.notifyOnSuccess
+          : base.notifyMirrorOnSuccess,
+    notifyMirrorOnFailure:
+      typeof o.notifyMirrorOnFailure === 'boolean'
+        ? o.notifyMirrorOnFailure
+        : typeof o.notifyOnFailure === 'boolean'
+          ? o.notifyOnFailure
+          : base.notifyMirrorOnFailure,
     lastDatabaseRunAt: typeof o.lastDatabaseRunAt === 'string' ? o.lastDatabaseRunAt : base.lastDatabaseRunAt,
     lastDatabaseRunOk: typeof o.lastDatabaseRunOk === 'boolean' ? o.lastDatabaseRunOk : base.lastDatabaseRunOk,
     lastDatabaseRunMessage:
@@ -395,8 +445,22 @@ export function mergeBackupPatch(current: BackupSettings, patch: z.infer<typeof 
   if (p.discordWebhook !== undefined) raw.discordWebhook = p.discordWebhook
   if (p.discordNotifyLabel !== undefined) raw.discordNotifyLabel = p.discordNotifyLabel
   if (p.mailTo !== undefined) raw.mailTo = p.mailTo
-  if (p.notifyOnFailure !== undefined) raw.notifyOnFailure = p.notifyOnFailure
-  if (p.notifyOnSuccess !== undefined) raw.notifyOnSuccess = p.notifyOnSuccess
+  if (p.notifyDatabaseOnSuccess !== undefined) raw.notifyDatabaseOnSuccess = p.notifyDatabaseOnSuccess
+  if (p.notifyDatabaseOnFailure !== undefined) raw.notifyDatabaseOnFailure = p.notifyDatabaseOnFailure
+  if (p.notifyDatabaseFullOnSuccess !== undefined) raw.notifyDatabaseFullOnSuccess = p.notifyDatabaseFullOnSuccess
+  if (p.notifyDatabaseFullOnFailure !== undefined) raw.notifyDatabaseFullOnFailure = p.notifyDatabaseFullOnFailure
+  if (p.notifyMirrorOnSuccess !== undefined) raw.notifyMirrorOnSuccess = p.notifyMirrorOnSuccess
+  if (p.notifyMirrorOnFailure !== undefined) raw.notifyMirrorOnFailure = p.notifyMirrorOnFailure
+  if (p.notifyOnSuccess !== undefined) {
+    if (p.notifyDatabaseOnSuccess === undefined) raw.notifyDatabaseOnSuccess = p.notifyOnSuccess
+    if (p.notifyDatabaseFullOnSuccess === undefined) raw.notifyDatabaseFullOnSuccess = p.notifyOnSuccess
+    if (p.notifyMirrorOnSuccess === undefined) raw.notifyMirrorOnSuccess = p.notifyOnSuccess
+  }
+  if (p.notifyOnFailure !== undefined) {
+    if (p.notifyDatabaseOnFailure === undefined) raw.notifyDatabaseOnFailure = p.notifyOnFailure
+    if (p.notifyDatabaseFullOnFailure === undefined) raw.notifyDatabaseFullOnFailure = p.notifyOnFailure
+    if (p.notifyMirrorOnFailure === undefined) raw.notifyMirrorOnFailure = p.notifyOnFailure
+  }
   return mergeSettings(raw)
 }
 

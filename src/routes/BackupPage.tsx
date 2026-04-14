@@ -42,8 +42,12 @@ type BackupSettings = {
   /** Shown in Discord so multiple apps can share one webhook. */
   discordNotifyLabel: string
   mailTo: string
-  notifyOnFailure: boolean
-  notifyOnSuccess: boolean
+  notifyDatabaseOnSuccess: boolean
+  notifyDatabaseOnFailure: boolean
+  notifyDatabaseFullOnSuccess: boolean
+  notifyDatabaseFullOnFailure: boolean
+  notifyMirrorOnSuccess: boolean
+  notifyMirrorOnFailure: boolean
   lastDatabaseRunAt: string | null
   lastDatabaseRunOk: boolean | null
   lastDatabaseRunMessage: string | null
@@ -390,8 +394,12 @@ export function BackupPage() {
         discordWebhook: form.discordWebhook,
         discordNotifyLabel: form.discordNotifyLabel,
         mailTo: form.mailTo,
-        notifyOnFailure: form.notifyOnFailure,
-        notifyOnSuccess: form.notifyOnSuccess,
+        notifyDatabaseOnSuccess: form.notifyDatabaseOnSuccess,
+        notifyDatabaseOnFailure: form.notifyDatabaseOnFailure,
+        notifyDatabaseFullOnSuccess: form.notifyDatabaseFullOnSuccess,
+        notifyDatabaseFullOnFailure: form.notifyDatabaseFullOnFailure,
+        notifyMirrorOnSuccess: form.notifyMirrorOnSuccess,
+        notifyMirrorOnFailure: form.notifyMirrorOnFailure,
       })
       setForm(data.settings)
       setHistory(data.history)
@@ -936,7 +944,7 @@ export function BackupPage() {
       <SettingsCollapsible
         kicker="Job 2"
         title="Files &amp; wiki mirror"
-        subtitle="Rclone sync or copy from this server to mirror/… on the remote. Only changed files transfer. Does not create per-run history on Dropbox—use database snapshots for point-in-time relational data."
+        subtitle="Rclone sync or copy from this server to mirror/… on the remote. Scheduled runs are skipped when mirrored paths (and DB state for files-original, if enabled) are unchanged—delete staging/mirror-last-fingerprint.json to force the next run. Only changed files transfer when a run executes. Does not create per-run history on Dropbox—use database snapshots for point-in-time relational data."
         variant="files"
         defaultOpen
       >
@@ -1090,7 +1098,7 @@ export function BackupPage() {
 
       <SettingsCollapsible
         title="Notifications"
-        subtitle="Discord webhook, optional label for this server, and optional mail apply to database, full database, and mirror runs."
+        subtitle="Discord webhook, optional label for this server, and optional mail. Choose which job types send alerts on success or failure."
         defaultOpen={false}
       >
         <div className="max-w-xl space-y-3">
@@ -1144,24 +1152,94 @@ export function BackupPage() {
             onChange={(e) => setForm((f) => (f ? { ...f, mailTo: e.target.value } : f))}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
           />
-          <label className="flex cursor-pointer items-center gap-3">
-            <input
-              type="checkbox"
-              checked={form.notifyOnFailure}
-              onChange={(e) => setForm((f) => (f ? { ...f, notifyOnFailure: e.target.checked } : f))}
-              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-            />
-            <span className="text-sm text-foreground">Notify on failure</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-3">
-            <input
-              type="checkbox"
-              checked={form.notifyOnSuccess}
-              onChange={(e) => setForm((f) => (f ? { ...f, notifyOnSuccess: e.target.checked } : f))}
-              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-            />
-            <span className="text-sm text-foreground">Notify on success</span>
-          </label>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[320px] text-sm">
+              <thead>
+                <tr className="border-b border-border bg-background/80 text-left text-foreground/80">
+                  <th className="px-3 py-2 font-medium">Backup job</th>
+                  <th className="px-3 py-2 font-medium">On success</th>
+                  <th className="px-3 py-2 font-medium">On failure</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                <tr>
+                  <td className="px-3 py-2 text-foreground">Database snapshots</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={form.notifyDatabaseOnSuccess}
+                      onChange={(e) =>
+                        setForm((f) => (f ? { ...f, notifyDatabaseOnSuccess: e.target.checked } : f))
+                      }
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="Notify on success for database snapshots"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={form.notifyDatabaseOnFailure}
+                      onChange={(e) =>
+                        setForm((f) => (f ? { ...f, notifyDatabaseOnFailure: e.target.checked } : f))
+                      }
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="Notify on failure for database snapshots"
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2 text-foreground">Full database archive</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={form.notifyDatabaseFullOnSuccess}
+                      onChange={(e) =>
+                        setForm((f) => (f ? { ...f, notifyDatabaseFullOnSuccess: e.target.checked } : f))
+                      }
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="Notify on success for full database archive"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={form.notifyDatabaseFullOnFailure}
+                      onChange={(e) =>
+                        setForm((f) => (f ? { ...f, notifyDatabaseFullOnFailure: e.target.checked } : f))
+                      }
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="Notify on failure for full database archive"
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2 text-foreground">Files mirror</td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={form.notifyMirrorOnSuccess}
+                      onChange={(e) =>
+                        setForm((f) => (f ? { ...f, notifyMirrorOnSuccess: e.target.checked } : f))
+                      }
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="Notify on success for files mirror"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={form.notifyMirrorOnFailure}
+                      onChange={(e) =>
+                        setForm((f) => (f ? { ...f, notifyMirrorOnFailure: e.target.checked } : f))
+                      }
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label="Notify on failure for files mirror"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </SettingsCollapsible>
 
