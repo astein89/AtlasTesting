@@ -334,6 +334,13 @@ function collectMarkdownPaths(dir: string, wikiRoot: string, out: string[]): voi
   }
 }
 
+/** Paths for this page and any descendant pages under the same section tree (same normalized prefix). */
+function wikiPathsUnderPrefix(wikiRoot: string, prefixNorm: string): string[] {
+  const all: string[] = []
+  collectMarkdownPaths(wikiRoot, wikiRoot, all)
+  return all.filter((p) => p === prefixNorm || p.startsWith(`${prefixNorm}/`))
+}
+
 /**
  * GET /api/wiki/slug-suggestion?parentPath=&title=
  * POST /api/wiki/slug-suggestion  { parentPath?: string, title: string }
@@ -1042,6 +1049,14 @@ router.delete('/page', authMiddleware, requirePermission('wiki.edit'), (_req: Au
       error:
         'You do not have access to this page or section. A parent folder may require roles you do not have.',
     })
+  }
+  for (const p of wikiPathsUnderPrefix(wikiRoot, normalized)) {
+    if (!userCanViewWikiPage(metaDel, p, _req.user?.roles, false)) {
+      return res.status(403).json({
+        error:
+          'Cannot delete this page because the section contains other pages you do not have access to. Remove or move those pages first, or ask an administrator.',
+      })
+    }
   }
   try {
     const wikiRootResolved = path.resolve(wikiRoot)

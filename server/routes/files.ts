@@ -89,6 +89,10 @@ const FILES_ACL_DEST_FOLDER_DENIED = {
   error:
     'You do not have access to the destination folder. A parent folder may require roles you do not have.',
 }
+const FILES_ACL_DELETE_SUBTREE_DENIED = {
+  error:
+    'Cannot delete this folder because it contains files or subfolders you do not have access to.',
+}
 
 /** True if `descendantId` is `ancestorId` or nested under it. */
 async function isFolderUnderAncestor(descendantId: string, ancestorId: string): Promise<boolean> {
@@ -877,13 +881,32 @@ router.delete(
     }
 
     const subtreeIds = await collectSubtreeFolderIds(folderId)
+    for (const fid of subtreeIds) {
+      if (!(await folderChainAccessibleFromNode(fid, user))) {
+        return res.status(403).json(FILES_ACL_DELETE_SUBTREE_DENIED)
+      }
+    }
+
     const placeholders = subtreeIds.map(() => '?').join(',')
-    const fileRows = (await db
+    const fileRowsFull = (await db
       .prepare(
-        `SELECT id FROM stored_files WHERE folder_id IN (${placeholders})
-         AND (deleted_at IS NULL OR deleted_at = '')`
+        `SELECT sf.id, sf.original_filename, sf.storage_filename, sf.mime_type, sf.size_bytes,
+                sf.uploaded_by, sf.created_at, sf.folder_id, sf.allowed_role_slugs, sf.required_permission,
+                COALESCE(sf.inherit_folder_acl, 1) AS inherit_folder_acl,
+                u.username AS uploaded_by_username
+         FROM stored_files sf
+         LEFT JOIN users u ON u.id = sf.uploaded_by
+         WHERE sf.folder_id IN (${placeholders})
+           AND (sf.deleted_at IS NULL OR sf.deleted_at = '')`
       )
-      .all(...subtreeIds)) as { id: string }[]
+      .all(...subtreeIds)) as StoredFileRow[]
+    for (const row of fileRowsFull) {
+      if (!(await storedFileAllowedForUser(row, user))) {
+        return res.status(403).json(FILES_ACL_DELETE_SUBTREE_DENIED)
+      }
+    }
+
+    const fileRows = fileRowsFull.map((r) => ({ id: r.id }))
 
     const recycledAt = new Date().toISOString()
     for (const f of fileRows) {
