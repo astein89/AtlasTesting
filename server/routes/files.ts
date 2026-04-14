@@ -80,6 +80,16 @@ function requireFilesManage(req: AuthRequest, res: Response, next: NextFunction)
   next()
 }
 
+/** Same idea as wiki view ACL: mutating a file/folder requires access to that resource, not only `files.manage`. */
+const FILES_ACL_DENIED = {
+  error:
+    'You do not have access to this folder or file. A parent folder may require roles you do not have.',
+}
+const FILES_ACL_DEST_FOLDER_DENIED = {
+  error:
+    'You do not have access to the destination folder. A parent folder may require roles you do not have.',
+}
+
 /** True if `descendantId` is `ancestorId` or nested under it. */
 async function isFolderUnderAncestor(descendantId: string, ancestorId: string): Promise<boolean> {
   let cur: string | null = descendantId
@@ -708,6 +718,9 @@ router.post(
       if (!resolved) return res.status(400).json({ error: 'Parent folder not found' })
       parentId = resolved
     }
+    if (parentId && !(await folderChainAccessibleFromNode(parentId, req.user!))) {
+      return res.status(403).json(FILES_ACL_DENIED)
+    }
 
     let allowed_role_slugs: string | null = null
     if ('allowedRoleSlugs' in (req.body ?? {})) {
@@ -758,6 +771,10 @@ router.patch(
       | { id: string; parent_id: string | null; name: string; allowed_role_slugs: string | null; slug: string | null }
       | undefined
     if (!existing) return res.status(404).json({ error: 'Not found' })
+    const user = req.user!
+    if (!(await folderChainAccessibleFromNode(folderId, user))) {
+      return res.status(403).json(FILES_ACL_DENIED)
+    }
 
     let nextParent = existing.parent_id
     if ('parentId' in req.body) {
@@ -820,6 +837,10 @@ router.patch(
       !('slug' in body)
     ) {
       return res.status(400).json({ error: 'No updates' })
+    }
+
+    if (nextParent !== null && !(await folderChainAccessibleFromNode(nextParent, user))) {
+      return res.status(403).json(FILES_ACL_DEST_FOLDER_DENIED)
     }
 
     try {
@@ -1123,6 +1144,9 @@ router.post(
       if (!resolved) return res.status(400).json({ error: 'Folder not found' })
       folderId = resolved
     }
+    if (folderId && !(await folderChainAccessibleFromNode(folderId, req.user!))) {
+      return res.status(403).json(FILES_ACL_DENIED)
+    }
 
     let allowed_role_slugs: string | null = null
     let inherit_folder_acl = 1
@@ -1165,6 +1189,9 @@ router.put(
     if (!req.user) return res.status(403).json({ error: 'Forbidden' })
     if (!canModifyFileMeta(req.user, row.uploaded_by)) {
       return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!(await storedFileAllowedForUser(row, req.user))) {
+      return res.status(403).json(FILES_ACL_DENIED)
     }
     if (isFileInRecycle(row)) {
       return res.status(400).json({ error: 'Cannot edit a file in the recycle bin; restore it first' })
@@ -1231,6 +1258,10 @@ router.put(
     const coercedInherit = row.inherit_folder_acl ?? 1
     const nextInherit = inherit_folder_acl !== undefined ? inherit_folder_acl : coercedInherit
 
+    if (nextFolder !== null && !(await folderChainAccessibleFromNode(nextFolder, req.user))) {
+      return res.status(403).json(FILES_ACL_DEST_FOLDER_DENIED)
+    }
+
     await db
       .prepare(
         `UPDATE stored_files SET folder_id = ?, allowed_role_slugs = ?, original_filename = ?, inherit_folder_acl = ? WHERE id = ?`
@@ -1288,6 +1319,9 @@ router.delete(
     if (!req.user) return res.status(403).json({ error: 'Forbidden' })
     if (!canModifyFileMeta(req.user, row.uploaded_by)) {
       return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!(await storedFileAllowedForUser(row, req.user))) {
+      return res.status(403).json(FILES_ACL_DENIED)
     }
     if (isFileInRecycle(row)) {
       return res.status(400).json({ error: 'File is already in recycle bin' })

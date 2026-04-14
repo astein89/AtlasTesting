@@ -99,8 +99,9 @@ export function WikiPageMetaModal({
             {isSection ? 'Section settings' : 'Page settings'}
           </h2>
           <p className="mt-1 text-sm text-foreground/65">
-            Path, title, and who can browse this {pageOrSection} (editors with{' '}
-            <span className="font-mono text-foreground/80">wiki.edit</span> can always open the editor).
+            Path, title, and who can browse this {pageOrSection}. View restrictions apply to everyone who opens the
+            wiki, including people with <span className="font-mono text-foreground/80">wiki.edit</span> — assign them
+            a matching role below, or leave roles empty so any wiki user can view it.
           </p>
         </div>
 

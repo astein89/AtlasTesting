@@ -68,6 +68,13 @@ sudo chown root:root /opt/adminer/adminer.php
 sudo chmod 644 /opt/adminer/adminer.php
 ```
 
+**Optional — Adminer plugins:** [Official plugins](https://www.adminer.org/en/plugins/) are extra `.php` files. Keep the **same directory** as `adminer.php` so PHP’s working directory matches Caddy’s `root`:
+
+- **`/opt/adminer/adminer-plugins/`** — drop plugin `.php` files here (e.g. `dump-date.php`, `tables-filter.php`).
+- **`/opt/adminer/adminer-plugins.php`** — optional; only if a plugin needs configuration or you want to fix plugin order (see Adminer’s *To use a plugin* on that page).
+
+You do **not** add new Caddy routes for normal plugins; `rewrite` → `adminer.php` + `root * /opt/adminer` already loads them. Reload PHP after changes: `sudo systemctl reload php8.2-fpm` (adjust version). Adminer **5.x** plugins use namespaces ([migration note](https://www.adminer.org/en/plugins/)).
+
 **3. Edit `/etc/caddy/Caddyfile`**
 
 Merge Adminer into the **same** `http://:80 { ... }` block you use for DC Automation (see [Serve at http://pi-ip/ on port 80](#serve-at-httppi-ip-on-port-80-recommended), step 4). **Placement matters:** anything more specific than “send everything to Node” must appear **above** `**reverse_proxy 127.0.0.1:3000`**.
@@ -77,22 +84,28 @@ Merge Adminer into the **same** `http://:80 { ... }` block you use for DC Automa
 - `**reverse_proxy**` — Unchanged; must remain **last** so `/`, `/api/…`, and static assets still hit Node.
 
 ```caddyfile
+# /etc/caddy/Caddyfile — Node app + Adminer (same block as [Configure the Caddyfile](#4-configure-the-caddyfile) below)
 http://:80 {
+	# Static theme stylesheet (optional). Serves /adminer.css from disk.
 	handle /adminer.css {
 		root * /opt/adminer
 		file_server
 	}
+
+	# Adminer UI: browser uses /adminer; Caddy runs /opt/adminer/adminer.php via PHP-FPM.
 	@adminer path /adminer /adminer/*
 	handle @adminer {
 		root * /opt/adminer
 		rewrite * /adminer.php
 		php_fastcgi unix//run/php/php8.2-fpm.sock
 	}
+
+	# Everything else → DC Automation
 	reverse_proxy 127.0.0.1:3000
 }
 ```
 
-A longer explanation and the same example in context appear under [Configure the Caddyfile](#4-configure-the-caddyfile) in **Serve at http://pi-ip/ on port 80** above.
+This fragment is **identical** to the **Full config (DC Automation + Adminer + PHP + optional theme CSS)** under [Configure the Caddyfile](#4-configure-the-caddyfile) in **Serve at http://pi-ip/ on port 80** — keep them in sync when editing.
 
 **4. Validate and reload:**
 

@@ -142,14 +142,15 @@ function wikiPathPrefixes(normalizedPath: string): string[] {
 /**
  * True if the user may view this path as a reader. Any ancestor with viewRoleSlugs
  * must allow the user; otherwise children are hidden even when the child page has no meta.
+ * `bypassViewRoles` is only for full admins (`*`) where the caller explicitly allows it (e.g. recycle).
  */
 function userCanViewWikiPage(
   meta: PageMetaFile,
   normalizedPath: string,
   userRoles: string[] | undefined,
-  bypassEditors: boolean
+  bypassViewRoles: boolean
 ): boolean {
-  if (bypassEditors) return true
+  if (bypassViewRoles) return true
   for (const prefix of wikiPathPrefixes(normalizedPath)) {
     const required = getPageViewRoleSlugs(meta, prefix)
     if (required.length > 0 && !userMatchesViewRoles(userRoles, required)) {
@@ -413,8 +414,6 @@ router.get('/pages', authMiddleware, requirePermission('module.wiki'), (req: Aut
   }
   const unique = [...new Set(paths)].sort((a, b) => a.localeCompare(b))
   const meta = readPageMeta(wikiRoot)
-  const userPerms = req.user?.permissions ?? []
-  const listBypass = roleHasPermission(userPerms, 'wiki.edit')
   const list = unique
     .map((p) => {
       let title: string | undefined
@@ -432,7 +431,7 @@ router.get('/pages', authMiddleware, requirePermission('module.wiki'), (req: Aut
       }
       return { path: p, title }
     })
-    .filter((item) => userCanViewWikiPage(meta, item.path, req.user?.roles, listBypass))
+    .filter((item) => userCanViewWikiPage(meta, item.path, req.user?.roles, false))
   res.json(list)
 })
 
@@ -498,9 +497,7 @@ router.get('/page', authMiddleware, requirePermission('module.wiki'), (req: Auth
     const markdown = fs.readFileSync(abs, 'utf8')
     const normalized = validateAndNormalizePath(raw)!
     const meta = readPageMeta(wikiRoot)
-    const userPerms = req.user?.permissions ?? []
-    const bypass = roleHasPermission(userPerms, 'wiki.edit')
-    if (!userCanViewWikiPage(meta, normalized, req.user?.roles, bypass)) {
+    if (!userCanViewWikiPage(meta, normalized, req.user?.roles, false)) {
       return res.status(403).json({
         error:
           'You do not have access to this page or section. A parent folder may require roles you do not have.',
@@ -574,6 +571,15 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), asyncRoute(a
     return res.status(400).json({ error: `markdown exceeds ${MAX_MARKDOWN_CHARS} characters` })
   }
 
+  const normalized = validateAndNormalizePath(raw)!
+  const metaAcl = readPageMeta(wikiRoot)
+  if (!userCanViewWikiPage(metaAcl, normalized, req.user?.roles, false)) {
+    return res.status(403).json({
+      error:
+        'You do not have access to this page or section. A parent folder may require roles you do not have.',
+    })
+  }
+
   let shouldUpdateViewRoles = false
   let rolesToStore: string[] | null = null
   if ('viewRoleSlugs' in body) {
@@ -626,7 +632,6 @@ router.put('/page', authMiddleware, requirePermission('wiki.edit'), asyncRoute(a
   try {
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, markdown, 'utf8')
-    const normalized = validateAndNormalizePath(raw)!
     const pageKindAfter = resolvedPathIsSectionIndex(wikiRoot, normalized, abs) ? 'section' : 'page'
 
     if (shouldUpdateViewRoles || shouldUpdateShowSectionPages || shouldUpdatePageTitle) {
@@ -734,9 +739,9 @@ function applyMoveToSidebarOrder(
  * PUT /api/wiki/move  body: { from: string, to: string }
  * Renames a wiki page (flat .md) or section folder (…/index.md + subtree) on disk.
  */
-router.put('/move', authMiddleware, requirePermission('wiki.edit'), (_req, res) => {
+router.put('/move', authMiddleware, requirePermission('wiki.edit'), (req: AuthRequest, res) => {
   const wikiRoot = wikiRootDir()
-  const body = _req.body as { from?: unknown; to?: unknown }
+  const body = req.body as { from?: unknown; to?: unknown }
   const fromRaw = typeof body.from === 'string' ? body.from : ''
   const toRaw = typeof body.to === 'string' ? body.to : ''
   const fromNorm = validateAndNormalizePath(fromRaw)
@@ -753,6 +758,20 @@ router.put('/move', authMiddleware, requirePermission('wiki.edit'), (_req, res) 
   const src = resolveExistingPageFile(wikiRoot, fromNorm)
   if (!src) {
     return res.status(404).json({ error: 'Source page not found' })
+  }
+
+  const metaMove = readPageMeta(wikiRoot)
+  if (!userCanViewWikiPage(metaMove, fromNorm, req.user?.roles, false)) {
+    return res.status(403).json({
+      error:
+        'You do not have access to the source path. A parent folder may require roles you do not have.',
+    })
+  }
+  if (!userCanViewWikiPage(metaMove, toNorm, req.user?.roles, false)) {
+    return res.status(403).json({
+      error:
+        'You do not have access to the destination path. A parent folder may require roles you do not have.',
+    })
   }
 
   const dstFlat = wikiFlatMdPath(wikiRoot, toNorm)
@@ -1016,6 +1035,13 @@ router.delete('/page', authMiddleware, requirePermission('wiki.edit'), (_req: Au
   const src = resolveExistingPageFile(wikiRoot, raw)
   if (!src) {
     return res.status(404).json({ error: 'Page not found' })
+  }
+  const metaDel = readPageMeta(wikiRoot)
+  if (!userCanViewWikiPage(metaDel, normalized, _req.user?.roles, false)) {
+    return res.status(403).json({
+      error:
+        'You do not have access to this page or section. A parent folder may require roles you do not have.',
+    })
   }
   try {
     const wikiRootResolved = path.resolve(wikiRoot)

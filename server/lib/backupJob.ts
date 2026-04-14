@@ -72,8 +72,27 @@ function writeStoredMirrorToken(stagingAbs: string, token: string): void {
   fs.writeFileSync(mirrorFingerprintPath(stagingAbs), JSON.stringify({ token }, null, 2), 'utf8')
 }
 
-/** Sorted walk of mirror roots: path:size:mtime for each file (stable skip key for on-disk scope). */
-function hashMirrorFileTrees(roots: { rel: string; abs: string }[]): string {
+/**
+ * Skip bookkeeping (`setBackupSettings`, `appendBackupHistory`) mutates the DB, which changes
+ * `computeLiveDbFingerprint` / mirror skip tokens. Without persisting the new baseline, the next
+ * run would always think data changed and take a full snapshot again.
+ */
+async function syncStoredDbFingerprintWithLive(stagingAbs: string): Promise<void> {
+  fs.mkdirSync(stagingAbs, { recursive: true })
+  const fp = await computeLiveDbFingerprint()
+  if (fp) writeStoredDbFingerprint(stagingAbs, fp)
+}
+
+async function syncStoredMirrorTokenWithLive(stagingAbs: string, settings: BackupSettings): Promise<void> {
+  const { token } = await computeMirrorSkipState(settings)
+  if (token) writeStoredMirrorToken(stagingAbs, token)
+}
+
+/**
+ * Sorted walk of mirror roots: path:size:mtime for each file (stable skip key for on-disk scope).
+ * `hasFiles` is false when every root is missing, empty, or contains only directories.
+ */
+function hashMirrorFileTrees(roots: { rel: string; abs: string }[]): { hash: string; hasFiles: boolean } {
   const lines: string[] = []
 
   function walk(absPath: string, relPath: string): void {
@@ -93,22 +112,28 @@ function hashMirrorFileTrees(roots: { rel: string; abs: string }[]): string {
     walk(abs, rel)
   }
   lines.sort()
-  return createHash('sha256').update(lines.join('\n'), 'utf8').digest('hex')
+  const joined = lines.join('\n')
+  return {
+    hasFiles: lines.length > 0,
+    hash: createHash('sha256').update(joined, 'utf8').digest('hex'),
+  }
 }
 
 /**
  * When `uploads/files` + `files-original` mirror is enabled, include DB fingerprint so renames / folder moves
  * (metadata-only) still invalidate the skip key.
  */
-async function computeMirrorSkipToken(settings: BackupSettings): Promise<string | null> {
+async function computeMirrorSkipState(
+  settings: BackupSettings
+): Promise<{ token: string | null; hasFiles: boolean }> {
   const roots = mirrorRoots(settings)
-  if (roots.length === 0) return null
-  const fileHash = hashMirrorFileTrees(roots)
+  if (roots.length === 0) return { token: null, hasFiles: false }
+  const { hash: fileHash, hasFiles } = hashMirrorFileTrees(roots)
   if (settings.includeUploadsFiles) {
     const dbFp = await computeLiveDbFingerprint()
-    return `v1:${fileHash}:${dbFp?.token ?? 'null'}`
+    return { token: `v1:${fileHash}:${dbFp?.token ?? 'null'}`, hasFiles }
   }
-  return `v1:${fileHash}:`
+  return { token: `v1:${fileHash}:`, hasFiles }
 }
 
 /**
@@ -420,6 +445,8 @@ async function recordDatabaseSnapshotSkipped(
     message,
     scopeSummary: scopeLine,
   })
+  const stagingAbs = path.resolve(s2.localStagingDir)
+  await syncStoredDbFingerprintWithLive(stagingAbs)
 }
 
 async function recordMirrorSkipped(started: number, message: string): Promise<void> {
@@ -439,6 +466,8 @@ async function recordMirrorSkipped(started: number, message: string): Promise<vo
     message,
     scopeSummary: mirrorScopeSummary(s2),
   })
+  const stagingAbs = path.resolve(s2.localStagingDir)
+  await syncStoredMirrorTokenWithLive(stagingAbs, s2)
 }
 
 async function runDatabaseSnapshotVariant(variant: DbSnapshotVariant): Promise<BackupRunResult> {
@@ -859,10 +888,16 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
       throw new Error('Dropbox upload is disabled or path missing — required for mirror backup')
     }
 
-    const mirrorTok = await computeMirrorSkipToken(settings)
+    const { token: mirrorTok, hasFiles: mirrorHasFiles } = await computeMirrorSkipState(settings)
     const storedMt = readStoredMirrorToken(staging)
     if (mirrorTok && storedMt && mirrorTok === storedMt) {
       const msg = 'No file or database changes since last mirror'
+      await recordMirrorSkipped(started, msg)
+      return { ok: true, skipped: true, message: msg, durationMs: Date.now() - started }
+    }
+
+    if (!mirrorHasFiles) {
+      const msg = 'No files to mirror under selected paths'
       await recordMirrorSkipped(started, msg)
       return { ok: true, skipped: true, message: msg, durationMs: Date.now() - started }
     }
@@ -904,7 +939,7 @@ export async function runMirrorBackup(): Promise<BackupRunResult> {
       if (m) bytes += parseInt(m[1].replace(/,/g, ''), 10) || 0
     }
 
-    const mirrorTokFinal = await computeMirrorSkipToken(settings)
+    const { token: mirrorTokFinal } = await computeMirrorSkipState(settings)
     if (mirrorTokFinal) writeStoredMirrorToken(staging, mirrorTokFinal)
 
     const durationMs = Date.now() - started
