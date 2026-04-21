@@ -27,7 +27,7 @@ flowchart LR
 ```
 ````
 
-The diagram appears on the **wiki page** and in the **editor preview** when the fence is correct.
+The diagram appears on the **wiki page** and in the **editor preview** when the fence is correct. Preview uses the **same** Mermaid rendering as the published page (md-editor-rt), whether you use the **Rich** or **Classic** editor.
 
 ## Common diagram types
 

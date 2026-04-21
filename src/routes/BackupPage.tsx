@@ -26,6 +26,7 @@ type BackupSettings = {
   includeUploadsFiles: boolean
   includeUploadsTesting: boolean
   includeUploadsHome: boolean
+  includeUploadsWiki: boolean
   includeWikiSeed: boolean
   includeHomeIntro: boolean
   includeConfigJson: boolean
@@ -379,6 +380,7 @@ export function BackupPage() {
         includeUploadsFiles: form.includeUploadsFiles,
         includeUploadsTesting: form.includeUploadsTesting,
         includeUploadsHome: form.includeUploadsHome,
+        includeUploadsWiki: form.includeUploadsWiki,
         includeWikiSeed: form.includeWikiSeed,
         includeHomeIntro: form.includeHomeIntro,
         includeConfigJson: form.includeConfigJson,
@@ -1007,6 +1009,17 @@ export function BackupPage() {
                 />
                 <span className="text-sm text-foreground">
                   <code className="text-xs">uploads/home/</code> — Home hub assets, favicon, etc.
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={form.includeUploadsWiki}
+                  onChange={(e) => setForm((f) => (f ? { ...f, includeUploadsWiki: e.target.checked } : f))}
+                  className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                />
+                <span className="text-sm text-foreground">
+                  <code className="text-xs">uploads/wiki/</code> — Wiki editor embedded images
                 </span>
               </label>
             </div>

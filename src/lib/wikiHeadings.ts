@@ -1,3 +1,5 @@
+import type { MdHeadingId } from 'md-editor-rt'
+
 /** Parse markdown lines for ## headings (levels 1–3) in document order, with GitHub-style slug ids. */
 
 export type WikiHeading = {
@@ -38,4 +40,12 @@ export function parseWikiHeadings(md: string): WikiHeading[] {
     out.push({ level, text, id })
   }
   return out
+}
+
+/**
+ * md-editor-rt heading ids aligned with {@link parseWikiHeadings} so `#hash` links and the sidebar TOC stay stable.
+ */
+export function createMdRtWikiHeadingId(markdown: string): MdHeadingId {
+  const list = parseWikiHeadings(markdown)
+  return ({ index, text }) => list[index]?.id ?? slugify(text)
 }

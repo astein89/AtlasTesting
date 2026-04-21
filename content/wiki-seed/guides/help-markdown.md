@@ -1,6 +1,18 @@
 # Markdown in the wiki
 
-The wiki stores pages as **Markdown** (`.md`). This editor has a **toolbar** for common syntax and a **live preview** when enabled.
+The wiki stores pages as **Markdown** (`.md`). When you **read** a page, the **preview** while editing, and **Print / PDF** all use the same **md-editor-rt** rendering pipeline, so headings, code, diagrams, and tables match what readers see.
+
+## Editor choice
+
+Under **Admin → Settings**, open **Markdown editor**:
+
+- **Rich editor (md-editor-rt)** (default) — CodeMirror-based editor with a full toolbar. Switch **split** view or **preview-only** from the toolbar. **Save** in the toolbar matches the page save; **Ctrl+S** / **⌘+S** works while the editor is focused. **Print / PDF** opens a print-ready preview, then use your browser to print or save as PDF.
+- **Classic** — Textarea with a compact toolbar and a **side preview**; that preview still uses the **same** renderer as published pages.
+
+## While editing (Rich editor)
+
+- Use the toolbar for formatting, **emoji**, and other shortcuts; they insert or wrap Markdown for you.
+- Preview is not a separate “approximate” view — it is the same pipeline as the live wiki page.
 
 ## Headings
 
@@ -74,6 +86,7 @@ Some **bold** text.
 
 ## Printing
 
-From the wiki **view** (not edit), use the browser print dialog; print styles hide chrome where supported.
+- **Editing** — Use **Print / PDF** on the rich editor toolbar (same preview modal as below).
+- **Reading** an article — Use **Print or save as PDF** in the page header for the same flow: a formatted preview, then your browser’s print dialog to print or save as PDF.
 
 For more, see [Mermaid help](/wiki/guides/help-mermaid) and the [wiki index](/wiki/index).

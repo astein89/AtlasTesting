@@ -1,0 +1,61 @@
+/**
+ * md-editor-rt: toolbar row uses overflow-y:hidden + .md-editor uses overflow:hidden,
+ * which clips dropdown overlays (emoji picker). Scoped to wiki rich editor shell only.
+ */
+.wiki-md-rt-shell .md-editor {
+  overflow: visible;
+}
+
+.wiki-md-rt-shell .md-editor-toolbar-wrapper {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.wiki-md-rt-shell .md-editor-dropdown {
+  overflow: visible;
+  max-height: none;
+}
+
+/* Scroll the grid inside the panel; keep picker usable on short viewports */
+.wiki-md-rt-shell .emoji-container {
+  max-height: min(72vh, 440px);
+  width: min(363px, calc(100vw - 2rem));
+  box-sizing: border-box;
+}
+
+/*
+ * Always 11 columns (library default uses float; width varies). Grid keeps a fixed column count.
+ */
+.wiki-md-rt-shell .emoji-container .emojis {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+  gap: 1px;
+  max-height: min(64vh, 400px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  margin: 8px;
+  padding: 0;
+  box-sizing: border-box;
+  float: none;
+}
+
+.wiki-md-rt-shell .emoji-container .emojis::after {
+  display: none;
+}
+
+.wiki-md-rt-shell .emoji-container .emojis li {
+  float: none;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  min-height: 26px;
+  aspect-ratio: 1;
+  line-height: 1.2;
+  padding: 4px 2px;
+  margin: 0;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

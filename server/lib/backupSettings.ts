@@ -35,11 +35,13 @@ export const backupSettingsBodySchema = z.object({
   includeDatabase: z.boolean().optional(),
   includeDatabaseFull: z.boolean().optional(),
   includeWiki: z.boolean().optional(),
-  /** @deprecated Prefer includeUploadsFiles/Testing/Home; still accepted for older clients. */
+  /** @deprecated Prefer includeUploadsFiles/Testing/Home/Wiki; still accepted for older clients. */
   includeUploads: z.boolean().optional(),
   includeUploadsFiles: z.boolean().optional(),
   includeUploadsTesting: z.boolean().optional(),
   includeUploadsHome: z.boolean().optional(),
+  /** Wiki editor embedded images under uploads/wiki/. */
+  includeUploadsWiki: z.boolean().optional(),
   includeWikiSeed: z.boolean().optional(),
   includeHomeIntro: z.boolean().optional(),
   includeConfigJson: z.boolean().optional(),
@@ -85,6 +87,8 @@ export type BackupSettings = {
   includeUploadsTesting: boolean
   /** Mirror uploads/home/ (home assets, favicon, etc.). */
   includeUploadsHome: boolean
+  /** Mirror uploads/wiki/ (rich wiki embedded images). */
+  includeUploadsWiki: boolean
   includeWikiSeed: boolean
   includeHomeIntro: boolean
   includeConfigJson: boolean
@@ -139,6 +143,7 @@ export function defaultBackupSettings(): BackupSettings {
     includeUploadsFiles: true,
     includeUploadsTesting: true,
     includeUploadsHome: true,
+    includeUploadsWiki: true,
     includeWikiSeed: false,
     includeHomeIntro: false,
     includeConfigJson: false,
@@ -172,15 +177,16 @@ export function defaultBackupSettings(): BackupSettings {
   }
 }
 
-/** Legacy `includeUploads` maps to all three; granular keys override when present. */
+/** Legacy `includeUploads` maps to all four upload mirrors; granular keys override when present. */
 function migrateUploadsMirrorFlags(
   o: Record<string, unknown>,
   base: BackupSettings
-): Pick<BackupSettings, 'includeUploadsFiles' | 'includeUploadsTesting' | 'includeUploadsHome'> {
+): Pick<BackupSettings, 'includeUploadsFiles' | 'includeUploadsTesting' | 'includeUploadsHome' | 'includeUploadsWiki'> {
   const hasGranular =
     typeof o.includeUploadsFiles === 'boolean' ||
     typeof o.includeUploadsTesting === 'boolean' ||
-    typeof o.includeUploadsHome === 'boolean'
+    typeof o.includeUploadsHome === 'boolean' ||
+    typeof o.includeUploadsWiki === 'boolean'
   if (hasGranular) {
     return {
       includeUploadsFiles:
@@ -189,6 +195,8 @@ function migrateUploadsMirrorFlags(
         typeof o.includeUploadsTesting === 'boolean' ? o.includeUploadsTesting : base.includeUploadsTesting,
       includeUploadsHome:
         typeof o.includeUploadsHome === 'boolean' ? o.includeUploadsHome : base.includeUploadsHome,
+      includeUploadsWiki:
+        typeof o.includeUploadsWiki === 'boolean' ? o.includeUploadsWiki : base.includeUploadsWiki,
     }
   }
   const legacy = typeof o.includeUploads === 'boolean' ? o.includeUploads : base.includeUploadsFiles
@@ -196,6 +204,7 @@ function migrateUploadsMirrorFlags(
     includeUploadsFiles: legacy,
     includeUploadsTesting: legacy,
     includeUploadsHome: legacy,
+    includeUploadsWiki: legacy,
   }
 }
 
@@ -425,10 +434,18 @@ export function mergeBackupPatch(current: BackupSettings, patch: z.infer<typeof 
   if (p.includeUploadsFiles !== undefined) raw.includeUploadsFiles = p.includeUploadsFiles
   if (p.includeUploadsTesting !== undefined) raw.includeUploadsTesting = p.includeUploadsTesting
   if (p.includeUploadsHome !== undefined) raw.includeUploadsHome = p.includeUploadsHome
-  if (p.includeUploads !== undefined && p.includeUploadsFiles === undefined && p.includeUploadsTesting === undefined && p.includeUploadsHome === undefined) {
+  if (p.includeUploadsWiki !== undefined) raw.includeUploadsWiki = p.includeUploadsWiki
+  if (
+    p.includeUploads !== undefined &&
+    p.includeUploadsFiles === undefined &&
+    p.includeUploadsTesting === undefined &&
+    p.includeUploadsHome === undefined &&
+    p.includeUploadsWiki === undefined
+  ) {
     raw.includeUploadsFiles = p.includeUploads
     raw.includeUploadsTesting = p.includeUploads
     raw.includeUploadsHome = p.includeUploads
+    raw.includeUploadsWiki = p.includeUploads
   }
   if (p.includeWikiSeed !== undefined) raw.includeWikiSeed = p.includeWikiSeed
   if (p.includeHomeIntro !== undefined) raw.includeHomeIntro = p.includeHomeIntro

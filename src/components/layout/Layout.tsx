@@ -73,7 +73,7 @@ export function Layout({ showSidebar = true }: LayoutProps) {
               )}
             </>
           )}
-          <main className="min-h-0 min-w-0 flex-1 overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
             <Suspense
               fallback={
                 <div className="flex min-h-[12rem] items-center justify-center text-foreground/60">
@@ -81,7 +81,9 @@ export function Layout({ showSidebar = true }: LayoutProps) {
                 </div>
               }
             >
-              <Outlet />
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <Outlet />
+              </div>
             </Suspense>
           </main>
         </div>

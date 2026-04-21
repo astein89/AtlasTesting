@@ -57,9 +57,10 @@ export function HomeWelcomeMarkdownModal({
             Welcome content
           </h2>
           <p className="mt-1 text-xs text-foreground/70 sm:text-sm">
-            Same Markdown tools as the wiki editor — headings, lists, code, emoji, live preview, undo/redo, and help.
-            Apply saves into this screen; use Save on the home page editor to write to the server. Clicking outside does
-            not close this window; use Cancel or Apply.
+            Uses the same Markdown editor as the wiki (choose Rich or Classic under Settings). What you see when saved
+            matches the md-editor-rt preview (same as the rich editor). Apply saves into this screen; use Save on the
+            home page editor to write to the server.
+            Clicking outside does not close this window; use Cancel or Apply.
           </p>
         </div>
 

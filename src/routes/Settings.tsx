@@ -14,6 +14,10 @@ import {
   formatDateTimeWithConfig,
 } from '../lib/dateTimeConfig'
 import { PopupSelect } from '../components/ui/PopupSelect'
+import {
+  WIKI_MD_ENGINE_PREF_KEY,
+  type WikiMarkdownEngine,
+} from '@/components/wiki/wikiMarkdownEditorTypes'
 import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPresetsContext'
 import type { CfColorPreset } from '../lib/conditionalFormatPresets'
 
@@ -590,6 +594,10 @@ export function Settings() {
   const [config, setConfig] = useDateTimeConfigContext()
   const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
   const [persistTableFilters, setPersistTableFilters] = useUserPreference('atlas-persist-table-filters', false)
+  const [wikiMdEngine, setWikiMdEngine] = useUserPreference<WikiMarkdownEngine>(
+    WIKI_MD_ENGINE_PREF_KEY,
+    'md-editor-rt'
+  )
   const { presets: cfPresets, setPresets: setCfPresets, resetPresetsToDefaults } = useConditionalFormatPresets()
 
   const currentPresetIndex = DATE_TIME_PRESETS.findIndex(
@@ -637,6 +645,49 @@ export function Settings() {
         subtitle="Optional URL for the Admin database console link in the Admin sidebar."
       >
         <AdminerUrlSection />
+      </SettingsCollapsible>
+
+      <SettingsCollapsible
+        title="Markdown editor"
+        subtitle="Editor used for wiki pages and the home welcome message. Published pages and previews use md-editor-rt’s renderer (same as the rich editor’s preview). Saved to your account."
+      >
+        <fieldset>
+          <legend className="sr-only">Markdown editor type</legend>
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="radio"
+                name="wiki-md-engine"
+                value="md-editor-rt"
+                checked={wikiMdEngine === 'md-editor-rt'}
+                onChange={() => setWikiMdEngine('md-editor-rt')}
+                className="mt-1 h-4 w-4 border-border text-primary focus:ring-primary"
+              />
+              <span>
+                <span className="text-sm font-medium text-foreground">Rich editor (md-editor-rt)</span>
+                <span className="mt-0.5 block text-sm text-foreground/70">
+                  CodeMirror-based editor with toolbar; preview matches published wiki/home content.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="radio"
+                name="wiki-md-engine"
+                value="classic"
+                checked={wikiMdEngine === 'classic'}
+                onChange={() => setWikiMdEngine('classic')}
+                className="mt-1 h-4 w-4 border-border text-primary focus:ring-primary"
+              />
+              <span>
+                <span className="text-sm font-medium text-foreground">Classic</span>
+                <span className="mt-0.5 block text-sm text-foreground/70">
+                  Textarea with compact toolbar; side preview uses the same md-editor-rt renderer as published pages.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
       </SettingsCollapsible>
 
       <SettingsCollapsible

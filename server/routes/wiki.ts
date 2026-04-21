@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Router } from 'express'
+import { Router, type Response } from 'express'
+import multer from 'multer'
+import { v4 as uuidv4 } from 'uuid'
 import {
   authMiddleware,
   requirePermission,
@@ -1097,5 +1099,67 @@ router.delete('/page', authMiddleware, requirePermission('wiki.edit'), (_req: Au
     return res.status(500).json({ error: 'Failed to move page to deleted folder' })
   }
 })
+
+/** Embedded images in wiki markdown; served from `/api/uploads/wiki/…` (static mount). */
+const WIKI_IMAGE_UPLOAD_SEGMENT = 'wiki'
+
+function wikiImageUploadsDir(): string {
+  return path.join(process.cwd(), 'uploads', WIKI_IMAGE_UPLOAD_SEGMENT)
+}
+
+function sanitizeWikiImageFilename(name: string): string {
+  const base = name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'image'
+  return base.slice(0, 200)
+}
+
+const wikiImageStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = wikiImageUploadsDir()
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    cb(null, dir)
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg'
+    const safe = sanitizeWikiImageFilename(path.basename(file.originalname, path.extname(file.originalname)))
+    if (safe && safe !== 'image') {
+      let final = safe + ext.toLowerCase()
+      let n = 0
+      const dir = wikiImageUploadsDir()
+      while (fs.existsSync(path.join(dir, final))) {
+        n += 1
+        final = `${safe}_${n}${ext.toLowerCase()}`
+      }
+      cb(null, final)
+    } else {
+      cb(null, `${uuidv4()}${ext.toLowerCase()}`)
+    }
+  },
+})
+
+const wikiImageUpload = multer({
+  storage: wikiImageStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = /^image\/(jpeg|jpg|png|gif|webp|heic)$/i
+    if (allowed.test(file.mimetype)) cb(null, true)
+    else cb(new Error('Only images (jpeg, png, gif, webp, heic) allowed'))
+  },
+})
+
+router.post(
+  '/upload-image',
+  authMiddleware,
+  requirePermission('wiki.edit'),
+  wikiImageUpload.array('images', 20),
+  (req: AuthRequest, res: Response) => {
+    const raw = req.files
+    const list = Array.isArray(raw) ? raw : []
+    if (list.length === 0) {
+      return res.status(400).json({ error: 'No images uploaded' })
+    }
+    const paths = list.map((f) => `/api/uploads/${WIKI_IMAGE_UPLOAD_SEGMENT}/${f.filename}`)
+    res.json({ paths })
+  }
+)
 
 export { router as wikiRouter }

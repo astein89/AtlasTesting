@@ -1,6 +1,6 @@
 # Wiki Guide
 
-Help and examples for editors. Open child pages below or use the sidebar.
+Help and examples for editors (Rich vs Classic editor, preview, and printing). Open child pages below or use the sidebar.
 
 - [Getting started](/wiki/guides/getting-started)
 - [Markdown help](/wiki/guides/help-markdown)

@@ -47,8 +47,7 @@ input, select, textarea, button {
 }
 
 /*
- * Lists: one gutter for ul/ol (don’t use Tailwind pl-* on lists — it fought custom dash markers).
- * Native markers + dash ::before share the same inset so bullets, numbers, and hyphens line up.
+ * Lists: shared gutter for ul/ol (avoid Tailwind pl-* on lists — conflicts with native markers).
  */
 .wiki-md-body {
   --wiki-list-gutter: 1.5rem;
@@ -72,43 +71,6 @@ input, select, textarea, button {
 .wiki-md-body ol > li::marker {
   font-variant-numeric: tabular-nums;
 }
-
-/* `-` lists: fake marker in the same gutter column as native list markers */
-.wiki-md-body ul.wiki-ul-marker-dash,
-.wiki-md-body ul.wiki-ul-marker-dash ul,
-.wiki-md-body ul.wiki-ul-marker-dash ul ul {
-  list-style: none;
-}
-.wiki-md-body ul.wiki-ul-marker-dash > li {
-  position: relative;
-}
-.wiki-md-body ul.wiki-ul-marker-dash > li::before {
-  content: '-';
-  position: absolute;
-  left: calc(-1 * var(--wiki-list-gutter));
-  width: var(--wiki-list-gutter);
-  box-sizing: border-box;
-  text-align: center;
-  color: inherit;
-}
-.wiki-md-body ul.wiki-ul-marker-star {
-  list-style-type: disc;
-}
-.wiki-md-body ul.wiki-ul-marker-star ul {
-  list-style-type: circle;
-}
-.wiki-md-body ul.wiki-ul-marker-star ul ul {
-  list-style-type: square;
-}
-.wiki-md-body ul.wiki-ul-marker-plus {
-  list-style-type: disc;
-}
-.wiki-md-body ul.wiki-ul-marker-plus ul {
-  list-style-type: circle;
-}
-.wiki-md-body ul.wiki-ul-marker-plus ul ul {
-  list-style-type: square;
-}
 .wiki-md-body ol {
   list-style-type: decimal;
 }
@@ -117,6 +79,45 @@ input, select, textarea, button {
 }
 .wiki-md-body ol ol ol {
   list-style-type: lower-roman;
+}
+
+/*
+ * md-editor-rt preview (wiki editor + MarkdownMdRtView): same Tailwind preflight issue — markers must be restored.
+ * Keep padding from the editor theme (e.g. 2em); only mirror list-style from `.wiki-md-body`.
+ */
+.md-editor-preview ul,
+.md-editor-preview ol {
+  list-style-position: outside;
+}
+.md-editor-preview ul {
+  list-style-type: disc;
+}
+.md-editor-preview ul ul {
+  list-style-type: circle;
+}
+.md-editor-preview ul ul ul {
+  list-style-type: square;
+}
+.md-editor-preview ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+.md-editor-preview ol {
+  list-style-type: decimal;
+}
+.md-editor-preview ol ol {
+  list-style-type: lower-alpha;
+}
+.md-editor-preview ol ol ol {
+  list-style-type: lower-roman;
+}
+
+/*
+ * md-editor-rt sets word-break: break-all on .md-editor-preview (splits words letter-by-letter).
+ * Use normal wrapping everywhere (home intro, wiki, print modal); overflow-wrap handles long URLs/tokens.
+ */
+.md-editor-preview {
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* Smooth touch scrolling on iOS */
@@ -141,30 +142,31 @@ input, select, textarea, button {
     display: none !important;
   }
 
-  body:has(.wiki-print-article) > div.flex.min-h-screen,
-  body:has(.wiki-print-article) > div.flex.h-screen {
+  /* App mounts under #root — these must not assume body > div (or print layout stays flex/h-screen → blank main). */
+  body:has(.wiki-print-article) #root > div.flex.min-h-screen,
+  body:has(.wiki-print-article) #root > div.flex.h-screen {
     height: auto !important;
     min-height: 0 !important;
   }
 
-  body:has(.wiki-print-article) > div.flex.h-screen > div.flex.min-h-0 {
+  body:has(.wiki-print-article) #root > div.flex.h-screen > div.flex.min-h-0 {
     min-height: 0 !important;
     height: auto !important;
   }
 
-  body:has(.wiki-print-article) > div > nav:first-of-type {
+  body:has(.wiki-print-article) #root > div.flex.h-screen > nav:first-of-type {
     display: none !important;
   }
 
-  body:has(.wiki-print-article) aside {
+  body:has(.wiki-print-article) #root aside {
     display: none !important;
   }
 
-  body:has(.wiki-print-article) div.fixed.inset-0.z-40 {
+  body:has(.wiki-print-article) #root div.fixed.inset-0.z-40 {
     display: none !important;
   }
 
-  body:has(.wiki-print-article) main {
+  body:has(.wiki-print-article) #root main {
     display: block !important;
     flex: none !important;
     width: 100% !important;

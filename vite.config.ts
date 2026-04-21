@@ -96,7 +96,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['papaparse'],
+    include: ['papaparse', 'md-editor-rt'],
   },
   server: {
     host: true,

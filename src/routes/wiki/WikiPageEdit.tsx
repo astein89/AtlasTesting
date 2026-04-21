@@ -560,10 +560,10 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
     navigate,
   ])
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (markdownOverride?: string) => {
     setSaving(true)
     try {
-      const result = await saveWikiToServer()
+      const result = await saveWikiToServer(markdownOverride)
       if (result) {
         allowLeaveWithoutSaveRef.current = true
         navigate(wikiPageUrl(result.newPath))
@@ -657,7 +657,7 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
   const cancelHref = wikiPageUrl(resolvedPath ?? pagePath)
 
   return (
-    <div className="mx-auto max-w-7xl px-1 text-foreground md:px-0">
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col px-1 text-foreground md:px-0">
       <WikiLeaveUnsavedModal
         open={blocker.state === 'blocked'}
         saving={saving}
@@ -843,12 +843,15 @@ export function WikiPageEdit({ pagePath }: WikiPageEditProps) {
       {loading ? (
         <p className="text-sm text-foreground/60">Loading…</p>
       ) : (
-        <WikiMarkdownEditor
-          value={markdown}
-          onChange={setMarkdown}
-          disabled={saving || archiving}
-          historyResetKey={`${pagePath}:${editorHistoryKey}`}
-        />
+        <div className="flex min-h-0 w-full flex-1 flex-col">
+          <WikiMarkdownEditor
+            value={markdown}
+            onChange={setMarkdown}
+            disabled={saving || archiving}
+            historyResetKey={`${pagePath}:${editorHistoryKey}`}
+            onToolbarSave={(md) => void handleSave(md)}
+          />
+        </div>
       )}
     </div>
   )

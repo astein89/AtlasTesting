@@ -2,11 +2,8 @@ import { Fragment, createContext, isValidElement, useContext, useMemo } from 're
 import type { ReactElement, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
-import remarkBreaks from 'remark-breaks'
-import remarkEmoji from 'remark-emoji'
-import remarkGfm from 'remark-gfm'
 import type { WikiHeading } from '@/lib/wikiHeadings'
-import { remarkUnorderedListMarkerClass } from '@/lib/remarkUnorderedListMarkerClass'
+import { appMarkdownRemarkPlugins } from '@/lib/appMarkdownRemarkPlugins'
 import { MermaidBlock } from './MermaidBlock'
 
 /** Block quotes: high contrast bar + card background so they don’t blend into body text. */
@@ -24,12 +21,9 @@ const wikiPreInnerCodeCls =
 const wikiInlineCodeCls =
   'rounded border border-border/80 bg-card py-px pl-[0.2em] pr-[0.125em] align-middle font-mono text-[0.85em] font-medium leading-normal text-foreground dark:border-border'
 
-/** List marker types for nested ul/ol live in `index.css` (`.wiki-md-body`) so they win over preflight. */
+/** List gutters / nested markers live in `index.css` (`.wiki-md-body`). */
 const markdownShell =
   'wiki-md-body max-w-none text-sm leading-relaxed text-foreground [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-1.5 [&_h3]:text-lg [&_h3]:font-medium [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_hr]:my-4 [&_hr]:border-border'
-
-/** GFM tables + breaks + `:shortcode:` emoji + list marker classes for `-` vs `*` styling. */
-const remarkPlugins = [remarkGfm, remarkBreaks, remarkEmoji, remarkUnorderedListMarkerClass]
 
 /** True while rendering `<code>` that is a child of our `<pre>` (fenced / indented blocks). */
 const WikiCodeInPreContext = createContext(false)
@@ -461,14 +455,14 @@ function MarkdownEmbed({ source }: { source: string }) {
   const innerComponents = useMemo(() => createMarkdownEmbedInnerComponents(), [])
   return (
     <div className="wiki-md-body wiki-md-embed isolate my-3 min-w-0 overflow-visible text-sm !leading-snug text-foreground first:mt-0 [&_h1]:!mb-1 [&_h1]:!mt-3 [&_h1]:first:!mt-0 [&_h1]:text-xl [&_h2]:!mb-1 [&_h2]:!mt-2 [&_h2]:text-lg [&_h3]:!mb-1 [&_h3]:!mt-2 [&_h3]:text-base">
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={innerComponents} key={source}>
+      <ReactMarkdown remarkPlugins={appMarkdownRemarkPlugins} components={innerComponents} key={source}>
         {source}
       </ReactMarkdown>
     </div>
   )
 }
 
-interface WikiMarkdownProps {
+export interface WikiMarkdownProps {
   content: string
   /** When set, headings get matching `id`s (same order as in `content`) for TOC anchors. */
   headings?: WikiHeading[]
@@ -488,7 +482,7 @@ export function WikiMarkdown({ content, headings = [], wikiPrintBody = false }: 
 
   return (
     <div className={[wikiPrintBody ? 'wiki-print-article' : '', markdownShell].filter(Boolean).join(' ')}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+      <ReactMarkdown remarkPlugins={appMarkdownRemarkPlugins} components={components}>
         {content}
       </ReactMarkdown>
     </div>

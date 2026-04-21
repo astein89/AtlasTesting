@@ -164,3 +164,13 @@ export async function restoreWikiRecyclePage(storageRel: string): Promise<{ ok: 
 export async function permanentlyDeleteWikiRecyclePage(storageRel: string): Promise<void> {
   await api.delete('/wiki/recycle/permanent', { data: { storageRel } })
 }
+
+/** Images embedded in wiki markdown via md-editor-rt; paths are `/api/uploads/wiki/…`. */
+export async function uploadWikiEditorImages(files: File[]): Promise<string[]> {
+  const formData = new FormData()
+  for (const f of files) {
+    formData.append('images', f)
+  }
+  const { data } = await api.post<{ paths?: string[] }>('/wiki/upload-image', formData)
+  return Array.isArray(data?.paths) ? data.paths : []
+}

@@ -1,0 +1,140 @@
+/*
+ * Split view: md-editor gives editor + preview each 50% width, but built-in preview uses
+ * padding-inline: 20px while CodeMirror content uses ~10px — preview text looks narrower.
+ * Match horizontal inset so both columns read at the same width.
+ */
+.wiki-md-rt-shell .md-editor:not(.md-editor-previewOnly) .md-editor-preview {
+  padding-inline: 10px;
+}
+
+/* Supplements @vavt/rt-extension ExportPDF.css: echarts + preview layout when preview id is not #export-pdf-preview */
+@media print {
+  [data-wiki-export-pdf-root] div.md-editor-echarts > div:nth-child(1),
+  [data-wiki-export-pdf-root] .md-editor-echarts canvas {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  [data-wiki-export-pdf-root] div.md-editor-echarts > div:nth-child(2) {
+    display: none !important;
+  }
+}
+
+/* Browser print (Ctrl+P) while the rich editor is in “preview only”: allow full preview to flow */
+@media print {
+  .wiki-md-rt-shell .md-editor.md-editor-previewOnly .md-editor-preview-wrapper {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  .wiki-md-rt-shell .md-editor.md-editor-previewOnly {
+    border: none !important;
+  }
+}
+
+/*
+ * Print / Save as PDF from “Print or save as PDF” modal: undo fixed modal + scroll clipping so the
+ * full article paginates; reset centered transform so Chrome doesn’t shrink the whole dialog to fit.
+ */
+@media print {
+  .md-editor-modal-container:has([data-wiki-export-pdf-root]) {
+    position: static !important;
+    inset: auto !important;
+    z-index: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .wiki-md-export-pdf-modal.md-editor-modal {
+    position: static !important;
+    inset: auto !important;
+    left: auto !important;
+    top: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  .wiki-md-export-pdf-modal .md-editor-modal-mask {
+    display: none !important;
+  }
+
+  .wiki-md-export-pdf-modal .md-editor-modal-header,
+  .wiki-md-export-pdf-modal .md-editor-modal-func {
+    display: none !important;
+  }
+
+  .wiki-md-export-pdf-modal .md-editor-modal-body {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0 !important;
+  }
+
+  .wiki-md-export-pdf-modal .export-pdf-content,
+  [data-wiki-export-pdf-root] {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  [data-wiki-export-pdf-root] .md-editor.md-editor-previewOnly {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  [data-wiki-export-pdf-root] .md-editor-content {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  [data-wiki-export-pdf-root] .md-editor-preview-wrapper {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  [data-wiki-export-pdf-root] .md-editor-html {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  [data-wiki-export-pdf-root] .md-editor-preview {
+    max-height: none !important;
+    font-size: 12pt !important;
+    line-height: 1.5 !important;
+  }
+
+  [data-wiki-export-pdf-root] .md-editor-code pre,
+  [data-wiki-export-pdf-root] .md-editor-code pre code {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .wiki-md-export-pdf-modal .md-editor-form-item {
+    display: none !important;
+  }
+
+  /* Toolbar “instant print”: hide app + editor chrome; only the body portal should print */
+  body:has(.wiki-print-offscreen-print) #root {
+    display: none !important;
+  }
+  body:has(.wiki-print-offscreen-print) .wiki-md-rt-shell {
+    display: none !important;
+  }
+  body:has(.wiki-print-offscreen-print) .wiki-print-offscreen-print {
+    position: static !important;
+    inset: auto !important;
+    left: auto !important;
+    top: auto !important;
+    opacity: 1 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    z-index: auto !important;
+  }
+}

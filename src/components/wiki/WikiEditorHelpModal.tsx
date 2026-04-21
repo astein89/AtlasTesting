@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchWikiPage } from '@/api/wiki'
 import { wikiEditUrl, wikiPageUrl } from '@/lib/appPaths'
-import { parseWikiHeadings } from '@/lib/wikiHeadings'
-import { WikiMarkdown } from '@/components/wiki/WikiMarkdown'
+import { MarkdownMdRtView } from '@/components/markdown/MarkdownMdRtView'
 
 const HELP_MARKDOWN_PATH = 'guides/help-markdown'
 const HELP_MERMAID_PATH = 'guides/help-mermaid'
@@ -62,7 +61,6 @@ export function WikiEditorHelpModal({ open, onClose }: { open: boolean; onClose:
 
   const activeSource = tab === 'markdown' ? markdownBody : mermaidBody
   const activePath = tab === 'markdown' ? HELP_MARKDOWN_PATH : HELP_MERMAID_PATH
-  const headings = parseWikiHeadings(activeSource)
 
   return (
     <div
@@ -130,7 +128,7 @@ export function WikiEditorHelpModal({ open, onClose }: { open: boolean; onClose:
           ) : error ? (
             <p className="text-sm text-destructive">{error}</p>
           ) : (
-            <WikiMarkdown content={activeSource} headings={headings} />
+            <MarkdownMdRtView content={activeSource} />
           )}
         </div>
 

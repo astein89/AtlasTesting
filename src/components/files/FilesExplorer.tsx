@@ -10,8 +10,6 @@ import {
   type DragEvent,
   type ReactNode,
 } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   type FileFolderRow,
@@ -44,6 +42,7 @@ import { useFilesModuleHost } from '@/contexts/FilesModuleHostContext'
 import { FILES_TREE_REFRESH_EVENT, requestFilesTreeRefresh } from '@/lib/filesTreeRefresh'
 import { ColumnFilterDropdown } from '@/components/data/ColumnFilterDropdown'
 import { findFolderInTreeByParam, findPathToFolder } from '@/components/files/FolderTreeNav'
+import { AppMarkdown } from '@/components/markdown/AppMarkdown'
 import { BulkFileUploadApplyModal } from '@/components/files/BulkFileUploadApplyModal'
 import { FileEditModal } from '@/components/files/FileEditModal'
 import { FolderEditModal } from '@/components/files/FolderEditModal'
@@ -805,9 +804,7 @@ function FilePreviewPanel({
           />
         ) : (cat === 'markdown' || cat === 'text' || cat === 'csv') && state.text != null ? (
           cat === 'markdown' ? (
-            <div className="wiki-md-body max-w-none text-sm leading-relaxed text-foreground [&_a]:text-primary [&_a]:underline">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.text}</ReactMarkdown>
-            </div>
+            <AppMarkdown content={state.text} />
           ) : (
             <pre className="whitespace-pre-wrap break-words rounded border border-border bg-muted/30 p-3 text-xs">
               {state.text}

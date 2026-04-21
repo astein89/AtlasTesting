@@ -4,6 +4,7 @@ import { RouterProvider } from 'react-router-dom'
 import { createAppBrowserRouter } from './App'
 import { publicAsset } from './lib/basePath'
 import { applySiteIconsToDocument } from './lib/documentIcons'
+import './lib/mdEditorRtConfig'
 import './index.css'
 
 const basePath = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')

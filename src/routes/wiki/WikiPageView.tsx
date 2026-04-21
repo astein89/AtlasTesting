@@ -13,7 +13,8 @@ import {
 import { humanizePathForTitle, WikiBreadcrumbs } from '@/components/wiki/WikiBreadcrumbs'
 import { WikiDuplicatePageModal } from '@/components/wiki/WikiDuplicatePageModal'
 import { WikiSidebarPageSettingsModal } from '@/components/wiki/WikiSidebarPageSettingsModal'
-import { WikiMarkdown } from '@/components/wiki/WikiMarkdown'
+import { MarkdownMdRtView } from '@/components/markdown/MarkdownMdRtView'
+import { WikiMdRtArticleExportButtons } from '@/components/wiki/WikiMdRtExportPdf'
 import {
   pickMostSpecificWikiTrail,
   wikiEditUrl,
@@ -21,10 +22,21 @@ import {
   wikiTrailFromPathname,
   wikiTrailFromSplat,
 } from '@/lib/appPaths'
-import { parseWikiHeadings } from '@/lib/wikiHeadings'
 import { buildWikiTree, findWikiTreeNode, sortedTreeChildren, type WikiTreeNode } from '@/lib/wikiTree'
 import { wikiNestParentPathOptions } from '@/lib/wikiPaths'
 import { useAuthStore } from '@/store/authStore'
+
+/** Filename stem for downloaded PDF (no extension); invalid path chars stripped. */
+function wikiPdfFileBaseName(pagePath: string): string {
+  const t = humanizePathForTitle(pagePath).trim() || 'wiki-page'
+  const cleaned = t
+    .replace(/[<>:"/\\|?*]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120)
+  return cleaned || 'wiki-page'
+}
 
 interface WikiPageViewProps {
   pagePath: string
@@ -230,8 +242,6 @@ export function WikiPageView({ pagePath: pagePathProp }: WikiPageViewProps) {
 
   useAbortableEffect((signal) => void load(signal).catch(() => {}), [load])
 
-  const headings = useMemo(() => (markdown ? parseWikiHeadings(markdown) : []), [markdown])
-
   useEffect(() => {
     if (!markdown?.trim() || !location.hash) return
     const id = decodeURIComponent(location.hash.slice(1))
@@ -256,10 +266,6 @@ export function WikiPageView({ pagePath: pagePathProp }: WikiPageViewProps) {
   /** Folder-without-index: create `index.md` for this tree node (full path), not a shortened prop. */
   const createIndexTargetPath = folderNav?.root.path ?? pagePath
 
-  const handlePrint = useCallback(() => {
-    window.print()
-  }, [])
-
   const handleDuplicateConfirm = useCallback(
     async (newPath: string, pageTitle: string) => {
       if (markdown === null) {
@@ -280,35 +286,14 @@ export function WikiPageView({ pagePath: pagePathProp }: WikiPageViewProps) {
 
   return (
     <>
-      <div className="wiki-print-skip mx-auto max-w-3xl text-foreground">
+      <div className="wiki-print-skip w-full min-w-0 text-foreground">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="min-w-0 flex-1">
             <WikiBreadcrumbs pagePath={pagePath} />
           </div>
           <div className="flex shrink-0 items-center gap-1">
           {showArticleToolbar ? (
-            <button
-              type="button"
-              onClick={handlePrint}
-              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-border bg-background text-foreground hover:bg-background/80"
-              aria-label="Print document"
-              title="Print document"
-            >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
-                />
-              </svg>
-            </button>
+            <WikiMdRtArticleExportButtons markdown={markdown!} pdfFileBaseName={wikiPdfFileBaseName(pagePath)} />
           ) : null}
           {canEdit && showArticleToolbar ? (
             <>
@@ -441,8 +426,8 @@ export function WikiPageView({ pagePath: pagePathProp }: WikiPageViewProps) {
       />
 
       {!loading && !folderNav && !error && markdown != null ? (
-        <div className="mx-auto max-w-3xl text-foreground print:mx-0 print:max-w-none">
-          <WikiMarkdown content={markdown} headings={headings} wikiPrintBody />
+        <div className="w-full min-w-0 text-foreground">
+          <MarkdownMdRtView content={markdown} wikiPrintBody />
           {sectionNav && showSectionPages ? (
             <nav
               className="wiki-print-skip mt-8 border-t border-border pt-6"

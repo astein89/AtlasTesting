@@ -736,6 +736,7 @@ function mirrorScopeSummary(settings: BackupSettings): string {
   }
   if (settings.includeUploadsTesting) parts.push('uploads/testing')
   if (settings.includeUploadsHome) parts.push('uploads/home')
+  if (settings.includeUploadsWiki) parts.push('uploads/wiki')
   if (settings.includeWikiSeed) parts.push('wiki-seed')
   if (settings.includeHomeIntro) parts.push('home-intro')
   if (settings.includeConfigJson) parts.push('config.json')
@@ -757,6 +758,10 @@ function mirrorRoots(settings: BackupSettings): { rel: string; abs: string }[] {
   if (settings.includeUploadsHome) {
     const p = path.join(backupProjectRoot, 'uploads', 'home')
     if (fs.existsSync(p)) roots.push({ rel: 'uploads/home', abs: p })
+  }
+  if (settings.includeUploadsWiki) {
+    const p = path.join(backupProjectRoot, 'uploads', 'wiki')
+    if (fs.existsSync(p)) roots.push({ rel: 'uploads/wiki', abs: p })
   }
   if (settings.includeWikiSeed) {
     const p = path.join(backupProjectRoot, 'content', 'wiki-seed')
