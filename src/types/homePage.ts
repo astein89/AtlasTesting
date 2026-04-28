@@ -10,6 +10,18 @@ export interface HomeCustomLink {
   allowedRoleSlugs?: string[]
   /** @deprecated Prefer `allowedRoleSlugs`. If set (and no role list), visibility uses this permission key. */
   requiredPermission?: string
+  /** Optional group for hub / `/links` headings. */
+  categoryId?: string | null
+  /** When false, hidden from home hub cards (still on `/links`). Default true. */
+  showOnHome?: boolean
+  /** Order on the home hub among “show on home” links (lower first). */
+  homeSortOrder?: number
+}
+
+export interface HomeLinkCategory {
+  id: string
+  title: string
+  sortOrder: number
 }
 
 export interface HomePageConfig {
@@ -39,4 +51,20 @@ export interface HomePageConfig {
   siteFaviconPath?: string | null
   /** Server-incremented when branding images change (cache bust). */
   homeBrandingRevision?: number
+  /** Group headings for custom links (order + titles). */
+  linkCategories?: HomeLinkCategory[]
+  /** Max links that may use “show on home” at once (hub order wins when over limit). */
+  customLinksInitialVisibleCount?: number
+  /** Number of columns for link cards on the home hub (1–6). */
+  homeHubLinkColumns?: number
+  /** Columns for curated link cards on `/links` (1–6). Independent of home hub. */
+  linksPageLinkColumns?: number
+  /**
+   * @deprecated Prefer `homeHubCategoryColumnMap`. Legacy: per-column category slots (same length as columns).
+   */
+  homeHubColumnCategoryIds?: (string | null)[]
+  /** Category id → 0-based home hub column index (multiple categories may share a column). */
+  homeHubCategoryColumnMap?: Record<string, number>
+  /** Column index for uncategorized links and categories not assigned to a column. Null uses partition fallback. */
+  homeHubOtherLinksColumn?: number | null
 }

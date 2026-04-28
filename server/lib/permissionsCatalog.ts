@@ -43,6 +43,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     group: 'Module writes',
   },
   { id: 'home.edit', label: 'Edit home page content', group: 'Home' },
+  { id: 'links.edit', label: 'Manage home links & categories', group: 'Home' },
   { id: 'wiki.edit', label: 'Edit wiki pages (create / save Markdown files)', group: 'Wiki' },
   {
     id: 'wiki.recycle',

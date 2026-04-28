@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy } from 'react'
+import { Suspense, useEffect, useState, lazy } from 'react'
 import {
   Outlet,
   Route,
@@ -59,6 +59,9 @@ const WikiRecycleBin = lazy(() =>
 const FilesLibrary = lazy(() => import('./routes/FilesLibrary').then((m) => ({ default: m.FilesLibrary })))
 const FilesRecycleBin = lazy(() =>
   import('./routes/FilesRecycleBin').then((m) => ({ default: m.FilesRecycleBin }))
+)
+const HomeLinksPage = lazy(() =>
+  import('./routes/HomeLinksPage').then((m) => ({ default: m.HomeLinksPage }))
 )
 
 const REHYDRATE_DELAY_MS = 300
@@ -294,6 +297,17 @@ export function createAppBrowserRouter(basePath: string) {
           <Route path="/" element={publicHomeLayout}>
             <Route index element={<HomePage />} />
           </Route>
+          <Route path="/links" element={publicHomeLayout}>
+            <Route
+              index
+              element={
+                <Suspense fallback={<div className="p-6 text-sm text-foreground/60">Loading…</div>}>
+                  <HomeLinksPage />
+                </Suspense>
+              }
+            />
+          </Route>
+          <Route path="/links/manage" element={<Navigate to="/links?manage=1" replace />} />
           <Route path="/testing" element={testingLayout}>
             <Route index element={<Navigate to={tp} replace />} />
             <Route

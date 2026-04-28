@@ -245,6 +245,16 @@ export const BASELINE_PG_STATEMENTS: string[] = [
  * so the migration script matches `initSchemaPg` (SQLite may include columns not in the CREATE TABLE baseline).
  */
 export const PG_POST_BASELINE_STATEMENTS: string[] = [
+  `CREATE TABLE IF NOT EXISTS home_link_categories (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_home_link_categories_sort ON home_link_categories(sort_order)`,
+  `ALTER TABLE home_links ADD COLUMN IF NOT EXISTS category_id TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_home_links_category_id ON home_links(category_id)`,
+  `ALTER TABLE home_links ADD COLUMN IF NOT EXISTS show_on_home INTEGER DEFAULT 1`,
+  `ALTER TABLE home_links ADD COLUMN IF NOT EXISTS home_sort_order INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE test_plans ADD COLUMN IF NOT EXISTS slug TEXT`,
   `ALTER TABLE tests ADD COLUMN IF NOT EXISTS slug TEXT`,
   `ALTER TABLE location_schemas ADD COLUMN IF NOT EXISTS slug TEXT`,

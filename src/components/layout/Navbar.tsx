@@ -15,11 +15,13 @@ export function Navbar({ onMenuClick }: NavbarProps) {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const canEditHome = useAuthStore((s) => s.hasPermission('home.edit'))
+  const canManageLinks = useAuthStore((s) => s.hasPermission('links.edit'))
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const setHomeEditorOpen = useHomePageEditStore((s) => s.setEditorOpen)
   const openLoginModal = useLoginModalStore((s) => s.openLogin)
   const onHomePage = pathname === '/' || pathname === ''
+  const onLinksArea = pathname === '/links' || pathname === '/links/'
   const navbarIconSrc = useSiteBrandingStore((s) => {
     const p = s.siteFaviconPath?.trim()
     return p ? uploadsUrl(p, s.homeBrandingRevision) : publicAsset('icon.png')
@@ -52,6 +54,15 @@ export function Navbar({ onMenuClick }: NavbarProps) {
           </Link>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          {canManageLinks && (onHomePage || onLinksArea) ? (
+            <Link
+              to="/links?manage=1"
+              className="min-h-[44px] shrink-0 rounded-lg border border-border bg-background px-2.5 py-2 text-xs font-medium text-foreground hover:bg-background/80 sm:px-3 sm:text-sm"
+            >
+              <span className="sm:hidden">Links</span>
+              <span className="hidden sm:inline">Manage links</span>
+            </Link>
+          ) : null}
           {canEditHome && onHomePage && (
             <button
               type="button"

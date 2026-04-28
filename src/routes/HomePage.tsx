@@ -2,6 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, isAbortLikeError } from '@/api/client'
 import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { appModules, getModuleRequiredPermission } from '@/config/modules'
+import {
+  DEFAULT_CUSTOM_LINKS_VISIBLE_COUNT,
+  DEFAULT_HOME_HUB_LINK_COLUMNS,
+  clampCustomLinksOnHomeMax,
+  clampHomeHubLinkColumns,
+  filterVisibleCustomLinks,
+  hubLinkCardsGridStyle,
+  linkShowsOnHomeHub,
+} from '@/lib/homeLinkVisibility'
 import { mergeHomeModuleOrder, sortHomeModules } from '@/lib/homeModuleOrder'
 import { HomeIntroMarkdown } from '@/components/home/HomeIntroMarkdown'
 import { HomeLinkCard } from '@/components/home/HomeLinkCard'
@@ -19,12 +28,19 @@ const FALLBACK_HOME: HomePageConfig = {
   introMarkdown:
     '# Welcome to **DC Automation**\n\nUse the modules to open **Test Plans** or **Locations**. Sign in when needed.\n\nIf this message persists, the home configuration could not be loaded—check the API and network.',
   customLinks: [],
+  linkCategories: [],
   modulesHiddenFromHome: [],
   showWelcomeLogo: false,
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
   welcomeLogoPath: null,
   siteFaviconPath: null,
   homeBrandingRevision: 0,
+  customLinksInitialVisibleCount: DEFAULT_CUSTOM_LINKS_VISIBLE_COUNT,
+  homeHubLinkColumns: DEFAULT_HOME_HUB_LINK_COLUMNS,
+  homeHubColumnCategoryIds: [],
+  homeHubCategoryColumnMap: {},
+  homeHubOtherLinksColumn: null,
+  linksPageLinkColumns: DEFAULT_HOME_HUB_LINK_COLUMNS,
 }
 
 const knownModuleIdSet = new Set(appModules.map((m) => m.id))
@@ -48,21 +64,6 @@ function userRoleSlugs(user: ReturnType<typeof useAuthStore.getState>['user']): 
   if (user.roles && user.roles.length > 0) return user.roles
   if (user.role?.trim()) return [user.role.trim()]
   return []
-}
-
-function customLinkVisible(
-  link: HomeCustomLink,
-  hasPermission: (k: string) => boolean,
-  roles: string[]
-): boolean {
-  if (link.allowedRoleSlugs && link.allowedRoleSlugs.length > 0) {
-    const set = new Set(roles)
-    return link.allowedRoleSlugs.some((s) => set.has(s))
-  }
-  if (link.requiredPermission?.trim()) {
-    return hasPermission(link.requiredPermission.trim())
-  }
-  return true
 }
 
 export function HomePage() {
@@ -98,6 +99,7 @@ export function HomePage() {
       setConfig({
         introMarkdown,
         customLinks: Array.isArray(data.customLinks) ? data.customLinks : [],
+        linkCategories: Array.isArray(data.linkCategories) ? data.linkCategories : [],
         moduleOrder: mergeHomeModuleOrder(
           Array.isArray(data.moduleOrder) ? (data.moduleOrder as string[]) : undefined
         ),
@@ -107,6 +109,27 @@ export function HomePage() {
         welcomeLogoPath: welcomePath,
         siteFaviconPath: faviconPath,
         homeBrandingRevision: brandingRev,
+        customLinksInitialVisibleCount:
+          typeof data.customLinksInitialVisibleCount === 'number'
+            ? data.customLinksInitialVisibleCount
+            : DEFAULT_CUSTOM_LINKS_VISIBLE_COUNT,
+        homeHubLinkColumns: clampHomeHubLinkColumns(data.homeHubLinkColumns),
+        homeHubColumnCategoryIds: Array.isArray(data.homeHubColumnCategoryIds)
+          ? data.homeHubColumnCategoryIds
+          : [],
+        homeHubCategoryColumnMap:
+          data.homeHubCategoryColumnMap && typeof data.homeHubCategoryColumnMap === 'object' && !Array.isArray(data.homeHubCategoryColumnMap)
+            ? (data.homeHubCategoryColumnMap as Record<string, number>)
+            : {},
+        homeHubOtherLinksColumn:
+          typeof data.homeHubOtherLinksColumn === 'number' && Number.isFinite(data.homeHubOtherLinksColumn)
+            ? Math.floor(data.homeHubOtherLinksColumn)
+            : data.homeHubOtherLinksColumn === null
+              ? null
+              : null,
+        linksPageLinkColumns: clampHomeHubLinkColumns(
+          data.linksPageLinkColumns ?? data.homeHubLinkColumns ?? DEFAULT_HOME_HUB_LINK_COLUMNS
+        ),
       })
       applyIconsFromHomeBrandingPayload({
         siteFaviconPath: faviconPath,
@@ -142,14 +165,36 @@ export function HomePage() {
   const hasVisibleModules = visibleModules.length > 0
 
   const roleSlugs = userRoleSlugs(user)
-  const visibleCustomLinks = config.customLinks.filter((link) =>
-    customLinkVisible(link, hasPermission, roleSlugs)
+  const visibleCustomLinks = filterVisibleCustomLinks(config.customLinks, hasPermission, roleSlugs)
+  const hubLinksFlat = useMemo(() => {
+    const filtered = visibleCustomLinks.filter(linkShowsOnHomeHub)
+    return [...filtered].sort(
+      (a, b) =>
+        (a.homeSortOrder ?? 0) - (b.homeSortOrder ?? 0) || a.id.localeCompare(b.id)
+    )
+  }, [visibleCustomLinks])
+  /** Defensive cap for legacy rows; saves clamp on-home toggles to this max. */
+  const hubCardLimit = clampCustomLinksOnHomeMax(
+    config.customLinksInitialVisibleCount ?? DEFAULT_CUSTOM_LINKS_VISIBLE_COUNT
   )
-  const hasExtraLinks = visibleCustomLinks.length > 0
-  /** Only show the hub row when there is at least one module card or one link. */
-  const showModulesAndLinksSection = hasVisibleModules || hasExtraLinks
-  /** Two columns only when both columns have content. */
-  const twoColumnModulesAndLinks = hasVisibleModules && hasExtraLinks
+  const hubLinkColumns = useMemo(
+    () => clampHomeHubLinkColumns(config.homeHubLinkColumns ?? DEFAULT_HOME_HUB_LINK_COLUMNS),
+    [config.homeHubLinkColumns]
+  )
+  const hubLinksMulticolStyle = useMemo(
+    () => hubLinkCardsGridStyle(hubLinkColumns),
+    [hubLinkColumns]
+  )
+  /** Flat list in global link order — cards flow across hub columns (no per-category column routing). */
+  const hubSlice = useMemo(() => hubLinksFlat.slice(0, hubCardLimit), [hubLinksFlat, hubCardLimit])
+  /** Full directory on `/links` when some links are off the hub, or when more on-home links exist than the hub limit. */
+  const showLinksDirectoryCard =
+    visibleCustomLinks.some((l) => l.showOnHome === false) || hubLinksFlat.length > hubCardLimit
+  const showHubLinkCards = hubSlice.length > 0
+  const showLinksColumn = showHubLinkCards || showLinksDirectoryCard
+  const showModulesAndLinksSection = hasVisibleModules || showLinksColumn
+  /** Two columns when both modules and any links column content appear. */
+  const twoColumnModulesAndLinks = hasVisibleModules && showLinksColumn
   const logoMaxRem = clampWelcomeLogoMaxRem(config.welcomeLogoMaxRem)
   const welcomeLogoSrc = config.welcomeLogoPath?.trim()
     ? uploadsUrl(config.welcomeLogoPath.trim(), config.homeBrandingRevision ?? 0)
@@ -192,7 +237,7 @@ export function HomePage() {
           )}
         </section>
 
-        {showModulesAndLinksSection ? (
+        {!loading && showModulesAndLinksSection ? (
           <section
             aria-label="Modules and links"
             className={
@@ -224,27 +269,42 @@ export function HomePage() {
                 </ul>
               </div>
             ) : null}
-            {hasExtraLinks ? (
+            {showLinksColumn ? (
               <div
                 className={
                   twoColumnModulesAndLinks
                     ? 'flex min-h-0 min-w-0 flex-col md:border-l md:border-border md:pl-8 lg:pl-12'
-                    : 'w-full max-w-md'
+                    : hubLinkColumns > 1
+                      ? 'w-full max-w-5xl'
+                      : 'w-full max-w-md'
                 }
               >
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Links</p>
-                <ul className="flex flex-col gap-3">
-                  {visibleCustomLinks.map((link) => (
-                    <li key={link.id} className="flex">
+                <div className="flex flex-col gap-3">
+                  <ul
+                    className={hubLinkColumns <= 1 ? 'flex flex-col gap-3' : 'min-w-0 w-full'}
+                    style={hubLinksMulticolStyle}
+                  >
+                    {hubSlice.map((link: HomeCustomLink) => (
+                      <li key={link.id} className="flex min-h-0 min-w-0">
+                        <HomeLinkCard
+                          title={link.title}
+                          description={link.description}
+                          href={link.href}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                  {showLinksDirectoryCard ? (
+                    <div className="w-full min-w-0">
                       <HomeLinkCard
-                        title={link.title}
-                        description={link.description}
-                        href={link.href}
-                        showUrl
+                        title="All links"
+                        description="Open the full directory of curated links."
+                        href="/links"
                       />
-                    </li>
-                  ))}
-                </ul>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </section>
@@ -256,12 +316,13 @@ export function HomePage() {
           initial={config}
           onClose={() => setEditOpen(false)}
           onSaved={(next) => {
-            setConfig({
+            setConfig((prev) => ({
               introMarkdown:
                 typeof next.introMarkdown === 'string' && next.introMarkdown.trim()
                   ? next.introMarkdown
                   : FALLBACK_HOME.introMarkdown,
               customLinks: Array.isArray(next.customLinks) ? next.customLinks : [],
+              linkCategories: Array.isArray(next.linkCategories) ? next.linkCategories : [],
               moduleOrder: mergeHomeModuleOrder(
                 Array.isArray(next.moduleOrder) ? next.moduleOrder : undefined
               ),
@@ -278,7 +339,34 @@ export function HomePage() {
                   : null,
               homeBrandingRevision:
                 typeof next.homeBrandingRevision === 'number' ? next.homeBrandingRevision : 0,
-            })
+              customLinksInitialVisibleCount:
+                typeof next.customLinksInitialVisibleCount === 'number'
+                  ? next.customLinksInitialVisibleCount
+                  : DEFAULT_CUSTOM_LINKS_VISIBLE_COUNT,
+              homeHubLinkColumns: clampHomeHubLinkColumns(
+                typeof next.homeHubLinkColumns === 'number' && Number.isFinite(next.homeHubLinkColumns)
+                  ? next.homeHubLinkColumns
+                  : prev.homeHubLinkColumns
+              ),
+              linksPageLinkColumns: clampHomeHubLinkColumns(
+                typeof next.linksPageLinkColumns === 'number' && Number.isFinite(next.linksPageLinkColumns)
+                  ? next.linksPageLinkColumns
+                  : prev.linksPageLinkColumns ?? DEFAULT_HOME_HUB_LINK_COLUMNS
+              ),
+              homeHubColumnCategoryIds: Array.isArray(next.homeHubColumnCategoryIds)
+                ? next.homeHubColumnCategoryIds
+                : prev.homeHubColumnCategoryIds,
+              homeHubCategoryColumnMap:
+                next.homeHubCategoryColumnMap && typeof next.homeHubCategoryColumnMap === 'object'
+                  ? (next.homeHubCategoryColumnMap as Record<string, number>)
+                  : prev.homeHubCategoryColumnMap,
+              homeHubOtherLinksColumn:
+                typeof next.homeHubOtherLinksColumn === 'number' && Number.isFinite(next.homeHubOtherLinksColumn)
+                  ? Math.floor(next.homeHubOtherLinksColumn)
+                  : next.homeHubOtherLinksColumn === null
+                    ? null
+                    : prev.homeHubOtherLinksColumn,
+            }))
             applyIconsFromHomeBrandingPayload({
               siteFaviconPath: next.siteFaviconPath,
               homeBrandingRevision: next.homeBrandingRevision,

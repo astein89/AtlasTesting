@@ -240,10 +240,15 @@ export function initSchema(db: DbWrapper) {
   migrateAppKv(db)
   migrateHomeLinksTable(db)
   migrateHomeLinksFromAppKv(db)
+  migrateHomeLinkCategoriesTable(db)
+  migrateHomeLinksCategoryId(db)
+  migrateHomeLinksShowOnHome(db)
+  migrateHomeLinksHomeSortOrder(db)
   migrateRoles(db)
   migrateRolesReplaceDataWrite(db)
   migrateUserRoles(db)
   migrateRolesAddLocationsSchemasManage(db)
+  migrateRolesAddLinksEdit(db)
   migrateStoredFiles(db)
   migrateFileFolders(db)
   migrateStoredFilesExplorerColumns(db)
@@ -725,7 +730,10 @@ function migrateHomeLinksTable(db: DbWrapper) {
         href TEXT NOT NULL,
         allowed_role_slugs TEXT,
         required_permission TEXT,
-        sort_order INTEGER NOT NULL DEFAULT 0
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        category_id TEXT,
+        show_on_home INTEGER NOT NULL DEFAULT 1,
+        home_sort_order INTEGER NOT NULL DEFAULT 0
       )
     `)
     db.run('CREATE INDEX IF NOT EXISTS idx_home_links_sort_order ON home_links(sort_order)')
@@ -793,6 +801,84 @@ function migrateHomeLinksFromAppKv(db: DbWrapper) {
   }
 }
 
+/** Group headings for home hub custom links. */
+function migrateHomeLinkCategoriesTable(db: DbWrapper) {
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS home_link_categories (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_home_link_categories_sort ON home_link_categories(sort_order)')
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateHomeLinksCategoryId(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'home_links')
+    if (!cols.includes('category_id')) {
+      db.run('ALTER TABLE home_links ADD COLUMN category_id TEXT')
+    }
+    db.run('CREATE INDEX IF NOT EXISTS idx_home_links_category_id ON home_links(category_id)')
+  } catch {
+    // Ignore
+  }
+}
+
+function migrateHomeLinksShowOnHome(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'home_links')
+    if (!cols.includes('show_on_home')) {
+      db.run('ALTER TABLE home_links ADD COLUMN show_on_home INTEGER NOT NULL DEFAULT 1')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Order of cards on the home hub (independent of category / full-list order). */
+function migrateHomeLinksHomeSortOrder(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'home_links')
+    if (!cols.includes('home_sort_order')) {
+      db.run('ALTER TABLE home_links ADD COLUMN home_sort_order INTEGER NOT NULL DEFAULT 0')
+      db.run('UPDATE home_links SET home_sort_order = sort_order')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Grant `links.edit` wherever `home.edit` was already granted (split permission). */
+function migrateRolesAddLinksEdit(db: DbWrapper) {
+  try {
+    const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{
+      slug: string
+      permissions: string
+    }>
+    for (const { slug, permissions } of rows) {
+      let arr: unknown
+      try {
+        arr = JSON.parse(permissions)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(arr)) continue
+      const list = arr.filter((x): x is string => typeof x === 'string')
+      if (!list.includes('home.edit')) continue
+      if (list.includes('links.edit')) continue
+      const next = [...list, 'links.edit']
+      db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify(next.sort()), slug)
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 /** Role definitions: slug matches users.role; permissions is JSON array of strings. */
 function migrateRoles(db: DbWrapper) {
   try {
@@ -818,6 +904,7 @@ function migrateRoles(db: DbWrapper) {
           'wiki.edit',
           'testing.data.write',
           'files.manage',
+          'links.edit',
         ]),
       ],
       [

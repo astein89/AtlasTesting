@@ -11,6 +11,7 @@ const DEFAULT_BY_SLUG: Record<string, string[]> = {
     'wiki.edit',
     'testing.data.write',
     'files.manage',
+    'links.edit',
   ],
   viewer: ['module.home', 'module.testing', 'module.wiki', 'module.files'],
 }

@@ -36,6 +36,7 @@ const TABLE_ORDER = [
   'record_history',
   'user_preferences',
   'app_kv',
+  'home_link_categories',
   'home_links',
   'user_roles',
 ] as const

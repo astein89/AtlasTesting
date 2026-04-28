@@ -38,6 +38,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     group: 'Module writes',
   },
   { id: 'home.edit', label: 'Edit home page content', group: 'Home' },
+  { id: 'links.edit', label: 'Manage home links & categories', group: 'Home' },
   { id: 'wiki.edit', label: 'Edit wiki pages (create / save Markdown files)', group: 'Wiki' },
   {
     id: 'wiki.recycle',
@@ -82,7 +83,7 @@ export const ROLE_EDITOR_MODULE_NESTING: Array<{
   moduleId: (typeof MODULE_PERMISSION_KEYS)[number]
   nestedIds: readonly string[]
 }> = [
-  { moduleId: 'module.home', nestedIds: ['home.edit'] },
+  { moduleId: 'module.home', nestedIds: ['home.edit', 'links.edit'] },
   {
     moduleId: 'module.testing',
     nestedIds: [
