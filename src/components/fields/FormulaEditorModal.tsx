@@ -113,10 +113,7 @@ export function FormulaEditorModal({
                   ?
                 </button>
                 {helpOpen && (
-                  <div
-                    className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
-                    onClick={() => setHelpOpen(false)}
-                  >
+                  <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
                     <div
                       className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-lg"
                       onClick={(e) => e.stopPropagation()}

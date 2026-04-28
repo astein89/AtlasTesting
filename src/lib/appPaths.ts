@@ -155,10 +155,11 @@ export function adminPath(...segments: string[]): string {
 }
 
 /**
- * First admin sub-route the user may open (roles → users → settings → db).
+ * First admin sub-route when opening `/admin` (status → roles → users → settings → backup → db).
  * `null` if they have no admin section permissions.
  */
 export function firstAccessibleAdminPath(hasPermission: (key: string) => boolean): string | null {
+  if (hasPermission('module.admin')) return adminPath('status')
   if (hasPermission('roles.manage')) return adminPath('roles')
   if (hasPermission('users.manage')) return adminPath('users')
   if (hasPermission('settings.access')) return adminPath('settings')

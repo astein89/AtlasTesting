@@ -95,7 +95,6 @@ export function LoginModal() {
       role="dialog"
       aria-modal
       aria-labelledby="login-modal-title"
-      onClick={closeLogin}
     >
       <div
         className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"

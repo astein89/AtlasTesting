@@ -233,11 +233,7 @@ export function EditRecordModal({
   return (
     <>
     <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={handleClose}
-        aria-hidden
-      />
+      <div className="absolute inset-0 bg-black/50" aria-hidden />
       <div
         className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:border sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
@@ -466,10 +462,7 @@ export function EditRecordModal({
       </div>
     </div>
     {fullScreenImagePath && (
-      <div
-        className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
-        onClick={() => setFullScreenImagePath(null)}
-      >
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4">
         <img
           src={imageUrl(fullScreenImagePath)}
           alt=""
@@ -488,10 +481,7 @@ export function EditRecordModal({
       </div>
     )}
     {showSavePrompt && (
-      <div
-        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-        onClick={() => setShowSavePrompt(false)}
-      >
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
         <div
           className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
           onClick={(e) => e.stopPropagation()}
@@ -525,10 +515,7 @@ export function EditRecordModal({
       </div>
     )}
     {showHistory && (
-      <div
-        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-        onClick={() => setShowHistory(false)}
-      >
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
         <div
           className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card shadow-lg"
           onClick={(e) => e.stopPropagation()}

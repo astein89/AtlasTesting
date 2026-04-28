@@ -1418,10 +1418,7 @@ export function TestPlanDataView() {
         />
       )}
       {deleteRecordPending && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setDeleteRecordPending(null)}
-        >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -1455,10 +1452,7 @@ export function TestPlanDataView() {
         </div>
       )}
       {bulkDeletePending && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setBulkDeletePending(false)}
-        >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -1488,10 +1482,7 @@ export function TestPlanDataView() {
         </div>
       )}
       {showBulkEditModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowBulkEditModal(false)}
-        >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -1561,10 +1552,7 @@ export function TestPlanDataView() {
         </div>
       )}
       {showMoveToTestModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowMoveToTestModal(false)}
-        >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}

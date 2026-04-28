@@ -225,11 +225,7 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={handleCloseRequest}
-        aria-hidden
-      />
+      <div className="absolute inset-0 bg-black/50" aria-hidden />
       <div
         className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:rounded-lg sm:border sm:min-w-0"
         onClick={(e) => e.stopPropagation()}
@@ -447,7 +443,6 @@ export function BulkAddRowsModal({ fields, plan, testId, onClose, onCreated }: B
       {showCloseConfirm && (
         <div
           className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setShowCloseConfirm(false)}
           role="dialog"
           aria-modal="true"
           aria-labelledby="bulk-add-close-confirm-title"

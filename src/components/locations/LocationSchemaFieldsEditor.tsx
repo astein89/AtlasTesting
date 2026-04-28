@@ -613,9 +613,6 @@ export function LocationSchemaFieldsEditor({
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
           role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !saving) closeEditorModal()
-          }}
         >
           <div
             className={`w-full rounded-xl border border-border bg-card p-5 shadow-lg ${

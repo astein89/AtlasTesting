@@ -7,7 +7,7 @@ interface ConfirmModalProps {
   confirmLabel?: string
   cancelLabel?: string
   variant?: 'danger' | 'default'
-  /** When false, clicking the backdrop does not dismiss (user must use a button). Default true. */
+  /** When true, clicking the backdrop dismisses. Default false. */
   closeOnBackdropClick?: boolean
   /** When false, Escape does not dismiss. Default true. */
   closeOnEscape?: boolean
@@ -28,7 +28,7 @@ export function ConfirmModal({
   confirmLabel = 'OK',
   cancelLabel = 'Cancel',
   variant = 'default',
-  closeOnBackdropClick = true,
+  closeOnBackdropClick = false,
   closeOnEscape = true,
   showHeaderClose = true,
   onConfirm,

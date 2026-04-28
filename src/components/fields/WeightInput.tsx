@@ -240,7 +240,6 @@ export function WeightInput({ value, onChange, className = '', storageUnit = 'lb
             paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
             paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
           }}
-          onClick={() => setOpen(false)}
         >
           <div
             className="flex max-h-[90dvh] w-full max-w-sm flex-col overflow-y-auto rounded-xl border border-border bg-card p-4 shadow-lg"

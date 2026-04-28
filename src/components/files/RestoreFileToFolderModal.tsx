@@ -110,7 +110,6 @@ export function RestoreFileToFolderModal({
       />
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
-      onClick={createFolderOpen ? undefined : onCancel}
       role="dialog"
       aria-modal="true"
       aria-labelledby="restore-file-modal-title"

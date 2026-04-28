@@ -80,10 +80,7 @@ export function AdminChangePasswordModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
       <div
         className="w-full max-w-sm rounded-t-xl border border-border bg-card p-6 shadow-lg sm:rounded-lg"
         onClick={(e) => e.stopPropagation()}

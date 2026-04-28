@@ -94,7 +94,7 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
         confirmLabel={confirmState?.confirmLabel}
         cancelLabel={confirmState?.cancelLabel}
         variant={confirmState?.variant}
-        closeOnBackdropClick={confirmState?.closeOnBackdropClick ?? true}
+        closeOnBackdropClick={confirmState?.closeOnBackdropClick ?? false}
         closeOnEscape={confirmState?.closeOnEscape ?? true}
         showHeaderClose={confirmState?.showHeaderClose ?? true}
         onConfirm={handleConfirmOk}

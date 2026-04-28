@@ -2202,11 +2202,9 @@ export function FilesExplorer() {
           aria-modal="true"
           aria-labelledby="files-preview-title"
         >
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default bg-background/75 backdrop-blur-[2px] transition-colors hover:bg-background/85"
-            aria-label="Close preview"
-            onClick={() => setPreviewFile(null)}
+          <div
+            className="absolute inset-0 bg-background/75 backdrop-blur-[2px]"
+            aria-hidden
           />
           <div
             className="relative z-10 flex max-h-[min(92dvh,calc(100dvh-1.5rem))] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"

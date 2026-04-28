@@ -74,7 +74,6 @@ export function WikiMovePageModal({
   const modal = (
     <div
       className="fixed inset-0 z-[110] flex min-h-0 items-center justify-center bg-black/60 p-4"
-      onClick={busy ? undefined : onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}

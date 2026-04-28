@@ -167,7 +167,6 @@ export function WikiDuplicatePageModal({
   const modal = (
     <div
       className="fixed inset-0 z-[100] flex min-h-0 items-center justify-center bg-black/60 p-4 print:hidden"
-      onClick={busy ? undefined : onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}

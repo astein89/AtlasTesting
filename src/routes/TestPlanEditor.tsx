@@ -585,7 +585,6 @@ export function TestPlanEditor() {
             {statusAutomationHelpOpen && (
               <div
                 className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
-                onClick={() => setStatusAutomationHelpOpen(false)}
               >
                 <div
                   className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-lg"

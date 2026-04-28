@@ -1471,7 +1471,7 @@ export function FieldEditor() {
                             ?
                           </button>
                           {formulaHelpOpen && (
-                            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => setFormulaHelpOpen(false)}>
+                            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
                               <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card shadow-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex items-center justify-between border-b border-border px-4 py-3">
                                   <h2 className="text-lg font-semibold text-foreground">Formula reference</h2>
@@ -1907,10 +1907,7 @@ export function FieldEditor() {
             </button>
           </div>
           {cfHelpOpen && (
-            <div
-              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
-              onClick={() => setCfHelpOpen(false)}
-            >
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
               <div
                 className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-lg"
                 onClick={(e) => e.stopPropagation()}

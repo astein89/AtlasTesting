@@ -228,7 +228,6 @@ export function FileEditModal({
       />
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
-      onClick={busy || createFolderOpen ? undefined : onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}

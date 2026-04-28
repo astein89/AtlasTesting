@@ -235,10 +235,7 @@ export function ImageInput({
       </p>
 
       {removeIdx != null && (
-        <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setRemoveIdx(null)}
-        >
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -265,10 +262,7 @@ export function ImageInput({
       )}
 
       {fullScreenPath && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
-          onClick={() => setFullScreenPath(null)}
-        >
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4">
           <img
             src={url(fullScreenPath)}
             alt=""

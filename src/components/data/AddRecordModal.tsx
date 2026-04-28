@@ -130,11 +130,7 @@ export function AddRecordModal({
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
-        <div
-          className="absolute inset-0 bg-black/50"
-          onClick={handleClose}
-          aria-hidden
-        />
+        <div className="absolute inset-0 bg-black/50" aria-hidden />
         <div
           className="relative z-10 flex h-[100dvh] w-full max-w-full flex-col overflow-hidden rounded-none border-0 border-border bg-card shadow-lg sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg sm:border sm:min-w-0"
           onClick={(e) => e.stopPropagation()}
@@ -250,10 +246,7 @@ export function AddRecordModal({
         </div>
       </div>
       {showDiscardPrompt && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowDiscardPrompt(false)}
-        >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
           <div
             className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}

@@ -231,7 +231,6 @@ export function RolesEditor() {
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal
-          onClick={closeModal}
         >
           <div
             className="flex max-h-[90vh] w-full max-w-xl flex-col rounded-xl border border-border bg-card shadow-xl"

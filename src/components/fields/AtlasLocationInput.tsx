@@ -207,11 +207,7 @@ export function AtlasLocationInput({ value, onChange, className = '', showClear 
         typeof document !== 'undefined' &&
         createPortal(
           <>
-            <div
-              className="fixed inset-0 z-[200] bg-black/50"
-              onClick={cancel}
-              aria-hidden
-            />
+            <div className="fixed inset-0 z-[200] bg-black/50" aria-hidden />
             <div
               className="fixed left-1/2 top-1/2 z-[201] flex max-h-[calc(100dvh-2rem)] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg"
               onClick={(e) => e.stopPropagation()}
