@@ -770,9 +770,82 @@ export function HomeLinksManagerPanel({ onClose, onSaved }: HomeLinksManagerPane
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6">
         <div className="mx-auto max-w-3xl space-y-8">
         <p className="text-sm text-foreground/70">
-          Configure the home hub and <Link to="/links" className="text-primary hover:underline">/links</Link> layout,
-          then manage categories and links.
+          Configure the <Link to="/links" className="text-primary hover:underline">/links</Link> page and home hub
+          layout, then manage categories and links.
         </p>
+
+        <section className="rounded-xl border border-border bg-card p-4">
+          <h2 className="text-sm font-semibold text-foreground">Links page</h2>
+          <p className="mt-1 text-xs text-foreground/65">
+            Full directory at <span className="font-mono text-foreground/80">/links</span>. Within each category heading,
+            cards fill a grid left to right.
+          </p>
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-foreground" htmlFor="links-page-columns">
+              Columns on links page
+            </label>
+            <p className="mt-1 text-xs text-foreground/65">
+              Between {MIN_HOME_HUB_LINK_COLUMNS} and {MAX_HOME_HUB_LINK_COLUMNS}.
+            </p>
+            <input
+              id="links-page-columns"
+              type="number"
+              min={MIN_HOME_HUB_LINK_COLUMNS}
+              max={MAX_HOME_HUB_LINK_COLUMNS}
+              value={linksPageColumns}
+              onChange={(e) => {
+                const parsed = parseInt(e.target.value, 10)
+                setLinksPageColumns(
+                  clampHomeHubLinkColumns(
+                    Number.isFinite(parsed) ? parsed : MIN_HOME_HUB_LINK_COLUMNS
+                  )
+                )
+              }}
+              className="mt-2 w-28 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+            />
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-foreground">Categories</h2>
+            <button
+              type="button"
+              onClick={addCategory}
+              className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-background/80"
+            >
+              Add category
+            </button>
+          </div>
+          <p className="mb-3 text-xs text-foreground/65">
+            Headings on the home hub (by category) and on the links page. Reorder here and drag links between sections
+            below.
+          </p>
+
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-foreground/55">Category order</p>
+          {categories.length === 0 ? (
+            <p className="text-sm text-foreground/60">No categories yet.</p>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleCatDragEnd}>
+              <SortableContext items={categories.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                <ul className="space-y-2">
+                  {categories.map((cat, index) => (
+                    <SortableCategoryRow
+                      key={cat.id}
+                      cat={cat}
+                      onTitleChange={(title) =>
+                        setCategories((prev) =>
+                          prev.map((c, i) => (i === index ? { ...c, title } : c))
+                        )
+                      }
+                      onRemove={() => removeCategory(index)}
+                    />
+                  ))}
+                </ul>
+              </SortableContext>
+            </DndContext>
+          )}
+        </section>
 
         <section className="rounded-xl border border-border bg-card p-4">
           <h2 className="text-sm font-semibold text-foreground">Home hub</h2>
@@ -868,79 +941,6 @@ export function HomeLinksManagerPanel({ onClose, onSaved }: HomeLinksManagerPane
               </p>
             )}
           </div>
-        </section>
-
-        <section className="rounded-xl border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-foreground">Links page</h2>
-            <p className="mt-1 text-xs text-foreground/65">
-              Full directory at <span className="font-mono text-foreground/80">/links</span>. Within each category
-              heading, cards fill a grid left to right.
-            </p>
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-foreground" htmlFor="links-page-columns">
-                Columns on links page
-              </label>
-              <p className="mt-1 text-xs text-foreground/65">
-                Between {MIN_HOME_HUB_LINK_COLUMNS} and {MAX_HOME_HUB_LINK_COLUMNS}.
-              </p>
-              <input
-                id="links-page-columns"
-                type="number"
-                min={MIN_HOME_HUB_LINK_COLUMNS}
-                max={MAX_HOME_HUB_LINK_COLUMNS}
-                value={linksPageColumns}
-                onChange={(e) => {
-                  const parsed = parseInt(e.target.value, 10)
-                  setLinksPageColumns(
-                    clampHomeHubLinkColumns(
-                      Number.isFinite(parsed) ? parsed : MIN_HOME_HUB_LINK_COLUMNS
-                    )
-                  )
-                }}
-                className="mt-2 w-28 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
-              />
-            </div>
-        </section>
-
-        <section>
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-medium text-foreground">Categories</h2>
-            <button
-              type="button"
-              onClick={addCategory}
-              className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-background/80"
-            >
-              Add category
-            </button>
-          </div>
-          <p className="mb-3 text-xs text-foreground/65">
-            Headings on the home hub (by category) and on the links page. Reorder here and drag links between sections
-            below.
-          </p>
-
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-foreground/55">Category order</p>
-          {categories.length === 0 ? (
-            <p className="text-sm text-foreground/60">No categories yet.</p>
-          ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleCatDragEnd}>
-              <SortableContext items={categories.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                <ul className="space-y-2">
-                  {categories.map((cat, index) => (
-                    <SortableCategoryRow
-                      key={cat.id}
-                      cat={cat}
-                      onTitleChange={(title) =>
-                        setCategories((prev) =>
-                          prev.map((c, i) => (i === index ? { ...c, title } : c))
-                        )
-                      }
-                      onRemove={() => removeCategory(index)}
-                    />
-                  ))}
-                </ul>
-              </SortableContext>
-            </DndContext>
-          )}
         </section>
 
         <section>

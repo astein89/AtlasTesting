@@ -89,9 +89,11 @@ export function HomeLinksPage() {
     [linkColumns]
   )
 
-  /** Match home hub width when single-column (HomePage links column uses max-w-md). */
+  /** Fixed rail width (28rem / 64rem); scales down via min(100%, …) on narrow viewports. */
   const pageShellClass =
-    linkColumns <= 1 ? 'mx-auto max-w-md px-4 py-8 sm:py-12' : 'mx-auto max-w-5xl px-4 py-8 sm:py-12'
+    linkColumns <= 1
+      ? 'mx-auto w-[min(100%,28rem)] px-4 py-8 sm:py-12'
+      : 'mx-auto w-[min(100%,64rem)] px-4 py-8 sm:py-12'
 
   const stripManageParam = useCallback(() => {
     setSearchParams(

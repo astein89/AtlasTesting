@@ -275,8 +275,8 @@ export function HomePage() {
                   twoColumnModulesAndLinks
                     ? 'flex min-h-0 min-w-0 flex-col md:border-l md:border-border md:pl-8 lg:pl-12'
                     : hubLinkColumns > 1
-                      ? 'w-full max-w-5xl'
-                      : 'w-full max-w-md'
+                      ? 'w-[min(100%,64rem)]'
+                      : 'w-[min(100%,28rem)]'
                 }
               >
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-foreground/50">Links</p>
