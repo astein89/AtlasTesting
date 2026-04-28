@@ -89,6 +89,10 @@ export function HomeLinksPage() {
     [linkColumns]
   )
 
+  /** Match home hub width when single-column (HomePage links column uses max-w-md). */
+  const pageShellClass =
+    linkColumns <= 1 ? 'mx-auto max-w-md px-4 py-8 sm:py-12' : 'mx-auto max-w-5xl px-4 py-8 sm:py-12'
+
   const stripManageParam = useCallback(() => {
     setSearchParams(
       (prev) => {
@@ -125,7 +129,7 @@ export function HomeLinksPage() {
   }, [manageOpen])
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
+    <div className={pageShellClass}>
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-foreground">Links</h1>
         <div className="flex flex-wrap items-center gap-3 text-sm">
