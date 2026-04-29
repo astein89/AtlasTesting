@@ -3,6 +3,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { z } from 'zod'
 import { db } from '../db/index.js'
+import { validateCronExpression } from './cronExpression.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const upToRoot = __dirname.includes(`${path.sep}dist${path.sep}`) ? 3 : 2
@@ -11,7 +12,7 @@ export const backupProjectRoot = path.resolve(__dirname, ...Array(upToRoot).fill
 export const BACKUP_SETTINGS_KV_KEY = 'backup_settings'
 export const BACKUP_HISTORY_KV_KEY = 'backup_run_history'
 
-export const backupFrequencySchema = z.enum(['hourly', 'everyNHours', 'daily', 'weekly'])
+export const backupFrequencySchema = z.enum(['hourly', 'everyNHours', 'daily', 'weekly', 'cron'])
 
 export const backupScheduleBlockSchema = z.object({
   enabled: z.boolean(),
@@ -20,6 +21,8 @@ export const backupScheduleBlockSchema = z.object({
   timeLocal: z.string().default('02:00'),
   weekday: z.number().int().min(0).max(6).default(0),
   minuteOffset: z.number().int().min(0).max(59).default(0),
+  /** Used when `frequency` is `cron`: crontab line (e.g. `0 * * * *` or with optional seconds). */
+  cronExpression: z.string().max(200).default('0 * * * *'),
 })
 
 export type BackupScheduleBlock = z.infer<typeof backupScheduleBlockSchema>
@@ -69,6 +72,31 @@ export const backupSettingsBodySchema = z.object({
   notifyMirrorOnSuccess: z.boolean().optional(),
   notifyMirrorOnFailure: z.boolean().optional(),
 })
+
+type BackupPutBody = z.infer<typeof backupSettingsBodySchema>
+
+function refineCronSchedulesForPut(data: BackupPutBody, ctx: z.RefinementCtx): void {
+  const labels: { key: 'databaseSchedule' | 'databaseFullSchedule' | 'mirrorSchedule'; label: string }[] = [
+    { key: 'databaseSchedule', label: 'Database snapshot' },
+    { key: 'databaseFullSchedule', label: 'Full database archive' },
+    { key: 'mirrorSchedule', label: 'Files mirror' },
+  ]
+  for (const { key, label } of labels) {
+    const block = data[key]
+    if (!block) continue
+    if (!block.enabled || block.frequency !== 'cron') continue
+    const v = validateCronExpression(block.cronExpression)
+    if (!v.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${label}: ${v.message}`,
+        path: [key, 'cronExpression'],
+      })
+    }
+  }
+}
+
+const backupSettingsPutSchema = backupSettingsBodySchema.superRefine(refineCronSchedulesForPut)
 
 export type BackupSettings = {
   dropboxRclonePath: string | null
@@ -128,6 +156,7 @@ const defaultSchedule = (): BackupScheduleBlock => ({
   timeLocal: '02:00',
   weekday: 0,
   minuteOffset: 0,
+  cronExpression: '0 * * * *',
 })
 
 export function defaultBackupSettings(): BackupSettings {
@@ -406,7 +435,7 @@ export async function appendBackupHistory(entry: Omit<BackupHistoryEntry, 'id'> 
 }
 
 export function parseBackupPutBody(body: unknown): { ok: true; patch: z.infer<typeof backupSettingsBodySchema> } | { ok: false; error: string } {
-  const parsed = backupSettingsBodySchema.safeParse(body)
+  const parsed = backupSettingsPutSchema.safeParse(body)
   if (!parsed.success) {
     return { ok: false, error: parsed.error.errors.map((e) => e.message).join('; ') || 'Invalid body' }
   }
@@ -508,5 +537,19 @@ export function validateBackupSettingsForSave(s: BackupSettings): { ok: true } |
   } catch {
     return { ok: false, error: 'Local staging directory could not be resolved; check permissions and path' }
   }
+
+  const cronChecks: [string, BackupScheduleBlock][] = [
+    ['Database snapshot', s.databaseSchedule],
+    ['Full database archive', s.databaseFullSchedule],
+    ['Files mirror', s.mirrorSchedule],
+  ]
+  for (const [label, block] of cronChecks) {
+    if (!block.enabled || block.frequency !== 'cron') continue
+    const v = validateCronExpression(block.cronExpression)
+    if (!v.ok) {
+      return { ok: false, error: `${label}: ${v.message}` }
+    }
+  }
+
   return { ok: true }
 }

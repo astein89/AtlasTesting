@@ -1,4 +1,5 @@
 import type { BackupScheduleBlock } from './backupSettings.js'
+import { getNextCronRun } from './cronExpression.js'
 
 /** Next fire time after `now`, or null if schedule disabled. */
 export function getNextScheduleRun(now: Date, block: BackupScheduleBlock): Date | null {
@@ -8,6 +9,8 @@ export function getNextScheduleRun(now: Date, block: BackupScheduleBlock): Date 
   const [th, tm] = parseTimeLocal(block.timeLocal)
 
   switch (block.frequency) {
+    case 'cron':
+      return getNextCronRun(now, block.cronExpression)
     case 'hourly': {
       const t = new Date(now)
       t.setSeconds(0, 0)

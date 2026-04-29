@@ -7,6 +7,7 @@ import JSZip from 'jszip'
 import { isUsingPostgres } from '../db/index.js'
 import { getNextScheduleRun } from '../lib/backupScheduleMath.js'
 import {
+  backupScheduleBlockSchema,
   getBackupHistory,
   getBackupSettings,
   mergeBackupPatch,
@@ -15,11 +16,13 @@ import {
   validateBackupSettingsForSave,
   type BackupSettings,
 } from '../lib/backupSettings.js'
+import { computeSchedulePreviewRuns } from '../lib/backupPreviewRuns.js'
 import { getBackupActiveRun, runBackupTarget } from '../lib/backupJob.js'
 import { scheduleBackupTimers } from '../lib/backupScheduler.js'
 import { sendDiscordBackupTest } from '../lib/backupDiscordNotify.js'
 import { authMiddleware, requirePermission, type AuthRequest } from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
+import { getHostTimeZone } from '../lib/hostTimeZone.js'
 
 const router = Router()
 
@@ -76,6 +79,7 @@ router.get(
       settings,
       history,
       databaseKind: isUsingPostgres() ? 'postgres' : 'sqlite',
+      serverTimeZone: getHostTimeZone(),
       nextDatabaseRunAt: nextDb?.toISOString() ?? null,
       nextDatabaseFullRunAt: nextDbFull?.toISOString() ?? null,
       nextMirrorRunAt: nextMir?.toISOString() ?? null,
@@ -107,6 +111,7 @@ router.put(
       settings,
       history,
       databaseKind: isUsingPostgres() ? 'postgres' : 'sqlite',
+      serverTimeZone: getHostTimeZone(),
       nextDatabaseRunAt: getNextScheduleRun(nowAfter, settings.databaseSchedule)?.toISOString() ?? null,
       nextDatabaseFullRunAt: getNextScheduleRun(nowAfter, settings.databaseFullSchedule)?.toISOString() ?? null,
       nextMirrorRunAt: getNextScheduleRun(nowAfter, settings.mirrorSchedule)?.toISOString() ?? null,
@@ -190,6 +195,21 @@ router.get(
       },
       lastJob: lastBackupJob,
     })
+  })
+)
+
+router.post(
+  '/preview-runs',
+  authMiddleware,
+  requirePermission('backup.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const raw = (req.body as { schedule?: unknown })?.schedule ?? req.body
+    const parsed = backupScheduleBlockSchema.safeParse(raw)
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid schedule block' })
+    }
+    const runs = computeSchedulePreviewRuns(parsed.data, 5)
+    res.json({ runs: runs.map((d) => d.toISOString()) })
   })
 )
 

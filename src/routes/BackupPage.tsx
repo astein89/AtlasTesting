@@ -1,9 +1,14 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import { api, isAbortLikeError } from '../api/client'
 import { useAlertConfirm } from '../contexts/AlertConfirmContext'
+import { CronSyntaxHelpModal } from '../components/backup/CronSyntaxHelpModal'
+import { SchedulePreviewRuns } from '../components/backup/SchedulePreviewRuns'
 import { PopupSelect } from '../components/ui/PopupSelect'
+import { cronExpressionToHuman } from '../lib/backupCronDescribe'
+import { getBuiltInScheduleSummary } from '../lib/backupScheduleSummary'
+import { validateBackupCronExpression } from '../lib/backupCronValidate'
 
-type BackupFrequency = 'hourly' | 'everyNHours' | 'daily' | 'weekly'
+type BackupFrequency = 'hourly' | 'everyNHours' | 'daily' | 'weekly' | 'cron'
 
 type BackupScheduleBlock = {
   enabled: boolean
@@ -12,6 +17,8 @@ type BackupScheduleBlock = {
   timeLocal: string
   weekday: number
   minuteOffset: number
+  /** Crontab line when frequency is `cron` (5 or 6 fields). */
+  cronExpression: string
 }
 
 type BackupSettings = {
@@ -86,6 +93,8 @@ type BackupGetResponse = {
   settings: BackupSettings
   history: BackupHistoryEntry[]
   databaseKind: 'postgres' | 'sqlite'
+  /** IANA timezone of the Node host (same as backup cron evaluation). */
+  serverTimeZone?: string
   nextDatabaseRunAt: string | null
   nextDatabaseFullRunAt: string | null
   nextMirrorRunAt: string | null
@@ -160,6 +169,7 @@ const FREQ_OPTIONS: { value: BackupFrequency; label: string }[] = [
   { value: 'everyNHours', label: 'Every N hours' },
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
+  { value: 'cron', label: 'Cron' },
 ]
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -169,8 +179,21 @@ const SAVE_NOTICE_MS = 2800
 function scheduleBlockFields(
   idPrefix: string,
   block: BackupScheduleBlock,
-  onChange: (b: BackupScheduleBlock) => void
+  onChange: (b: BackupScheduleBlock) => void,
+  onOpenCronHelp: () => void,
+  serverTimeZone: string | null
 ) {
+  const cronExpr = block.cronExpression ?? ''
+  const cronParsed =
+    block.frequency === 'cron'
+      ? validateBackupCronExpression(cronExpr, serverTimeZone)
+      : ({ ok: true as const })
+  const cronErr =
+    block.frequency === 'cron' && block.enabled && !cronParsed.ok ? cronParsed.message : null
+  const cronHuman =
+    block.frequency === 'cron' && cronParsed.ok ? cronExpressionToHuman(cronExpr) : null
+  const builtInSummary = getBuiltInScheduleSummary(block)
+
   return (
     <div className="space-y-4">
       <label className="flex cursor-pointer items-center gap-3">
@@ -191,7 +214,15 @@ function scheduleBlockFields(
             id={`${idPrefix}-freq`}
             label=""
             value={block.frequency}
-            onChange={(v) => (v ? onChange({ ...block, frequency: v as BackupFrequency }) : null)}
+            onChange={(v) =>
+              v
+                ? onChange({
+                    ...block,
+                    frequency: v as BackupFrequency,
+                    ...(v === 'cron' ? { cronExpression: block.cronExpression?.trim() || '0 * * * *' } : {}),
+                  })
+                : null
+            }
             options={FREQ_OPTIONS}
             className="min-w-[180px]"
           />
@@ -266,6 +297,67 @@ function scheduleBlockFields(
           </div>
         )}
       </div>
+      {block.frequency === 'cron' ? (
+        <div>
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <label className="text-sm font-medium text-foreground" htmlFor={`${idPrefix}-cron`}>
+              Crontab line
+            </label>
+            <button
+              type="button"
+              onClick={onOpenCronHelp}
+              className="inline-flex h-7 min-w-[28px] items-center justify-center rounded-full border border-border bg-background px-2 text-xs font-semibold text-foreground/80 hover:bg-background/80 hover:text-foreground"
+              aria-label="Open cron syntax reference"
+            >
+              ?
+            </button>
+          </div>
+          <input
+            id={`${idPrefix}-cron`}
+            type="text"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="0 * * * *"
+            value={block.cronExpression ?? '0 * * * *'}
+            onChange={(e) => onChange({ ...block, cronExpression: e.target.value })}
+            aria-invalid={cronErr != null}
+            aria-describedby={
+              [cronErr && `${idPrefix}-cron-err`, cronHuman && `${idPrefix}-cron-human`]
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
+            className={`w-full max-w-xl font-mono text-sm rounded-lg border bg-background px-3 py-2 text-foreground ${
+              cronErr ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30' : 'border-border'
+            }`}
+          />
+          {cronErr ? (
+            <p
+              className="mt-1.5 text-sm text-red-600 dark:text-red-400"
+              role="alert"
+              id={`${idPrefix}-cron-err`}
+            >
+              {cronErr}
+            </p>
+          ) : null}
+          {cronHuman ? (
+            <p className="mt-1.5 text-sm text-foreground/85" id={`${idPrefix}-cron-human`}>
+              {cronHuman}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {block.enabled && block.frequency !== 'cron' && builtInSummary ? (
+        <p className="mt-2 text-sm text-foreground/85">{builtInSummary}</p>
+      ) : null}
+
+      {block.enabled ? (
+        <SchedulePreviewRuns
+          block={block as unknown as Record<string, unknown>}
+          serverTimeZone={serverTimeZone}
+          idPrefix={idPrefix}
+        />
+      ) : null}
     </div>
   )
 }
@@ -288,6 +380,8 @@ export function BackupPage() {
   const [statusPoll, setStatusPoll] = useState(0)
   const [activeRun, setActiveRun] = useState<BackupActiveRun | null>(null)
   const [discordTestLoading, setDiscordTestLoading] = useState(false)
+  const [cronHelpOpen, setCronHelpOpen] = useState(false)
+  const [serverTimeZone, setServerTimeZone] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -302,6 +396,7 @@ export function BackupPage() {
         setNextDatabaseFullRunAt(r.data.nextDatabaseFullRunAt)
         setNextMirrorRunAt(r.data.nextMirrorRunAt)
         setActiveRun(r.data.activeRun ?? null)
+        setServerTimeZone(r.data.serverTimeZone ?? null)
       })
       .catch((e) => {
         if (isAbortLikeError(e)) return
@@ -347,6 +442,7 @@ export function BackupPage() {
             setNextDatabaseRunAt(r.data.nextDatabaseRunAt)
             setNextDatabaseFullRunAt(r.data.nextDatabaseFullRunAt)
             setNextMirrorRunAt(r.data.nextMirrorRunAt)
+            setServerTimeZone(r.data.serverTimeZone ?? null)
             setActiveRun(null)
             setRunBusy('idle')
             setRunExpect(null)
@@ -366,6 +462,20 @@ export function BackupPage() {
   /** Persists current form to the server (backup jobs always read from server KV). */
   const persistSettings = async (opts?: { showSavedNotice?: boolean }): Promise<boolean> => {
     if (!form) return false
+    const cronChecks: [BackupScheduleBlock, string][] = [
+      [form.databaseSchedule, 'Database snapshot'],
+      [form.databaseFullSchedule, 'Full database archive'],
+      [form.mirrorSchedule, 'Files mirror'],
+    ]
+    for (const [block, label] of cronChecks) {
+      if (block.enabled && block.frequency === 'cron') {
+        const v = validateBackupCronExpression(block.cronExpression ?? '', serverTimeZone)
+        if (!v.ok) {
+          showAlert(`${label}: ${v.message}`)
+          return false
+        }
+      }
+    }
     setSaving(true)
     try {
       const { data } = await api.put<BackupGetResponse>('/backup', {
@@ -409,6 +519,7 @@ export function BackupPage() {
       setNextDatabaseRunAt(data.nextDatabaseRunAt)
       setNextDatabaseFullRunAt(data.nextDatabaseFullRunAt)
       setNextMirrorRunAt(data.nextMirrorRunAt)
+      setServerTimeZone(data.serverTimeZone ?? null)
       setActiveRun(data.activeRun ?? null)
       if (opts?.showSavedNotice !== false) setSaveNotice(true)
       return true
@@ -765,7 +876,13 @@ export function BackupPage() {
         </label>
         <div>
           <p className="mb-2 text-sm font-medium text-foreground">When to run (database only)</p>
-          {scheduleBlockFields('db', form.databaseSchedule, (databaseSchedule) => setForm((f) => (f ? { ...f, databaseSchedule } : f)))}
+          {scheduleBlockFields(
+            'db',
+            form.databaseSchedule,
+            (databaseSchedule) => setForm((f) => (f ? { ...f, databaseSchedule } : f)),
+            () => setCronHelpOpen(true),
+            serverTimeZone
+          )}
         </div>
         <div>
           <p className="mb-2 text-sm font-medium text-foreground">Keep database snapshots on disk and Dropbox</p>
@@ -861,8 +978,12 @@ export function BackupPage() {
           </p>
           <div className="mt-4">
             <p className="mb-2 text-sm font-medium text-foreground">When to run (full archive only)</p>
-            {scheduleBlockFields('dbf', form.databaseFullSchedule, (databaseFullSchedule) =>
-              setForm((f) => (f ? { ...f, databaseFullSchedule } : f))
+            {scheduleBlockFields(
+              'dbf',
+              form.databaseFullSchedule,
+              (databaseFullSchedule) => setForm((f) => (f ? { ...f, databaseFullSchedule } : f)),
+              () => setCronHelpOpen(true),
+              serverTimeZone
             )}
           </div>
           <div>
@@ -1095,7 +1216,13 @@ export function BackupPage() {
         </div>
         <div>
           <p className="mb-2 text-sm font-medium text-foreground">When to run (files mirror only)</p>
-          {scheduleBlockFields('mir', form.mirrorSchedule, (mirrorSchedule) => setForm((f) => (f ? { ...f, mirrorSchedule } : f)))}
+          {scheduleBlockFields(
+            'mir',
+            form.mirrorSchedule,
+            (mirrorSchedule) => setForm((f) => (f ? { ...f, mirrorSchedule } : f)),
+            () => setCronHelpOpen(true),
+            serverTimeZone
+          )}
         </div>
         <div className="border-t border-border pt-4">
           <button
@@ -1299,6 +1426,8 @@ export function BackupPage() {
           </div>
         )}
       </SettingsCollapsible>
+
+      {cronHelpOpen ? <CronSyntaxHelpModal onClose={() => setCronHelpOpen(false)} /> : null}
     </div>
   )
 }
