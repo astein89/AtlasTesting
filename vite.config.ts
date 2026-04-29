@@ -81,11 +81,28 @@ export default defineConfig({
   ],
   build: {
     sourcemap: false,
-    chunkSizeWarningLimit: 800,
+    chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('react-dom') || id.includes('/react/') || id.includes('react-router')) {
+            return 'vendor-react'
+          }
+          if (id.includes('mermaid')) return 'vendor-mermaid'
+          if (
+            id.includes('md-editor-rt') ||
+            id.includes('@codemirror') ||
+            id.includes('/codemirror') ||
+            id.includes('prettier')
+          ) {
+            return 'vendor-editor'
+          }
+          if (id.includes('cron-parser') || id.includes('cronstrue') || id.includes('luxon')) {
+            return 'vendor-schedule'
+          }
+          if (id.includes('jspdf') || id.includes('html2canvas')) return 'vendor-pdf'
+          return undefined
         },
       },
     },
