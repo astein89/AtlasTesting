@@ -1,27 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { appModules, type AppModule } from '@/config/modules'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { HomeWelcomeMarkdownModal } from '@/components/home/HomeWelcomeMarkdownModal'
-import { HomeModuleCardIcon } from '@/components/home/HomeModuleCardIcon'
-import { mergeHomeModuleOrder } from '@/lib/homeModuleOrder'
+import { HomeModuleCardsSortableList } from '@/components/home/HomeModuleCardsSortableList'
+import { mergeHomeModuleOrder, normalizeModulesHiddenFromHomeIds } from '@/lib/homeModuleOrder'
+import { normalizeModuleCardOverrides } from '@/lib/moduleCardPresentation'
 import { publicAsset } from '@/lib/basePath'
 import { uploadsUrl } from '@/lib/uploadsUrl'
 import {
@@ -32,22 +15,6 @@ import {
 } from '@/lib/welcomeLogoSize'
 import type { HomePageConfig } from '@/types/homePage'
 
-const APP_MODULE_ID_SET = new Set(appModules.map((m) => m.id))
-
-function normalizeModulesHiddenFromInitial(ids: string[] | undefined): string[] {
-  if (!Array.isArray(ids)) return []
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const id of ids) {
-    if (typeof id !== 'string') continue
-    const t = id.trim()
-    if (!APP_MODULE_ID_SET.has(t) || seen.has(t)) continue
-    out.push(t)
-    seen.add(t)
-  }
-  return out
-}
-
 function homeBrandingPreviewUrl(
   path: string | null,
   revision: number | undefined,
@@ -57,55 +24,6 @@ function homeBrandingPreviewUrl(
   let u = uploadsUrl(path.trim(), revision ?? 0)
   if (nonce > 0) u += (u.includes('?') ? '&' : '?') + `_=${nonce}`
   return u
-}
-
-function SortableModuleRow({
-  module: m,
-  hideFromHome,
-  onToggleHideFromHome,
-}: {
-  module: AppModule
-  hideFromHome: boolean
-  onToggleHideFromHome: () => void
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: m.id,
-  })
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
-  return (
-    <li ref={setNodeRef} style={style} className={isDragging ? 'opacity-60' : ''}>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/50 py-2 pl-1 pr-2">
-        <button
-          type="button"
-          className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
-          {...attributes}
-          {...listeners}
-          aria-label="Drag to reorder module"
-        >
-          <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-            <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
-          </svg>
-        </button>
-        <HomeModuleCardIcon moduleId={m.id} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">{m.title}</div>
-          <div className="truncate text-xs text-foreground/55">{m.description}</div>
-        </div>
-        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground/75 sm:shrink-0">
-          <input
-            type="checkbox"
-            checked={hideFromHome}
-            onChange={onToggleHideFromHome}
-            className="h-3.5 w-3.5 shrink-0 rounded border-border text-primary"
-          />
-          Hide on home
-        </label>
-      </div>
-    </li>
-  )
 }
 
 interface HomePageEditModalProps {
@@ -123,7 +41,10 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
   )
   const [moduleOrder, setModuleOrder] = useState(() => mergeHomeModuleOrder(initial.moduleOrder))
   const [modulesHiddenFromHome, setModulesHiddenFromHome] = useState<string[]>(() =>
-    normalizeModulesHiddenFromInitial(initial.modulesHiddenFromHome)
+    normalizeModulesHiddenFromHomeIds(initial.modulesHiddenFromHome)
+  )
+  const [moduleCardOverrides, setModuleCardOverrides] = useState(() =>
+    normalizeModuleCardOverrides(initial.moduleCardOverrides)
   )
   const [welcomeEditorOpen, setWelcomeEditorOpen] = useState(false)
   const [welcomeEditorSession, setWelcomeEditorSession] = useState(0)
@@ -137,22 +58,6 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
   const welcomeLogoFileRef = useRef<HTMLInputElement>(null)
   const faviconFileRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  )
-
-  const handleModuleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    setModuleOrder((ids) => {
-      const oldIndex = ids.indexOf(String(active.id))
-      const newIndex = ids.indexOf(String(over.id))
-      if (oldIndex < 0 || newIndex < 0) return ids
-      return arrayMove(ids, oldIndex, newIndex)
-    })
-  }
 
   const welcomeLogoPreviewSrc = homeBrandingPreviewUrl(
     welcomeLogoPath,
@@ -182,6 +87,7 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
         introMarkdown,
         moduleOrder,
         modulesHiddenFromHome,
+        moduleCardOverrides,
         showWelcomeLogo: Boolean(showWelcomeLogo),
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(welcomeLogoMaxRem),
         welcomeLogoPath: welcomeLogoPath ?? null,
@@ -403,31 +309,21 @@ export function HomePageEditModal({ initial, onClose, onSaved }: HomePageEditMod
           <div>
             <span className="mb-1 block text-sm font-medium text-foreground">Module cards</span>
             <p className="mb-2 text-xs text-foreground/65">
-              Reorder cards for the home hub, or hide a module from home only (sidebar and bookmarks still work;
-              permissions unchanged).
+              Reorder, use <strong className="font-medium text-foreground">Edit</strong> for title, description, and
+              icon, or hide a module from home only (sidebar and routes unchanged).
             </p>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleModuleDragEnd}>
-              <SortableContext items={moduleOrder} strategy={verticalListSortingStrategy}>
-                <ul className="space-y-2">
-                  {moduleOrder.map((id) => {
-                    const m = appModules.find((mod) => mod.id === id)
-                    if (!m) return null
-                    return (
-                      <SortableModuleRow
-                        key={id}
-                        module={m}
-                        hideFromHome={modulesHiddenFromHome.includes(id)}
-                        onToggleHideFromHome={() =>
-                          setModulesHiddenFromHome((prev) =>
-                            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-                          )
-                        }
-                      />
-                    )
-                  })}
-                </ul>
-              </SortableContext>
-            </DndContext>
+            <HomeModuleCardsSortableList
+              moduleOrder={moduleOrder}
+              onModuleOrderChange={setModuleOrder}
+              modulesHiddenFromHome={modulesHiddenFromHome}
+              onToggleHideFromHome={(id) =>
+                setModulesHiddenFromHome((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                )
+              }
+              moduleCardOverrides={moduleCardOverrides}
+              onModuleCardOverridesChange={setModuleCardOverrides}
+            />
           </div>
         </div>
 

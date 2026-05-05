@@ -20,6 +20,8 @@ import {
 } from '@/components/wiki/wikiMarkdownEditorTypes'
 import { useConditionalFormatPresets } from '../contexts/ConditionalFormatPresetsContext'
 import type { CfColorPreset } from '../lib/conditionalFormatPresets'
+import { HomeModuleOrderSettingsSection } from '@/components/home/HomeModuleOrderSettingsSection'
+import { useAuthStore } from '@/store/authStore'
 
 const EXAMPLE_DATE = new Date('2025-03-15T14:30:00')
 
@@ -591,6 +593,7 @@ function CfPresetRowEditor({
 }
 
 export function Settings() {
+  const canEditHome = useAuthStore((s) => s.hasPermission('home.edit'))
   const [config, setConfig] = useDateTimeConfigContext()
   const [openRecordsViewOnly, setOpenRecordsViewOnly] = useUserPreference('atlas-open-records-view-only', false)
   const [persistTableFilters, setPersistTableFilters] = useUserPreference('atlas-persist-table-filters', false)
@@ -623,6 +626,15 @@ export function Settings() {
       >
         <PasswordPolicySection />
       </SettingsCollapsible>
+
+      {canEditHome ? (
+        <SettingsCollapsible
+          title="Home hub module cards"
+          subtitle="Reorder tiles, hide modules from the hub only, and set custom titles, descriptions, and icon artwork for each module card."
+        >
+          <HomeModuleOrderSettingsSection />
+        </SettingsCollapsible>
+      ) : null}
 
       <SettingsCollapsible
         title="Recycle bins"

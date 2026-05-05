@@ -1,0 +1,1799 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AMR fleet emulator — control panel</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --surface: #1a2332;
+        --surface2: #243044;
+        --border: #2d3a4d;
+        --text: #e7edf5;
+        --muted: #8b9cb3;
+        --accent: #3b82f6;
+        --accent-dim: rgba(59, 130, 246, 0.15);
+        --danger: #ef4444;
+        --ok: #22c55e;
+        --radius: 12px;
+        --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f4f6f9;
+          --surface: #fff;
+          --surface2: #eef2f7;
+          --border: #d8dee8;
+          --text: #15202b;
+          --muted: #5c6d82;
+          --accent-dim: rgba(59, 130, 246, 0.12);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.45;
+        min-height: 100vh;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 1.25rem 1rem 2.5rem;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border);
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.35rem;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+      .sub {
+        margin: 0.35rem 0 0;
+        font-size: 0.85rem;
+        color: var(--muted);
+        max-width: 42rem;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      button,
+      .btn {
+        font: inherit;
+        cursor: pointer;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--text);
+        padding: 0.45rem 0.85rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: transparent;
+        color: #fff;
+      }
+      button.danger {
+        border-color: rgba(239, 68, 68, 0.45);
+        color: #fecaca;
+        background: rgba(239, 68, 68, 0.12);
+      }
+      @media (prefers-color-scheme: light) {
+        button.danger {
+          color: #991b1b;
+          background: rgba(239, 68, 68, 0.12);
+        }
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .tabs {
+        display: flex;
+        gap: 0.35rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+      }
+      .tabs button {
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: transparent;
+      }
+      .tabs button.active {
+        background: var(--accent-dim);
+        border-color: var(--accent);
+        color: var(--text);
+      }
+      .panel {
+        display: none;
+      }
+      .panel.active {
+        display: block;
+      }
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+      @media (min-width: 640px) {
+        .grid.cols-2 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem 1.1rem;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      .card h3 {
+        margin: 0 0 0.75rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .mono {
+        font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 0.35rem;
+      }
+      select,
+      input[type='number'],
+      input[type='text'],
+      textarea {
+        width: 100%;
+        padding: 0.45rem 0.55rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.9rem;
+      }
+      .field {
+        margin-bottom: 0.75rem;
+      }
+      .field:last-child {
+        margin-bottom: 0;
+      }
+      .row-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.85rem;
+        flex-wrap: wrap;
+      }
+      .row-actions button {
+        flex: 1;
+        min-width: 7rem;
+      }
+      .row-actions button.danger {
+        flex: 0 1 auto;
+        min-width: 5.5rem;
+      }
+      .panel-add-bar {
+        margin-bottom: 1rem;
+      }
+      .panel-add-bar.actions-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: rgba(15, 20, 25, 0.72);
+        backdrop-filter: blur(4px);
+      }
+      .modal-overlay.open {
+        display: flex;
+      }
+      .modal-dialog {
+        width: 100%;
+        max-width: 440px;
+        max-height: min(90vh, 640px);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+      }
+      .modal-dialog.wide {
+        max-width: 52rem;
+        max-height: min(92vh, 720px);
+      }
+      textarea {
+        min-height: 4.25rem;
+        font-size: 0.85rem;
+        line-height: 1.4;
+        resize: vertical;
+      }
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 1rem 1.1rem;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .modal-header h2 {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+      button.modal-close {
+        border: none;
+        background: transparent;
+        padding: 0.25rem;
+        font-size: 1.35rem;
+        line-height: 1;
+        cursor: pointer;
+        color: var(--muted);
+        border-radius: 6px;
+      }
+      button.modal-close:hover {
+        background: var(--surface2);
+        color: var(--text);
+      }
+      .modal-body {
+        padding: 1rem 1.1rem;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        padding: 0.85rem 1.1rem;
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .toast {
+        position: fixed;
+        bottom: 1.25rem;
+        right: 1.25rem;
+        left: 1.25rem;
+        max-width: 420px;
+        margin-left: auto;
+        padding: 0.65rem 1rem;
+        border-radius: 10px;
+        font-size: 0.875rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+        z-index: 50;
+        animation: slide 0.2s ease;
+      }
+      .toast.ok {
+        border-color: rgba(34, 197, 94, 0.45);
+      }
+      .toast.err {
+        border-color: rgba(239, 68, 68, 0.55);
+      }
+      @keyframes slide {
+        from {
+          transform: translateY(8px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+      .empty {
+        text-align: center;
+        padding: 2rem 1rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .link-api {
+        font-size: 0.8rem;
+        margin-top: 2rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .link-api a {
+        color: var(--accent);
+      }
+      code {
+        font-size: 0.82em;
+        background: var(--surface2);
+        padding: 0.12rem 0.35rem;
+        border-radius: 4px;
+      }
+      .sim-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .sim-badge.running {
+        border-color: var(--accent);
+        background: var(--accent-dim);
+        color: var(--text);
+      }
+      .sim-badge.complete {
+        border-color: rgba(34, 197, 94, 0.45);
+        background: rgba(34, 197, 94, 0.12);
+        color: var(--text);
+      }
+      .sim-badge.cancel {
+        border-color: rgba(239, 68, 68, 0.45);
+        background: rgba(239, 68, 68, 0.12);
+        color: var(--text);
+      }
+      .modal-section {
+        margin-top: 0.5rem;
+        padding-top: 0.85rem;
+        border-top: 1px dashed var(--border);
+      }
+      .modal-section:first-child {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
+      }
+      .modal-section h3 {
+        margin: 0 0 0.6rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+      }
+      .field-grid {
+        display: grid;
+        gap: 0.5rem 0.75rem;
+        grid-template-columns: 1fr 1fr;
+      }
+      .field-grid .field {
+        margin-bottom: 0;
+      }
+      .field-grid .field.full {
+        grid-column: span 2;
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+      }
+      .check-row input[type='checkbox'] {
+        width: auto;
+        margin: 0;
+      }
+      .check-row label {
+        margin: 0;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--text);
+      }
+      input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .row-actions button.btn-sim-start,
+      .row-actions button.btn-sim-stop {
+        flex: 1 1 5rem;
+        min-width: 5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div>
+          <h1>AMR fleet emulator</h1>
+          <p class="sub">
+            Edit robot, job, and container records stored in memory. Changes apply immediately to
+            <code>robotQuery</code>, <code>jobQuery</code>, and <code>containerQuery</code> responses.
+          </p>
+        </div>
+        <div class="actions">
+          <button type="button" id="btn-refresh">Refresh</button>
+          <button type="button" id="btn-sim-settings">Simulator settings&hellip;</button>
+          <button type="button" class="primary" id="btn-sim-start-all">Start all</button>
+          <button type="button" id="btn-sim-stop-all">Stop all</button>
+          <button type="button" class="danger" id="btn-reset">Reset all</button>
+        </div>
+      </header>
+
+      <div class="tabs" role="tablist">
+        <button type="button" class="active" data-tab="robots" role="tab" aria-selected="true">Robots</button>
+        <button type="button" data-tab="jobs" role="tab" aria-selected="false">Jobs</button>
+        <button type="button" data-tab="containers" role="tab" aria-selected="false">Containers</button>
+      </div>
+
+      <section id="panel-robots" class="panel active" role="tabpanel"></section>
+      <section id="panel-jobs" class="panel" role="tabpanel"></section>
+      <section id="panel-containers" class="panel" role="tabpanel"></section>
+
+      <p class="link-api">
+        Open this panel at <code>/</code> or <code>/__emulator/ui/</code> · Fleet JSON API:
+        <code>POST /api/amr/&lt;operation&gt;</code> · Raw JSON:
+        <a href="/__emulator/state" target="_blank" rel="noreferrer">/__emulator/state</a>
+      </p>
+    </div>
+
+    <div id="modal-add-robot" class="modal-overlay" aria-hidden="true">
+      <div class="modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="ttl-add-robot">
+        <div class="modal-header">
+          <h2 id="ttl-add-robot">Add robot</h2>
+          <button type="button" class="modal-close" data-close-modal="modal-add-robot" aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <section class="modal-section" style="margin-top: 0; padding-top: 0; border-top: none">
+            <h3>Identity</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-robot-id">Robot ID</label>
+                <input id="modal-add-robot-id" type="text" placeholder="e.g. 2" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-type">Robot type</label>
+                <select id="modal-add-robot-type"></select>
+              </div>
+            </div>
+          </section>
+          <section class="modal-section">
+            <h3>Map &amp; node</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-robot-map">Map code</label>
+                <input id="modal-add-robot-map" type="text" value="Main" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-floor">Floor</label>
+                <input id="modal-add-robot-floor" type="text" value="Main" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-building">Building</label>
+                <input id="modal-add-robot-building" type="text" value="Dev" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-node">Node code</label>
+                <input id="modal-add-robot-node" type="text" value="Main-Main-1" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-nodeLabel">Node label</label>
+                <input id="modal-add-robot-nodeLabel" type="text" placeholder="optional" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-nodeNumber">Node number</label>
+                <input id="modal-add-robot-nodeNumber" type="number" step="1" value="0" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-x">X</label>
+                <input id="modal-add-robot-x" type="text" value="0" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-y">Y</label>
+                <input id="modal-add-robot-y" type="text" value="0" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-orient">Orientation</label>
+                <input id="modal-add-robot-orient" type="text" value="0" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-nodeForeign">Node foreign code</label>
+                <input id="modal-add-robot-nodeForeign" type="text" placeholder="optional" autocomplete="off" />
+              </div>
+            </div>
+          </section>
+          <section class="modal-section">
+            <h3>Status &amp; equipment</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-robot-status">Fleet status</label>
+                <select id="modal-add-robot-status"></select>
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-battery">Battery %</label>
+                <input id="modal-add-robot-battery" type="number" min="0" max="100" step="1" value="100" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-container">Assigned container</label>
+                <input id="modal-add-robot-container" type="text" placeholder="optional" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-occupy">Occupy status</label>
+                <input id="modal-add-robot-occupy" type="number" step="1" value="0" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-lift">Lift status</label>
+                <input id="modal-add-robot-lift" type="number" step="1" value="0" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-reliability">Reliability</label>
+                <input id="modal-add-robot-reliability" type="number" step="1" value="1" />
+              </div>
+            </div>
+          </section>
+          <section class="modal-section">
+            <h3>Telemetry</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-robot-runtime">Run time</label>
+                <input id="modal-add-robot-runtime" type="text" value="0" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-karos">KAR OS version</label>
+                <input id="modal-add-robot-karos" type="text" placeholder="optional" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-robot-mileage">Mileage</label>
+                <input id="modal-add-robot-mileage" type="text" value="0" autocomplete="off" />
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button type="button" data-close-modal="modal-add-robot">Cancel</button>
+          <button type="button" class="primary" id="modal-add-robot-submit">Add robot</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-add-job" class="modal-overlay" aria-hidden="true">
+      <div class="modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="ttl-add-job">
+        <div class="modal-header">
+          <h2 id="ttl-add-job">Add job</h2>
+          <button type="button" class="modal-close" data-close-modal="modal-add-job" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <section class="modal-section" style="margin-top: 0; padding-top: 0; border-top: none">
+            <h3>Mission</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-job-code">Job / mission code</label>
+                <input id="modal-add-job-code" type="text" placeholder="e.g. demo-move-1" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-job-workflow">Workflow ID</label>
+                <input id="modal-add-job-workflow" type="number" min="1" step="1" placeholder="auto if empty" />
+              </div>
+              <div class="field">
+                <label for="modal-add-job-status">Initial status</label>
+                <select id="modal-add-job-status"></select>
+              </div>
+              <div class="field">
+                <label for="modal-add-job-map">Map code</label>
+                <input id="modal-add-job-map" type="text" value="Main" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-job-robot">Robot ID</label>
+                <input id="modal-add-job-robot" type="text" value="1" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-job-container">Container code</label>
+                <input id="modal-add-job-container" type="text" placeholder="optional" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-job-begin">Begin cell (foreign)</label>
+                <input id="modal-add-job-begin" type="text" placeholder="optional if route set" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-job-target">Target cell (foreign)</label>
+                <input id="modal-add-job-target" type="text" placeholder="optional if route set" autocomplete="off" />
+              </div>
+              <div class="field full">
+                <label for="modal-add-job-positions">Route nodes (one per line or comma-separated)</label>
+                <textarea id="modal-add-job-positions" rows="4" placeholder="Main-Main-1&#10;Main-Main-6"></textarea>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button type="button" data-close-modal="modal-add-job">Cancel</button>
+          <button type="button" class="primary" id="modal-add-job-submit">Add job</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-add-container" class="modal-overlay" aria-hidden="true">
+      <div class="modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="ttl-add-container">
+        <div class="modal-header">
+          <h2 id="ttl-add-container">Add container</h2>
+          <button type="button" class="modal-close" data-close-modal="modal-add-container" aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <section class="modal-section" style="margin-top: 0; padding-top: 0; border-top: none">
+            <h3>Identity</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-cc-code">Container code</label>
+                <input id="modal-add-cc-code" type="text" placeholder="e.g. BOX-002" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-model">Model code</label>
+                <input id="modal-add-cc-model" type="text" value="Pallet" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-node">Node code</label>
+                <input id="modal-add-cc-node" type="text" value="Main-Main-1" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-orient">Orientation</label>
+                <input id="modal-add-cc-orient" type="text" value="0" autocomplete="off" />
+              </div>
+            </div>
+          </section>
+          <section class="modal-section">
+            <h3>Map</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="modal-add-cc-map">Map code</label>
+                <input id="modal-add-cc-map" type="text" value="Main" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-district">District code</label>
+                <input id="modal-add-cc-district" type="text" value="Main" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-empty">Empty / full</label>
+                <select id="modal-add-cc-empty">
+                  <option value="0" selected>0 — Empty</option>
+                  <option value="1">1 — Full</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-inmap">In-map status</label>
+                <select id="modal-add-cc-inmap">
+                  <option value="1" selected>1 — In map</option>
+                  <option value="0">0 — Not in map</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="modal-add-cc-carry">Is carry</label>
+                <select id="modal-add-cc-carry">
+                  <option value="0" selected>0 — No</option>
+                  <option value="1">1 — Yes</option>
+                </select>
+              </div>
+              <div class="field full check-row" style="margin-top: 0.35rem">
+                <input id="modal-add-cc-persist" type="checkbox" />
+                <label for="modal-add-cc-persist">Persistent container</label>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button type="button" data-close-modal="modal-add-container">Cancel</button>
+          <button type="button" class="primary" id="modal-add-container-submit">Add container</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-sim-settings" class="modal-overlay" aria-hidden="true">
+      <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="ttl-sim-settings">
+        <div class="modal-header">
+          <h2 id="ttl-sim-settings">Simulator settings</h2>
+          <button type="button" class="modal-close" data-close-modal="modal-sim-settings" aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <section class="modal-section">
+            <h3>Mission lifecycle</h3>
+            <p class="sub" style="margin: 0 0 0.65rem; font-size: 0.8rem">
+              Each timer picks a random delay in <strong>ms</strong> between min and max when it starts (a fresh draw per node hop along the route).
+            </p>
+            <div class="check-row">
+              <input id="sim-autoStartOnCreate" type="checkbox" />
+              <label for="sim-autoStartOnCreate">Auto-start sim when a job is created</label>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="sim-delayCreatedMsMin">Created &rarr; Executing min (ms)</label>
+                <input id="sim-delayCreatedMsMin" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-delayCreatedMsMax">Created &rarr; Executing max (ms)</label>
+                <input id="sim-delayCreatedMsMax" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-nodeStepMsMin">Node step min (ms)</label>
+                <input id="sim-nodeStepMsMin" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-nodeStepMsMax">Node step max (ms)</label>
+                <input id="sim-nodeStepMsMax" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-waitingProbabilityPct">Waiting probability (%)</label>
+                <input id="sim-waitingProbabilityPct" type="number" min="0" max="100" step="1" />
+              </div>
+              <div class="field">
+                <label for="sim-delayWaitingMsMin">Waiting phase min (ms)</label>
+                <input id="sim-delayWaitingMsMin" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-delayWaitingMsMax">Waiting phase max (ms)</label>
+                <input id="sim-delayWaitingMsMax" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-delayCompleteMsMin">Complete settle min (ms)</label>
+                <input id="sim-delayCompleteMsMin" type="number" min="0" step="100" />
+              </div>
+              <div class="field">
+                <label for="sim-delayCompleteMsMax">Complete settle max (ms)</label>
+                <input id="sim-delayCompleteMsMax" type="number" min="0" step="100" />
+              </div>
+            </div>
+          </section>
+          <section class="modal-section">
+            <h3>Dashboard</h3>
+            <p class="sub" style="margin: 0 0 0.65rem; font-size: 0.8rem">
+              Polls <code>/__emulator/state</code> on this interval while the tab is visible. Polling pauses when you switch away.
+            </p>
+            <div class="field-grid">
+              <div class="field full">
+                <label for="sim-autoRefreshIntervalMs">Auto-refresh interval (ms)</label>
+                <input id="sim-autoRefreshIntervalMs" type="number" min="250" max="120000" step="100" />
+              </div>
+            </div>
+          </section>
+          <section class="modal-section">
+            <h3>Battery</h3>
+            <div class="field-grid">
+              <div class="field">
+                <label for="sim-drainExecutingPctPerSec">Drain while Executing (%/sec)</label>
+                <input id="sim-drainExecutingPctPerSec" type="number" min="0" step="0.1" />
+              </div>
+              <div class="field">
+                <label for="sim-drainIdlePctPerSec">Drain while Idle (%/sec)</label>
+                <input id="sim-drainIdlePctPerSec" type="number" min="0" step="0.1" />
+              </div>
+              <div class="field full">
+                <label for="sim-chargePctPerSec">Charge while Charging (%/sec)</label>
+                <input id="sim-chargePctPerSec" type="number" min="0" step="0.1" />
+              </div>
+            </div>
+            <div class="check-row" style="margin-top: 0.85rem">
+              <input id="sim-autoChargeEnabled" type="checkbox" />
+              <label for="sim-autoChargeEnabled">Auto-charge cycle (Idle &harr; Charging)</label>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="sim-lowBatteryPct">Low battery threshold (%)</label>
+                <input id="sim-lowBatteryPct" type="number" min="0" max="100" step="1" />
+              </div>
+              <div class="field">
+                <label for="sim-fullBatteryPct">Full battery threshold (%)</label>
+                <input id="sim-fullBatteryPct" type="number" min="0" max="100" step="1" />
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button type="button" data-close-modal="modal-sim-settings">Cancel</button>
+          <button type="button" class="primary" id="modal-sim-settings-submit">Save settings</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const ROBOT_STATUSES = [
+        [1, 'Departure'],
+        [2, 'Offline'],
+        [3, 'Idle'],
+        [4, 'Executing'],
+        [5, 'Charging'],
+        [6, 'Updating'],
+        [7, 'Abnormal'],
+      ]
+
+      /**
+       * Model strings aligned with server `DEFAULT_AMR_FLEET_CONFIG.robotModels` and the seeded emulator robot.
+       */
+      const ROBOT_TYPES = ['KMP 600P-EU-D diffDrive', 'KMP 1500P-EU-D diffDrive']
+
+      /** Fleet job / mission status (same as app `MISSION_JOB_STATUS_NAMES`). */
+      const JOB_STATUSES = [
+        [10, 'Created'],
+        [20, 'Executing'],
+        [25, 'Waiting'],
+        [28, 'Cancelling'],
+        [30, 'Complete'],
+        [31, 'Cancelled'],
+        [35, 'Manual complete'],
+        [50, 'Warning'],
+        [60, 'Startup error'],
+      ]
+
+      let toastTimer = null
+      function toast(msg, kind = 'ok') {
+        document.querySelectorAll('.toast').forEach((el) => el.remove())
+        const el = document.createElement('div')
+        el.className = `toast ${kind}`
+        el.textContent = msg
+        document.body.appendChild(el)
+        clearTimeout(toastTimer)
+        toastTimer = setTimeout(() => el.remove(), 3800)
+      }
+
+      async function api(method, path, body, fetchOpts = {}) {
+        const r = await fetch(path, {
+          method,
+          headers: body ? { 'Content-Type': 'application/json' } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+          ...fetchOpts,
+        })
+        const text = await r.text()
+        let data = null
+        try {
+          data = text ? JSON.parse(text) : null
+        } catch {
+          data = text
+        }
+        if (!r.ok) throw new Error(data?.error || data?.message || r.statusText || 'Request failed')
+        return data
+      }
+
+      async function loadState() {
+        return api('GET', '/__emulator/state', undefined, { cache: 'no-store' })
+      }
+
+      function tabSetup() {
+        document.querySelectorAll('.tabs [data-tab]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-tab')
+            document.querySelectorAll('.tabs [data-tab]').forEach((b) => {
+              b.classList.toggle('active', b === btn)
+              b.setAttribute('aria-selected', b === btn ? 'true' : 'false')
+            })
+            document.querySelectorAll('.panel').forEach((p) => {
+              p.classList.toggle('active', p.id === `panel-${id}`)
+            })
+          })
+        })
+      }
+
+      function robotOptionsHtml(selected) {
+        const sel = Number(selected)
+        return ROBOT_STATUSES.map(
+          ([code, name]) =>
+            `<option value="${code}" ${code === sel ? 'selected' : ''}>${code} — ${name}</option>`
+        ).join('')
+      }
+
+      function jobOptionsHtml(selected) {
+        const sel = Number(selected)
+        const hasNum = Number.isFinite(sel)
+        const knownCodes = new Set(JOB_STATUSES.map(([c]) => c))
+        let html = JOB_STATUSES.map(
+          ([code, name]) =>
+            `<option value="${code}" ${hasNum && code === sel ? 'selected' : ''}>${code} — ${escapeHtml(
+              name
+            )}</option>`
+        ).join('')
+        if (hasNum && !knownCodes.has(sel)) {
+          html += `<option value="${sel}" selected>${sel} — Unknown</option>`
+        }
+        return html
+      }
+
+      function robotTypeOptionsHtml(selected) {
+        const sel = String(selected || ROBOT_TYPES[0])
+        return ROBOT_TYPES.map(
+          (t) =>
+            `<option value="${escapeAttr(t)}" ${t === sel ? 'selected' : ''}>${escapeHtml(t)}</option>`
+        ).join('')
+      }
+
+      function openModal(id) {
+        const el = document.getElementById(id)
+        if (!el) return
+        el.classList.add('open')
+        el.setAttribute('aria-hidden', 'false')
+        document.body.style.overflow = 'hidden'
+        if (id === 'modal-add-job') {
+          document.getElementById('modal-add-job-status').innerHTML = jobOptionsHtml(10)
+        }
+        const focusMap = {
+          'modal-add-robot': 'modal-add-robot-id',
+          'modal-add-job': 'modal-add-job-code',
+          'modal-add-container': 'modal-add-cc-code',
+        }
+        const focusId = focusMap[id]
+        if (focusId) setTimeout(() => document.getElementById(focusId)?.focus(), 0)
+      }
+
+      function closeModal(id) {
+        const el = document.getElementById(id)
+        if (!el) return
+        el.classList.remove('open')
+        el.setAttribute('aria-hidden', 'true')
+        document.body.style.overflow = ''
+      }
+
+      function setupAddModals() {
+        document.addEventListener('keydown', (e) => {
+          if (e.key !== 'Escape') return
+          const open = document.querySelector('.modal-overlay.open')
+          if (open) closeModal(open.id)
+        })
+        ;['modal-add-robot', 'modal-add-job', 'modal-add-container', 'modal-sim-settings'].forEach((mid) => {
+          const overlay = document.getElementById(mid)
+          overlay.addEventListener('click', (e) => {
+            if (e.target !== overlay) return
+            // Simulator settings: must close via Cancel / Save / × — not by clicking the backdrop.
+            if (mid === 'modal-sim-settings') return
+            closeModal(mid)
+          })
+          const dlg = overlay.querySelector('.modal-dialog')
+          if (dlg) dlg.addEventListener('click', (e) => e.stopPropagation())
+        })
+        document.querySelectorAll('[data-close-modal]').forEach((btn) => {
+          btn.addEventListener('click', () => closeModal(btn.getAttribute('data-close-modal')))
+        })
+
+        document.getElementById('modal-add-robot-type').innerHTML = robotTypeOptionsHtml(ROBOT_TYPES[0])
+        document.getElementById('modal-add-robot-status').innerHTML = robotOptionsHtml(3)
+
+        document.getElementById('modal-add-robot-submit').addEventListener('click', async () => {
+          const btn = document.getElementById('modal-add-robot-submit')
+          const idEl = document.getElementById('modal-add-robot-id')
+          const typeEl = document.getElementById('modal-add-robot-type')
+          const id = idEl.value.trim()
+          if (!id) {
+            toast('Robot ID is required', 'err')
+            return
+          }
+          const numOr = (elId, fallback) => {
+            const n = Number(document.getElementById(elId).value)
+            return Number.isFinite(n) ? n : fallback
+          }
+          btn.disabled = true
+          try {
+            await api('POST', '/__emulator/robots', {
+              robotId: id,
+              robotType: typeEl.value.trim() || ROBOT_TYPES[0],
+              mapCode: document.getElementById('modal-add-robot-map').value.trim() || 'Main',
+              floorNumber: document.getElementById('modal-add-robot-floor').value.trim() || 'Main',
+              buildingCode: document.getElementById('modal-add-robot-building').value.trim() || 'Dev',
+              nodeCode: document.getElementById('modal-add-robot-node').value.trim() || 'Main-Main-1',
+              nodeLabel: document.getElementById('modal-add-robot-nodeLabel').value.trim(),
+              nodeNumber: numOr('modal-add-robot-nodeNumber', 0),
+              x: document.getElementById('modal-add-robot-x').value.trim() || '0',
+              y: document.getElementById('modal-add-robot-y').value.trim() || '0',
+              robotOrientation: document.getElementById('modal-add-robot-orient').value.trim() || '0',
+              nodeForeignCode: document.getElementById('modal-add-robot-nodeForeign').value.trim(),
+              status: Number(document.getElementById('modal-add-robot-status').value),
+              batteryLevel: numOr('modal-add-robot-battery', 100),
+              containerCode: document.getElementById('modal-add-robot-container').value.trim(),
+              occupyStatus: numOr('modal-add-robot-occupy', 0),
+              liftStatus: numOr('modal-add-robot-lift', 0),
+              reliability: numOr('modal-add-robot-reliability', 1),
+              runTime: document.getElementById('modal-add-robot-runtime').value.trim() || '0',
+              karOsVersion: document.getElementById('modal-add-robot-karos').value.trim(),
+              mileage: document.getElementById('modal-add-robot-mileage').value.trim() || '0',
+            })
+            toast(`Robot ${id} added`)
+            idEl.value = ''
+            typeEl.innerHTML = robotTypeOptionsHtml(ROBOT_TYPES[0])
+            closeModal('modal-add-robot')
+            await refresh()
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-add-job-submit').addEventListener('click', async () => {
+          const btn = document.getElementById('modal-add-job-submit')
+          const codeEl = document.getElementById('modal-add-job-code')
+          const jc = codeEl.value.trim()
+          if (!jc) {
+            toast('Job code is required', 'err')
+            return
+          }
+          btn.disabled = true
+          try {
+            const positions = parsePositionsText(document.getElementById('modal-add-job-positions').value)
+            const body = {
+              jobCode: jc,
+              robotId: document.getElementById('modal-add-job-robot').value.trim() || '1',
+              containerCode: document.getElementById('modal-add-job-container').value.trim(),
+              status: Number(document.getElementById('modal-add-job-status').value),
+              mapCode: document.getElementById('modal-add-job-map').value.trim() || 'Main',
+              beginCellCodeForeign: document.getElementById('modal-add-job-begin').value.trim(),
+              targetCellCodeForeign: document.getElementById('modal-add-job-target').value.trim(),
+              positions,
+            }
+            const wfRaw = document.getElementById('modal-add-job-workflow').value.trim()
+            if (wfRaw) {
+              const w = Number(wfRaw)
+              if (Number.isFinite(w)) body.workflowId = w
+            }
+            await api('POST', '/__emulator/jobs', body)
+            toast(`Job ${jc} added`)
+            codeEl.value = ''
+            document.getElementById('modal-add-job-positions').value = ''
+            closeModal('modal-add-job')
+            await refresh()
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-add-container-submit').addEventListener('click', async () => {
+          const btn = document.getElementById('modal-add-container-submit')
+          const codeEl = document.getElementById('modal-add-cc-code')
+          const cc = codeEl.value.trim()
+          if (!cc) {
+            toast('Container code is required', 'err')
+            return
+          }
+          btn.disabled = true
+          try {
+            await api('POST', '/__emulator/containers', {
+              containerCode: cc,
+              nodeCode: document.getElementById('modal-add-cc-node').value.trim() || 'Main-Main-1',
+              containerModelCode: document.getElementById('modal-add-cc-model').value.trim() || 'Pallet',
+              orientation: document.getElementById('modal-add-cc-orient').value.trim() || '0',
+              mapCode: document.getElementById('modal-add-cc-map').value.trim() || 'Main',
+              districtCode: document.getElementById('modal-add-cc-district').value.trim() || 'Main',
+              emptyFullStatus: Number(document.getElementById('modal-add-cc-empty').value),
+              inMapStatus: Number(document.getElementById('modal-add-cc-inmap').value),
+              isCarry: Number(document.getElementById('modal-add-cc-carry').value),
+              persistentContainer: document.getElementById('modal-add-cc-persist').checked,
+            })
+            toast(`Container ${cc} added`)
+            codeEl.value = ''
+            closeModal('modal-add-container')
+            await refresh()
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+      }
+
+      function addBarRobots() {
+        return `<div class="panel-add-bar"><button type="button" class="primary" id="btn-open-add-robot">Add robot…</button></div>`
+      }
+
+      function addBarJobs() {
+        return `<div class="panel-add-bar actions-row">
+          <button type="button" class="primary" id="btn-open-add-job">Add job…</button>
+          <button type="button" id="btn-clear-completed-jobs" title="Delete jobs in terminal status (Complete, Cancelled, Warning, …)">Remove completed</button>
+        </div>`
+      }
+
+      function addBarContainers() {
+        return `<div class="panel-add-bar"><button type="button" class="primary" id="btn-open-add-container">Add container…</button></div>`
+      }
+
+      function renderRobots(entries) {
+        const el = document.getElementById('panel-robots')
+        const grid =
+          entries.length === 0
+            ? '<div class="empty">No robots yet. Use <strong>Add robot…</strong> or click Reset for defaults.</div>'
+            : `<div class="grid cols-2">${entries
+                .map(([mapKey, row]) => {
+                  const id = String(mapKey)
+                  const batt =
+                    row.batteryLevel != null && row.batteryLevel !== ''
+                      ? Number(row.batteryLevel)
+                      : ''
+                  const battNum = Number.isFinite(batt) ? Math.min(100, Math.max(0, batt)) : 50
+                  const nn =
+                    row.nodeNumber != null && row.nodeNumber !== '' ? Number(row.nodeNumber) : 0
+                  const nodeNum = Number.isFinite(nn) ? nn : 0
+                  return `
+          <article class="card" data-robot-id="${encodeURIComponent(id)}">
+            <h3><span>Robot</span> <span class="mono">${escapeHtml(id)}</span></h3>
+            <div class="field-grid">
+              <div class="field">
+                <label>Type</label>
+                <select data-field="robotType">${robotTypeSelectHtml(row.robotType)}</select>
+              </div>
+              <div class="field">
+                <label>Fleet status</label>
+                <select data-field="status" data-kind="int">${robotOptionsHtml(row.status)}</select>
+              </div>
+              <div class="field">
+                <label>Battery %</label>
+                <input type="number" min="0" max="100" step="1" data-field="batteryLevel" value="${battNum}" />
+              </div>
+              <div class="field">
+                <label>Map code</label>
+                <input type="text" data-field="mapCode" value="${escapeAttr(String(row.mapCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Floor</label>
+                <input type="text" data-field="floorNumber" value="${escapeAttr(String(row.floorNumber ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Building</label>
+                <input type="text" data-field="buildingCode" value="${escapeAttr(String(row.buildingCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Assigned container</label>
+                <input type="text" data-field="containerCode" value="${escapeAttr(String(row.containerCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Occupy status</label>
+                <input type="number" step="1" data-field="occupyStatus" value="${escapeAttr(String(row.occupyStatus ?? 0))}" />
+              </div>
+              <div class="field">
+                <label>Node code</label>
+                <input type="text" data-field="nodeCode" value="${escapeAttr(String(row.nodeCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Node label</label>
+                <input type="text" data-field="nodeLabel" value="${escapeAttr(String(row.nodeLabel ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Node number</label>
+                <input type="number" step="1" data-field="nodeNumber" value="${nodeNum}" />
+              </div>
+              <div class="field">
+                <label>X</label>
+                <input type="text" data-field="x" value="${escapeAttr(String(row.x ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Y</label>
+                <input type="text" data-field="y" value="${escapeAttr(String(row.y ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Orientation</label>
+                <input type="text" data-field="robotOrientation" value="${escapeAttr(String(row.robotOrientation ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Node foreign code</label>
+                <input type="text" data-field="nodeForeignCode" value="${escapeAttr(String(row.nodeForeignCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Lift status</label>
+                <input type="number" step="1" data-field="liftStatus" value="${escapeAttr(String(row.liftStatus ?? 0))}" />
+              </div>
+              <div class="field">
+                <label>Reliability</label>
+                <input type="number" step="1" data-field="reliability" value="${escapeAttr(String(row.reliability ?? 1))}" />
+              </div>
+              <div class="field">
+                <label>Run time</label>
+                <input type="text" data-field="runTime" value="${escapeAttr(String(row.runTime ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>KAR OS version</label>
+                <input type="text" data-field="karOsVersion" value="${escapeAttr(String(row.karOsVersion ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Mileage</label>
+                <input type="text" data-field="mileage" value="${escapeAttr(String(row.mileage ?? ''))}" />
+              </div>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="primary btn-save-robot">Apply</button>
+              <button type="button" class="danger btn-del-robot">Remove</button>
+            </div>
+          </article>`
+                })
+                .join('')}</div>`
+        el.innerHTML = addBarRobots() + grid
+
+        document.getElementById('btn-open-add-robot').addEventListener('click', () => openModal('modal-add-robot'))
+
+        el.querySelectorAll('.btn-save-robot').forEach((btn) => {
+          const card = btn.closest('.card')
+          const rid = decodeURIComponent(card.getAttribute('data-robot-id'))
+          btn.addEventListener('click', async () => {
+            btn.disabled = true
+            try {
+              await api('PATCH', `/__emulator/robots/${encodeURIComponent(rid)}`, patchFromCard(card))
+              toast(`Robot ${rid} updated`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        })
+
+        el.querySelectorAll('.btn-del-robot').forEach((btn) => {
+          const card = btn.closest('.card')
+          const rid = decodeURIComponent(card.getAttribute('data-robot-id'))
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Remove robot ${rid}?`)) return
+            btn.disabled = true
+            try {
+              await api('DELETE', `/__emulator/robots/${encodeURIComponent(rid)}`)
+              toast(`Robot ${rid} removed`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        })
+      }
+
+      const TERMINAL_JOB_STATUS_SET = new Set([30, 31, 35, 50, 60])
+
+      function simBadgeHtml(simEntry, jobStatus) {
+        const status = Number(jobStatus)
+        if (status === 30 || status === 35) return '<span class="sim-badge complete">complete</span>'
+        if (status === 31) return '<span class="sim-badge cancel">cancelled</span>'
+        if (status === 50) return '<span class="sim-badge cancel">warning</span>'
+        if (status === 60) return '<span class="sim-badge cancel">startup err</span>'
+        if (!simEntry || !simEntry.running) return '<span class="sim-badge">sim: stopped</span>'
+        if (simEntry.phase === 'created') return '<span class="sim-badge running">sim: starting</span>'
+        if (simEntry.phase === 'waiting') return '<span class="sim-badge running">sim: waiting</span>'
+        const idx = Number(simEntry.stepIdx) || 0
+        return `<span class="sim-badge running">sim: executing ${idx}</span>`
+      }
+
+      function renderJobs(entries, sim) {
+        const el = document.getElementById('panel-jobs')
+        const simByCode = new Map((sim?.jobs ?? []).map((j) => [String(j.code), j]))
+        const grid =
+          entries.length === 0
+            ? '<div class="empty">No jobs yet. Use <strong>Add job…</strong> or submit a mission from the app.</div>'
+            : `<div class="grid cols-2">${entries
+                .map(([code, row]) => {
+                  const jc = String(code)
+                  const simEntry = simByCode.get(jc)
+                  const isTerminal = TERMINAL_JOB_STATUS_SET.has(Number(row.status))
+                  const running = !!simEntry?.running
+                  const positions = Array.isArray(row.positions) ? row.positions : []
+                  const pathHint =
+                    positions.length > 0
+                      ? `<p class="mono" style="margin:0 0 0.5rem;font-size:0.72rem;color:var(--muted)">Sim route preview: ${escapeHtml(
+                          positions.join(' → ')
+                        )}</p>`
+                      : ''
+                  return `
+          <article class="card" data-job-code="${encodeURIComponent(jc)}">
+            <h3>
+              <span>Job <span class="mono" style="margin-left: 0.35rem">${escapeHtml(jc)}</span></span>
+              ${simBadgeHtml(simEntry, row.status)}
+            </h3>
+            <div class="field-grid">
+              <div class="field">
+                <label>Mission / job status</label>
+                <select data-field="status" data-kind="int">${jobOptionsHtml(row.status ?? 10)}</select>
+              </div>
+              <div class="field">
+                <label>Map code</label>
+                <input type="text" data-field="mapCode" value="${escapeAttr(String(row.mapCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Workflow ID</label>
+                <input type="number" min="1" step="1" data-field="workflowId" value="${escapeAttr(
+                        String(row.workflowId != null && row.workflowId !== '' ? row.workflowId : '')
+                      )}" />
+              </div>
+              <div class="field">
+                <label>Robot ID</label>
+                <input type="text" data-field="robotId" value="${escapeAttr(String(row.robotId ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Container code</label>
+                <input type="text" data-field="containerCode" value="${escapeAttr(String(row.containerCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Begin cell (foreign)</label>
+                <input type="text" data-field="beginCellCodeForeign" value="${escapeAttr(
+                        String(row.beginCellCodeForeign ?? '')
+                      )}" />
+              </div>
+              <div class="field">
+                <label>Target cell (foreign)</label>
+                <input type="text" data-field="targetCellCodeForeign" value="${escapeAttr(
+                        String(row.targetCellCodeForeign ?? '')
+                      )}" />
+              </div>
+              <div class="field full">
+                <label>Route nodes (one per line or comma-separated)</label>
+                <textarea data-field="positions" rows="3">${escapeHtml(
+                        Array.isArray(row.positions) ? row.positions.join('\n') : ''
+                      )}</textarea>
+              </div>
+            </div>
+            ${pathHint}
+            <div class="row-actions">
+              <button type="button" class="primary btn-sim-start" ${running || isTerminal ? 'disabled' : ''}>Start</button>
+              <button type="button" class="btn-sim-stop" ${!running ? 'disabled' : ''}>Stop</button>
+              <button type="button" class="btn-save-job">Apply</button>
+              <button type="button" class="danger btn-del-job">Remove</button>
+            </div>
+          </article>`
+                })
+                .join('')}</div>`
+        el.innerHTML = addBarJobs() + grid
+
+        document.getElementById('btn-open-add-job').addEventListener('click', () => openModal('modal-add-job'))
+
+        document.getElementById('btn-clear-completed-jobs').addEventListener('click', async () => {
+          if (
+            !confirm(
+              'Remove all jobs in a terminal state (Complete, Cancelled, Manual complete, Warning, Startup error, …)?'
+            )
+          ) {
+            return
+          }
+          const btn = document.getElementById('btn-clear-completed-jobs')
+          btn.disabled = true
+          try {
+            const r = await api('POST', '/__emulator/jobs/clear-terminal')
+            const n = Number(r?.removed) || 0
+            if (n === 0) toast('No terminal jobs to remove')
+            else toast(`Removed ${n} completed / terminal job${n === 1 ? '' : 's'}`)
+            await refresh()
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        el.querySelectorAll('.btn-sim-start').forEach((btn) => {
+          const card = btn.closest('.card')
+          const code = decodeURIComponent(card.getAttribute('data-job-code'))
+          btn.addEventListener('click', async () => {
+            btn.disabled = true
+            try {
+              await api('POST', `/__emulator/jobs/${encodeURIComponent(code)}/sim/start`)
+              toast(`Sim started for ${code}`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+              btn.disabled = false
+            }
+          })
+        })
+
+        el.querySelectorAll('.btn-sim-stop').forEach((btn) => {
+          const card = btn.closest('.card')
+          const code = decodeURIComponent(card.getAttribute('data-job-code'))
+          btn.addEventListener('click', async () => {
+            btn.disabled = true
+            try {
+              await api('POST', `/__emulator/jobs/${encodeURIComponent(code)}/sim/stop`)
+              toast(`Sim stopped for ${code}`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+              btn.disabled = false
+            }
+          })
+        })
+
+        el.querySelectorAll('.btn-save-job').forEach((btn) => {
+          const card = btn.closest('.card')
+          const code = decodeURIComponent(card.getAttribute('data-job-code'))
+          btn.addEventListener('click', async () => {
+            btn.disabled = true
+            try {
+              await api('PATCH', `/__emulator/jobs/${encodeURIComponent(code)}`, patchFromCard(card))
+              toast(`Job ${code} updated`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        })
+
+        el.querySelectorAll('.btn-del-job').forEach((btn) => {
+          const card = btn.closest('.card')
+          const code = decodeURIComponent(card.getAttribute('data-job-code'))
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Remove job ${code}?`)) return
+            btn.disabled = true
+            try {
+              await api('DELETE', `/__emulator/jobs/${encodeURIComponent(code)}`)
+              toast(`Job ${code} removed`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        })
+      }
+
+      function renderContainers(entries) {
+        const el = document.getElementById('panel-containers')
+        const grid =
+          entries.length === 0
+            ? '<div class="empty">No containers yet. Use <strong>Add container…</strong> or click Reset for defaults.</div>'
+            : `<div class="grid cols-2">${entries
+                .map(([mapKey, row]) => {
+                  const cc = String(mapKey)
+                  const ims = String(row.inMapStatus ?? '0')
+                  const ef = String(row.emptyFullStatus ?? '0')
+                  const ic = String(row.isCarry ?? '0')
+                  const pc = row.persistentContainer === true || row.persistentContainer === 1
+                  return `
+          <article class="card" data-container-code="${encodeURIComponent(cc)}">
+            <h3><span>Container</span> <span class="mono">${escapeHtml(cc)}</span></h3>
+            <div class="field-grid">
+              <div class="field">
+                <label>Node code</label>
+                <input type="text" data-field="nodeCode" value="${escapeAttr(String(row.nodeCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Orientation</label>
+                <input type="text" data-field="orientation" value="${escapeAttr(String(row.orientation ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Model code</label>
+                <input type="text" data-field="containerModelCode" value="${escapeAttr(
+                        String(row.containerModelCode ?? '')
+                      )}" />
+              </div>
+              <div class="field">
+                <label>Map code</label>
+                <input type="text" data-field="mapCode" value="${escapeAttr(String(row.mapCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>District code</label>
+                <input type="text" data-field="districtCode" value="${escapeAttr(String(row.districtCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Empty / full</label>
+                <select data-field="emptyFullStatus" data-kind="int">
+                  <option value="0" ${ef === '0' ? 'selected' : ''}>0 — Empty</option>
+                  <option value="1" ${ef === '1' ? 'selected' : ''}>1 — Full</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>In-map status</label>
+                <select data-field="inMapStatus" data-kind="int">
+                  <option value="0" ${ims === '0' ? 'selected' : ''}>0 — Not in map</option>
+                  <option value="1" ${ims === '1' ? 'selected' : ''}>1 — In map</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Is carry</label>
+                <select data-field="isCarry" data-kind="int">
+                  <option value="0" ${ic === '0' ? 'selected' : ''}>0 — No</option>
+                  <option value="1" ${ic === '1' ? 'selected' : ''}>1 — Yes</option>
+                </select>
+              </div>
+              <div class="field full check-row" style="margin-top: 0.25rem">
+                <input id="cp-${escapeAttr(cc)}" type="checkbox" data-field="persistentContainer" ${
+                        pc ? 'checked' : ''
+                      } />
+                <label for="cp-${escapeAttr(cc)}" style="margin: 0">Persistent container</label>
+              </div>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="primary btn-save-container">Apply</button>
+              <button type="button" class="danger btn-del-container">Remove</button>
+            </div>
+          </article>`
+                })
+                .join('')}</div>`
+        el.innerHTML = addBarContainers() + grid
+
+        document.getElementById('btn-open-add-container').addEventListener('click', () => openModal('modal-add-container'))
+
+        el.querySelectorAll('.btn-save-container').forEach((btn) => {
+          const card = btn.closest('.card')
+          const code = decodeURIComponent(card.getAttribute('data-container-code'))
+          btn.addEventListener('click', async () => {
+            btn.disabled = true
+            try {
+              await api('PATCH', `/__emulator/containers/${encodeURIComponent(code)}`, patchFromCard(card))
+              toast(`Container ${code} updated`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        })
+
+        el.querySelectorAll('.btn-del-container').forEach((btn) => {
+          const card = btn.closest('.card')
+          const code = decodeURIComponent(card.getAttribute('data-container-code'))
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Remove container ${code}?`)) return
+            btn.disabled = true
+            try {
+              await api('DELETE', `/__emulator/containers/${encodeURIComponent(code)}`)
+              toast(`Container ${code} removed`)
+              await refresh()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        })
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+      }
+      function escapeAttr(s) {
+        return escapeHtml(s).replace(/'/g, '&#39;')
+      }
+
+      function parsePositionsText(s) {
+        if (s == null) return []
+        return String(s)
+          .split(/[\n,]+/)
+          .map((p) => p.trim())
+          .filter(Boolean)
+      }
+
+      /** Collect PATCH payload from inputs inside a card (`data-field` / optional `data-kind="int"`). */
+      function patchFromCard(card) {
+        const patch = {}
+        card.querySelectorAll('[data-field]').forEach((el) => {
+          const k = el.getAttribute('data-field')
+          if (!k) return
+          if (k === 'positions' && el.tagName === 'TEXTAREA') {
+            patch.positions = parsePositionsText(el.value)
+            return
+          }
+          if (el.type === 'checkbox') {
+            patch[k] = el.checked
+            return
+          }
+          const raw = el.value
+          if (el.tagName === 'SELECT') {
+            if (el.dataset.kind === 'int') {
+              const n = Number(raw)
+              if (Number.isFinite(n)) patch[k] = n
+            } else {
+              patch[k] = raw
+            }
+            return
+          }
+          if (el.type === 'number' || el.dataset.kind === 'int') {
+            if (raw === '') return
+            const n = Number(raw)
+            if (Number.isFinite(n)) patch[k] = n
+            return
+          }
+          patch[k] = raw
+        })
+        return patch
+      }
+
+      function robotTypeSelectHtml(selected) {
+        const cur = String(selected || ROBOT_TYPES[0])
+        const set = new Set(ROBOT_TYPES)
+        if (cur) set.add(cur)
+        return [...set].map(
+          (t) =>
+            `<option value="${escapeAttr(t)}" ${t === cur ? 'selected' : ''}>${escapeHtml(t)}</option>`
+        ).join('')
+      }
+
+      let autoRefreshTimer = null
+      function clearAutoRefresh() {
+        if (autoRefreshTimer) {
+          clearTimeout(autoRefreshTimer)
+          autoRefreshTimer = null
+        }
+      }
+
+      function scheduleNextPoll(ms) {
+        if (document.visibilityState !== 'visible') return
+        autoRefreshTimer = setTimeout(refresh, ms)
+      }
+
+      async function refresh() {
+        clearAutoRefresh()
+        let pollMs = 1000
+        try {
+          const state = await loadState()
+          const msRaw = Number(state?.sim?.settings?.autoRefreshIntervalMs)
+          pollMs = Number.isFinite(msRaw) ? Math.max(250, Math.min(120000, msRaw)) : 1000
+          renderRobots(state.robots || [])
+          renderJobs(state.jobs || [], state.sim || { jobs: [] })
+          renderContainers(state.containers || [])
+          scheduleNextPoll(pollMs)
+        } catch (e) {
+          toast(String(e.message || e), 'err')
+          scheduleNextPoll(pollMs)
+        }
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          void refresh()
+        } else {
+          clearAutoRefresh()
+        }
+      })
+
+      function setupSimSettingsModal() {
+        const fields = [
+          ['autoStartOnCreate', 'sim-autoStartOnCreate', 'bool'],
+          ['delayCreatedMsMin', 'sim-delayCreatedMsMin', 'int'],
+          ['delayCreatedMsMax', 'sim-delayCreatedMsMax', 'int'],
+          ['nodeStepMsMin', 'sim-nodeStepMsMin', 'int'],
+          ['nodeStepMsMax', 'sim-nodeStepMsMax', 'int'],
+          ['waitingProbability', 'sim-waitingProbabilityPct', 'pct'],
+          ['delayWaitingMsMin', 'sim-delayWaitingMsMin', 'int'],
+          ['delayWaitingMsMax', 'sim-delayWaitingMsMax', 'int'],
+          ['delayCompleteMsMin', 'sim-delayCompleteMsMin', 'int'],
+          ['delayCompleteMsMax', 'sim-delayCompleteMsMax', 'int'],
+          ['autoRefreshIntervalMs', 'sim-autoRefreshIntervalMs', 'int'],
+          ['drainExecutingPctPerSec', 'sim-drainExecutingPctPerSec', 'float'],
+          ['drainIdlePctPerSec', 'sim-drainIdlePctPerSec', 'float'],
+          ['chargePctPerSec', 'sim-chargePctPerSec', 'float'],
+          ['autoChargeEnabled', 'sim-autoChargeEnabled', 'bool'],
+          ['lowBatteryPct', 'sim-lowBatteryPct', 'int'],
+          ['fullBatteryPct', 'sim-fullBatteryPct', 'int'],
+        ]
+
+        function applyAutoChargeDisabled() {
+          const enabled = document.getElementById('sim-autoChargeEnabled').checked
+          document.getElementById('sim-lowBatteryPct').disabled = !enabled
+          document.getElementById('sim-fullBatteryPct').disabled = !enabled
+        }
+
+        function populate(settings) {
+          for (const [key, id, kind] of fields) {
+            const el = document.getElementById(id)
+            if (!el) continue
+            const v = settings?.[key]
+            if (kind === 'bool') el.checked = !!v
+            else if (kind === 'pct') el.value = String(Math.round((Number(v) || 0) * 100))
+            else el.value = v == null || v === '' ? '' : String(v)
+          }
+          applyAutoChargeDisabled()
+        }
+
+        function collect() {
+          const out = {}
+          for (const [key, id, kind] of fields) {
+            const el = document.getElementById(id)
+            if (!el) continue
+            if (kind === 'bool') out[key] = !!el.checked
+            else if (kind === 'pct') {
+              const n = Number(el.value)
+              out[key] = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) / 100 : 0
+            } else {
+              const n = Number(el.value)
+              out[key] = Number.isFinite(n) ? n : 0
+            }
+          }
+          return out
+        }
+
+        document.getElementById('btn-sim-settings').addEventListener('click', async () => {
+          try {
+            const settings = await api('GET', '/__emulator/sim/settings', undefined, { cache: 'no-store' })
+            populate(settings)
+            openModal('modal-sim-settings')
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          }
+        })
+
+        document.getElementById('sim-autoChargeEnabled').addEventListener('change', applyAutoChargeDisabled)
+
+        document.getElementById('modal-sim-settings-submit').addEventListener('click', async () => {
+          const btn = document.getElementById('modal-sim-settings-submit')
+          btn.disabled = true
+          try {
+            await api('PATCH', '/__emulator/sim/settings', collect())
+            toast('Sim settings saved')
+            closeModal('modal-sim-settings')
+            await refresh()
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+      }
+
+      document.getElementById('btn-refresh').addEventListener('click', () => refresh())
+      document.getElementById('btn-reset').addEventListener('click', async () => {
+        if (!confirm('Reset emulator to seeded defaults?')) return
+        try {
+          await api('POST', '/__emulator/reset')
+          toast('State reset')
+          await refresh()
+        } catch (e) {
+          toast(String(e.message || e), 'err')
+        }
+      })
+      document.getElementById('btn-sim-start-all').addEventListener('click', async () => {
+        try {
+          const r = await api('POST', '/__emulator/sim/start-all')
+          toast(`Started ${r?.started ?? 0} job sim${(r?.started ?? 0) === 1 ? '' : 's'}`)
+          await refresh()
+        } catch (e) {
+          toast(String(e.message || e), 'err')
+        }
+      })
+      document.getElementById('btn-sim-stop-all').addEventListener('click', async () => {
+        try {
+          const r = await api('POST', '/__emulator/sim/stop-all')
+          toast(`Stopped ${r?.stopped ?? 0} job sim${(r?.stopped ?? 0) === 1 ? '' : 's'}`)
+          await refresh()
+        } catch (e) {
+          toast(String(e.message || e), 'err')
+        }
+      })
+
+      tabSetup()
+      setupAddModals()
+      setupSimSettingsModal()
+      refresh()
+    </script>
+  </body>
+</html>

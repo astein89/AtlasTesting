@@ -20,6 +20,7 @@ interface ConfirmModalProps {
 /**
  * Custom modal replacing window.confirm() for better visibility on all devices.
  * Uses large touch targets, scrollable content, and clear backdrop.
+ * Product standard: backdrop does not dismiss unless `closeOnBackdropClick` is explicitly set (default false).
  */
 export function ConfirmModal({
   open,

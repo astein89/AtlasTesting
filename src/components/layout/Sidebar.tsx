@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { WikiSidebarNav } from '../wiki/WikiSidebarNav'
 import { useAuthStore } from '../../store/authStore'
-import { testingPath, locationsPath } from '../../lib/appPaths'
+import { testingPath, locationsPath, amrPath } from '../../lib/appPaths'
 import { FilesSidebarTree } from '../files/FilesSidebarTree'
 
 const baseLink =
@@ -19,6 +19,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const inTesting = location.pathname.startsWith('/testing')
   const inWiki = location.pathname.startsWith('/wiki')
   const inFiles = location.pathname.startsWith('/files')
+  const inAmr = location.pathname.startsWith('/amr')
   const wikiOrFilesWide = inWiki || (inFiles && hasPermission('module.files'))
 
   return (
@@ -30,7 +31,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
       } ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
     >
       <nav className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
-        {(inTesting || inLocations || inWiki || inFiles) && (
+        {(inTesting || inLocations || inWiki || inFiles || inAmr) && (
           <NavLink
             to="/"
             end
@@ -140,6 +141,117 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
           <>
             <div className="my-2 border-t border-border" aria-hidden />
             <FilesSidebarTree onNavigate={onClose} />
+          </>
+        )}
+        {hasPermission('module.amr') && inAmr && (
+          <>
+            <div className="my-2 border-t border-border" aria-hidden />
+            <NavLink
+              to={amrPath('dashboard')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Dashboard
+            </NavLink>
+            <NavLink
+              to={amrPath('missions')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Missions
+            </NavLink>
+            <NavLink
+              to={amrPath('robots')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Robots
+            </NavLink>
+            <NavLink
+              to={amrPath('containers')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Containers
+            </NavLink>
+            <NavLink
+              to={amrPath('logs')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Logs
+            </NavLink>
+            <NavLink
+              to={amrPath('stands')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Stands
+            </NavLink>
+            <NavLink
+              to={amrPath('settings')}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `${baseLink} ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-background'
+                }`
+              }
+            >
+              Settings
+            </NavLink>
+            {(hasPermission('amr.tools.dev') || hasPermission('amr.settings')) && (
+              <NavLink
+                to={amrPath('tools/api-playground')}
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `${baseLink} ${
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-foreground hover:bg-background'
+                  }`
+                }
+              >
+                API Playground
+              </NavLink>
+            )}
           </>
         )}
       </nav>

@@ -24,6 +24,17 @@ export interface HomeLinkCategory {
   sortOrder: number
 }
 
+/** Custom labels and icon for a built-in module home card (`module id` → overrides). */
+export interface ModuleCardOverride {
+  title?: string
+  description?: string
+  /**
+   * Use another module’s built-in icon artwork (same ids as app modules).
+   * Omit or empty = use this module’s default icon.
+   */
+  iconModuleId?: string
+}
+
 export interface HomePageConfig {
   /** Markdown body shown on the home hub (welcome area). */
   introMarkdown: string
@@ -38,6 +49,8 @@ export interface HomePageConfig {
    * direct URLs; only the home hub cards are affected.
    */
   modulesHiddenFromHome?: string[]
+  /** Optional title, description, and icon preset per module for home hub cards only. */
+  moduleCardOverrides?: Record<string, ModuleCardOverride>
   /** When true, show the welcome logo beside the Markdown (left on wide viewports). */
   showWelcomeLogo?: boolean
   /** Max width of the welcome logo in `rem` (clamped server-side; default 16). */

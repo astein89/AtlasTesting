@@ -71,6 +71,8 @@ export interface HomePagePayload {
   homeHubCategoryColumnMap?: Record<string, number>
   /** Column for uncategorized / unmatched links; null omits explicit targeting. */
   homeHubOtherLinksColumn?: number | null
+  /** Optional title, description, icon preset per module id for home hub cards only. */
+  moduleCardOverrides?: Record<string, { title?: string; description?: string; iconModuleId?: string }>
 }
 
 const MAX_LINKS = 40
@@ -122,7 +124,7 @@ function readDefaultIntroFromRepoFile(): string {
 }
 
 /** Must stay aligned with `appModules` ids in `src/config/modules.ts`. */
-const HOME_MODULE_IDS: string[] = ['testing', 'locations', 'wiki', 'files', 'admin']
+const HOME_MODULE_IDS: string[] = ['testing', 'locations', 'wiki', 'files', 'amr', 'admin']
 const HOME_MODULE_ID_SET = new Set(HOME_MODULE_IDS)
 
 function normalizeModuleOrder(raw: unknown): string[] {
@@ -156,6 +158,37 @@ function normalizeModulesHiddenFromHome(raw: unknown): string[] {
   return out
 }
 
+const MAX_MODULE_CARD_TITLE = 120
+const MAX_MODULE_CARD_DESCRIPTION = 500
+
+function normalizeModuleCardOverrides(raw: unknown): Record<string, { title?: string; description?: string; iconModuleId?: string }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, { title?: string; description?: string; iconModuleId?: string }> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const id = typeof k === 'string' ? k.trim() : ''
+    if (!HOME_MODULE_ID_SET.has(id)) continue
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue
+    const o = v as Record<string, unknown>
+    const title =
+      typeof o.title === 'string' ? o.title.trim().slice(0, MAX_MODULE_CARD_TITLE) : ''
+    const description =
+      typeof o.description === 'string'
+        ? o.description.trim().slice(0, MAX_MODULE_CARD_DESCRIPTION)
+        : ''
+    let iconModuleId: string | undefined
+    if (typeof o.iconModuleId === 'string' && o.iconModuleId.trim()) {
+      const ico = o.iconModuleId.trim()
+      if (HOME_MODULE_ID_SET.has(ico)) iconModuleId = ico
+    }
+    const entry: { title?: string; description?: string; iconModuleId?: string } = {}
+    if (title) entry.title = title
+    if (description) entry.description = description
+    if (iconModuleId) entry.iconModuleId = iconModuleId
+    if (Object.keys(entry).length > 0) out[id] = entry
+  }
+  return out
+}
+
 const DEFAULT_CUSTOM_LINKS_VISIBLE = 8
 const MIN_CUSTOM_LINKS_VISIBLE = 1
 const MAX_CUSTOM_LINKS_VISIBLE = 40
@@ -173,6 +206,7 @@ const DEFAULT_KV_HOME = {
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
   moduleOrder: [...HOME_MODULE_IDS],
   modulesHiddenFromHome: [] as string[],
+  moduleCardOverrides: {} as Record<string, { title?: string; description?: string; iconModuleId?: string }>,
   welcomeLogoPath: null as string | null,
   siteFaviconPath: null as string | null,
   homeBrandingRevision: 0,
@@ -628,6 +662,9 @@ function parseHomeKv(raw: string | undefined): Omit<HomePagePayload, 'customLink
     const modulesHiddenFromHome = normalizeModulesHiddenFromHome(
       (j as { modulesHiddenFromHome?: unknown }).modulesHiddenFromHome
     )
+    const moduleCardOverrides = normalizeModuleCardOverrides(
+      (j as { moduleCardOverrides?: unknown }).moduleCardOverrides
+    )
     const customLinksInitialVisibleCount = coerceCustomLinksInitialVisibleCount(
       (j as { customLinksInitialVisibleCount?: unknown }).customLinksInitialVisibleCount,
       DEFAULT_KV_HOME.customLinksInitialVisibleCount
@@ -665,6 +702,7 @@ function parseHomeKv(raw: string | undefined): Omit<HomePagePayload, 'customLink
       welcomeLogoMaxRem,
       moduleOrder,
       modulesHiddenFromHome,
+      moduleCardOverrides,
       welcomeLogoPath: readStoredAssetPath(j.welcomeLogoPath),
       siteFaviconPath: readStoredAssetPath(j.siteFaviconPath),
       homeBrandingRevision: coerceHomeRevision(j.homeBrandingRevision),
@@ -815,6 +853,7 @@ function detectPutSections(b: Record<string, unknown>): PutSections {
     'welcomeLogoMaxRem',
     'moduleOrder',
     'modulesHiddenFromHome',
+    'moduleCardOverrides',
     'welcomeLogoPath',
     'siteFaviconPath',
   ]
@@ -869,6 +908,14 @@ function mergeKvFromBody(
     modulesHiddenFromHome = normalizeModulesHiddenFromHome(b.modulesHiddenFromHome)
   }
 
+  let moduleCardOverrides = prevKv.moduleCardOverrides ?? {}
+  if ('moduleCardOverrides' in b && b.moduleCardOverrides !== undefined && b.moduleCardOverrides !== null) {
+    if (typeof b.moduleCardOverrides !== 'object' || Array.isArray(b.moduleCardOverrides)) {
+      return { ok: false, error: 'moduleCardOverrides must be an object' }
+    }
+    moduleCardOverrides = normalizeModuleCardOverrides(b.moduleCardOverrides)
+  }
+
   const wPath =
     'welcomeLogoPath' in b
       ? normalizeNullableAssetPath(b.welcomeLogoPath, prevKv.welcomeLogoPath ?? null, 'Welcome logo')
@@ -896,6 +943,7 @@ function mergeKvFromBody(
       welcomeLogoMaxRem,
       moduleOrder,
       modulesHiddenFromHome,
+      moduleCardOverrides,
       welcomeLogoPath: wPath.value,
       siteFaviconPath: fPath.value,
       homeBrandingRevision: rev,
@@ -1062,6 +1110,7 @@ router.get(
       linkCategories: await loadLinkCategoriesFromDb(),
       moduleOrder: kv.moduleOrder,
       modulesHiddenFromHome: kv.modulesHiddenFromHome,
+      moduleCardOverrides: kv.moduleCardOverrides ?? {},
       showWelcomeLogo: kv.showWelcomeLogo,
       welcomeLogoMaxRem: kv.welcomeLogoMaxRem,
       welcomeLogoPath: publicHomeAssetPath(kv.welcomeLogoPath),
@@ -1216,6 +1265,7 @@ router.put(
       linkCategories: await loadLinkCategoriesFromDb(),
       moduleOrder: kvOut.moduleOrder,
       modulesHiddenFromHome: kvOut.modulesHiddenFromHome,
+      moduleCardOverrides: kvOut.moduleCardOverrides ?? {},
       showWelcomeLogo: kvOut.showWelcomeLogo,
       welcomeLogoMaxRem: kvOut.welcomeLogoMaxRem,
       welcomeLogoPath: publicHomeAssetPath(kvOut.welcomeLogoPath),

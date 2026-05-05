@@ -28,6 +28,8 @@ import { seedWikiDefaults } from './lib/wikiSeed.js'
 import { scheduleRecyclePurgeAtMidnight } from './lib/filesRecyclePurge.js'
 import { scheduleWikiRecyclePurgeAtMidnight } from './lib/wikiRecyclePurge.js'
 import { scheduleBackupTimers } from './lib/backupScheduler.js'
+import { amrRouter } from './routes/amr.js'
+import { startAmrMissionWorker } from './lib/amrMissionWorker.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -58,6 +60,7 @@ apiRouter.use('/files', filesRouter)
 apiRouter.use('/roles', rolesRouter)
 apiRouter.use('/settings', settingsRouter)
 apiRouter.use('/backup', backupRouter)
+apiRouter.use('/amr', amrRouter)
 apiRouter.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
 app.use(`${prefix}/api`, apiRouter)
 
@@ -80,6 +83,7 @@ function spaLegacyRedirect(req: express.Request, res: express.Response, next: ex
     rel.startsWith('/locations') ||
     rel.startsWith('/wiki') ||
     rel.startsWith('/files') ||
+    rel.startsWith('/amr') ||
     rel.startsWith('/admin') ||
     rel === '/' ||
     rel === '/login'
@@ -187,6 +191,7 @@ void (async () => {
   scheduleRecyclePurgeAtMidnight()
   scheduleWikiRecyclePurgeAtMidnight()
   scheduleBackupTimers()
+  startAmrMissionWorker(db)
 
   if (isProd && !basePath) {
     app.use(express.static(distPath))

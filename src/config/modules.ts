@@ -1,5 +1,6 @@
 import {
   ADMIN_PREFIX,
+  AMR_PREFIX,
   FILES_PREFIX,
   TESTING_PREFIX,
   LOCATIONS_PREFIX,
@@ -57,6 +58,14 @@ export const appModules: AppModule[] = [
     description: 'Upload and download shared documents.',
     requiredPermission: 'module.files',
     to: FILES_PREFIX,
+  },
+  {
+    id: 'amr',
+    path: 'amr',
+    title: 'AMR',
+    description: 'Fleet missions, robots, containers, and stands.',
+    requiredPermission: 'module.amr',
+    to: AMR_PREFIX,
   },
   {
     id: 'admin',

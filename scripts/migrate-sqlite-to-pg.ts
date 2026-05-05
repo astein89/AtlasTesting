@@ -39,6 +39,11 @@ const TABLE_ORDER = [
   'home_link_categories',
   'home_links',
   'user_roles',
+  'amr_stands',
+  'amr_multistop_sessions',
+  'amr_mission_records',
+  'amr_mission_status_log',
+  'amr_fleet_api_log',
 ] as const
 
 /** file_folders: parents before children */

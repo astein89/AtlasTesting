@@ -6,6 +6,21 @@ export const DEFAULT_HOME_MODULE_ORDER: string[] = appModules.map((m) => m.id)
 
 const KNOWN_IDS = new Set(DEFAULT_HOME_MODULE_ORDER)
 
+/** Normalize hidden-module ids from API or storage: valid known ids only, deduped. */
+export function normalizeModulesHiddenFromHomeIds(ids: string[] | undefined): string[] {
+  if (!Array.isArray(ids)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of ids) {
+    if (typeof id !== 'string') continue
+    const t = id.trim()
+    if (!KNOWN_IDS.has(t) || seen.has(t)) continue
+    out.push(t)
+    seen.add(t)
+  }
+  return out
+}
+
 /** Merge saved order with current modules: unknown ids dropped; new modules appended in default order. */
 export function mergeHomeModuleOrder(saved: string[] | undefined): string[] {
   if (!saved?.length) return [...DEFAULT_HOME_MODULE_ORDER]

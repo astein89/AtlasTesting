@@ -17,9 +17,10 @@ import { AdminIndexRedirect } from './routes/AdminIndexRedirect'
 import { useAuthStore } from './store/authStore'
 import { api, ensureAccessToken } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
+import { AmrMissionNewModalProvider } from './contexts/AmrMissionNewModalContext'
 import { DateTimeConfigProvider } from './contexts/DateTimeConfigContext'
 import { ConditionalFormatPresetsProvider } from './contexts/ConditionalFormatPresetsContext'
-import { testingPath } from './lib/appPaths'
+import { amrPath, testingPath } from './lib/appPaths'
 import { SiteBrandingHead } from './components/layout/SiteBrandingHead'
 
 const FieldsList = lazy(() => import('./routes/FieldsList').then((m) => ({ default: m.FieldsList })))
@@ -62,6 +63,19 @@ const FilesRecycleBin = lazy(() =>
 )
 const HomeLinksPage = lazy(() =>
   import('./routes/HomeLinksPage').then((m) => ({ default: m.HomeLinksPage }))
+)
+const AmrDashboard = lazy(() => import('./routes/amr/AmrDashboard').then((m) => ({ default: m.AmrDashboard })))
+const AmrMissions = lazy(() => import('./routes/amr/AmrMissions').then((m) => ({ default: m.AmrMissions })))
+const AmrMissionNewRedirect = lazy(() =>
+  import('./routes/amr/AmrMissionNewRedirect').then((m) => ({ default: m.AmrMissionNewRedirect }))
+)
+const AmrRobots = lazy(() => import('./routes/amr/AmrRobots').then((m) => ({ default: m.AmrRobots })))
+const AmrContainers = lazy(() => import('./routes/amr/AmrContainers').then((m) => ({ default: m.AmrContainers })))
+const AmrLogs = lazy(() => import('./routes/amr/AmrLogs').then((m) => ({ default: m.AmrLogs })))
+const AmrStands = lazy(() => import('./routes/amr/AmrStands').then((m) => ({ default: m.AmrStands })))
+const AmrSettings = lazy(() => import('./routes/amr/AmrSettings').then((m) => ({ default: m.AmrSettings })))
+const AmrApiPlayground = lazy(() =>
+  import('./routes/amr/AmrApiPlayground').then((m) => ({ default: m.AmrApiPlayground }))
 )
 
 const REHYDRATE_DELAY_MS = 300
@@ -108,6 +122,20 @@ const filesLayout = (
       <DateTimeConfigProvider>
         <ConditionalFormatPresetsProvider>
           <Layout />
+        </ConditionalFormatPresetsProvider>
+      </DateTimeConfigProvider>
+    </PermissionGuard>
+  </AuthGuard>
+)
+
+const amrLayout = (
+  <AuthGuard>
+    <PermissionGuard permission="module.amr">
+      <DateTimeConfigProvider>
+        <ConditionalFormatPresetsProvider>
+          <AmrMissionNewModalProvider>
+            <Layout />
+          </AmrMissionNewModalProvider>
         </ConditionalFormatPresetsProvider>
       </DateTimeConfigProvider>
     </PermissionGuard>
@@ -444,6 +472,25 @@ export function createAppBrowserRouter(basePath: string) {
                 </PermissionGuard>
               }
             />
+          </Route>
+          <Route path="/amr" element={amrLayout}>
+            <Route index element={<Navigate to={amrPath('dashboard')} replace />} />
+            <Route path="dashboard" element={<AmrDashboard />} />
+            <Route path="missions" element={<AmrMissions />} />
+            <Route
+              path="missions/new"
+              element={
+                <Suspense fallback={null}>
+                  <AmrMissionNewRedirect />
+                </Suspense>
+              }
+            />
+            <Route path="robots" element={<AmrRobots />} />
+            <Route path="containers" element={<AmrContainers />} />
+            <Route path="logs" element={<AmrLogs />} />
+            <Route path="stands" element={<AmrStands />} />
+            <Route path="settings" element={<AmrSettings />} />
+            <Route path="tools/api-playground" element={<AmrApiPlayground />} />
           </Route>
           <Route path="/locations" element={locationsLayout}>
             <Route

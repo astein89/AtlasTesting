@@ -1,0 +1,16 @@
+---
+description: Modal dialogs — backdrop behavior and structure
+globs:
+  - "**/*Modal*.tsx"
+  - "**/routes/**/*.tsx"
+alwaysApply: false
+---
+
+# Modals
+
+- **Do not dismiss on backdrop click.** The dimmed scrim must not close the dialog. Use a non-interactive backdrop, e.g. `<div className="absolute inset-0 bg-black/50" aria-hidden />`, not a `<button>` and not `onClick` on the overlay.
+- **Do not attach `onClick={onClose}`** to full-screen `fixed inset-0` wrapper divs used as modal shells.
+- **Close only via explicit UI**: header close, Cancel / Done, primary actions, or Escape where the modal already listens for it — keep existing Escape behavior when present.
+- **`ConfirmModal`** already defaults `closeOnBackdropClick` to `false`; only set `closeOnBackdropClick: true` for exceptional legacy UX.
+
+Inner panels may keep `onClick={(e) => e.stopPropagation()}` if the shell ever gains click handlers; it is optional when the overlay has no handler.

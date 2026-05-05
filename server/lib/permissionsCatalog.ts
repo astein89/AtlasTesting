@@ -6,6 +6,7 @@ export const MODULE_PERMISSION_KEYS = [
   'module.locations',
   'module.wiki',
   'module.files',
+  'module.amr',
   'module.admin',
 ] as const
 
@@ -26,6 +27,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'module.locations', label: 'Locations', group: 'Modules' },
   { id: 'module.wiki', label: 'Wiki', group: 'Modules' },
   { id: 'module.files', label: 'Files', group: 'Modules' },
+  { id: 'module.amr', label: 'AMR (fleet)', group: 'Modules' },
   { id: 'module.admin', label: 'Administration', group: 'Modules' },
   {
     id: 'testing.data.write',
@@ -56,6 +58,14 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     label: 'Files: view recycle bin, restore, and permanently delete',
     group: 'Files',
   },
+  {
+    id: 'amr.missions.manage',
+    label: 'AMR: create missions, container in/out, cancel / feedback',
+    group: 'AMR',
+  },
+  { id: 'amr.stands.manage', label: 'AMR: manage stands / positions & CSV import', group: 'AMR' },
+  { id: 'amr.settings', label: 'AMR: fleet connection & module defaults', group: 'AMR' },
+  { id: 'amr.tools.dev', label: 'AMR: API playground & integration tools', group: 'AMR' },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },
   { id: 'admin.db', label: 'Database tables viewer', group: 'Administration' },

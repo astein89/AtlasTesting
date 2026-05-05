@@ -19,15 +19,21 @@ interface User {
 /** When persisted user has no permissions yet (pre-refresh), match server defaults. */
 function legacyPermissionsForRole(role: string | undefined): string[] {
   if (role === 'admin') return ['*']
-  if (role === 'viewer') return ['module.home', 'module.testing', 'module.wiki', 'module.files']
+  if (role === 'viewer')
+    return ['module.home', 'module.testing', 'module.wiki', 'module.files', 'module.amr']
   return [
     'module.home',
     'module.testing',
     'module.wiki',
     'module.files',
+    'module.amr',
     'wiki.edit',
     'testing.data.write',
     'files.manage',
+    'amr.missions.manage',
+    'amr.stands.manage',
+    'amr.settings',
+    'amr.tools.dev',
   ]
 }
 

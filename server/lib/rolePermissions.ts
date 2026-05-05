@@ -8,12 +8,17 @@ const DEFAULT_BY_SLUG: Record<string, string[]> = {
     'module.testing',
     'module.wiki',
     'module.files',
+    'module.amr',
     'wiki.edit',
     'testing.data.write',
     'files.manage',
     'links.edit',
+    'amr.missions.manage',
+    'amr.stands.manage',
+    'amr.settings',
+    'amr.tools.dev',
   ],
-  viewer: ['module.home', 'module.testing', 'module.wiki', 'module.files'],
+  viewer: ['module.home', 'module.testing', 'module.wiki', 'module.files', 'module.amr'],
 }
 
 /** Pick one slug for legacy `users.role` / JWT `role` (deterministic). */

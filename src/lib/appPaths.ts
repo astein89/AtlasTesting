@@ -10,6 +10,7 @@ export const LOCATIONS_PREFIX = '/locations'
 export const WIKI_PREFIX = '/wiki'
 export const FILES_PREFIX = '/files'
 export const ADMIN_PREFIX = '/admin'
+export const AMR_PREFIX = '/amr'
 
 /** True if `s` looks like a UUID (matches server `resolvePlanId` / `resolveTestId`). */
 export function isTestingUuidParam(s: string | undefined): boolean {
@@ -152,6 +153,16 @@ export function adminPath(...segments: string[]): string {
     .join('/')
     .replace(/^\/+/, '')
   return `${ADMIN_PREFIX}/${tail}`
+}
+
+/** Path under AMR module, e.g. amrPath('missions') -> /amr/missions */
+export function amrPath(...segments: string[]): string {
+  if (segments.length === 0) return AMR_PREFIX
+  const tail = segments
+    .filter(Boolean)
+    .join('/')
+    .replace(/^\/+/, '')
+  return `${AMR_PREFIX}/${tail}`
 }
 
 /**

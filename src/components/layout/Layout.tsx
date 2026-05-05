@@ -1,6 +1,7 @@
 import { Suspense, useState, useEffect } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { LoginModal } from '../auth/LoginModal'
+import { AmrAttentionBanner } from '../amr/AmrAttentionBanner'
 import { Navbar } from './Navbar'
 import { Sidebar } from './Sidebar'
 import { AdminModuleSidebar } from './AdminModuleSidebar'
@@ -53,10 +54,11 @@ export function Layout({ showSidebar = true }: LayoutProps) {
   }, [location.search, location.pathname, location.hash, navigate, openLogin, location.state])
 
   return (
-    <div className="flex h-screen flex-col min-h-0 bg-background text-foreground">
+    <div className="flex h-screen min-h-0 w-full min-w-0 max-w-[100%] flex-col overflow-x-hidden bg-background text-foreground">
       <Navbar onMenuClick={showSidebar ? () => setSidebarOpen((o) => !o) : undefined} />
+      <AmrAttentionBanner />
       <FilesModuleHostProvider>
-        <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden">
           {showSidebar && (
             <>
               {inAdminModule ? (
@@ -73,7 +75,7 @@ export function Layout({ showSidebar = true }: LayoutProps) {
               )}
             </>
           )}
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
+          <main className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
             <Suspense
               fallback={
                 <div className="flex min-h-[12rem] items-center justify-center text-foreground/60">
@@ -81,7 +83,7 @@ export function Layout({ showSidebar = true }: LayoutProps) {
                 </div>
               }
             >
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="relative flex w-full min-w-0 max-w-full min-h-0 flex-1 flex-col">
                 <Outlet />
               </div>
             </Suspense>

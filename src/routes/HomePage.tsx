@@ -12,6 +12,7 @@ import {
   linkShowsOnHomeHub,
 } from '@/lib/homeLinkVisibility'
 import { mergeHomeModuleOrder, sortHomeModules } from '@/lib/homeModuleOrder'
+import { normalizeModuleCardOverrides, resolveModuleCardForHome } from '@/lib/moduleCardPresentation'
 import { HomeIntroMarkdown } from '@/components/home/HomeIntroMarkdown'
 import { HomeLinkCard } from '@/components/home/HomeLinkCard'
 import { HomePageEditModal } from '@/components/home/HomePageEditModal'
@@ -30,6 +31,7 @@ const FALLBACK_HOME: HomePageConfig = {
   customLinks: [],
   linkCategories: [],
   modulesHiddenFromHome: [],
+  moduleCardOverrides: {},
   showWelcomeLogo: false,
   welcomeLogoMaxRem: WELCOME_LOGO_DEFAULT_REM,
   welcomeLogoPath: null,
@@ -104,6 +106,7 @@ export function HomePage() {
           Array.isArray(data.moduleOrder) ? (data.moduleOrder as string[]) : undefined
         ),
         modulesHiddenFromHome: normalizeModulesHiddenFromHomeApi(data.modulesHiddenFromHome),
+        moduleCardOverrides: normalizeModuleCardOverrides(data.moduleCardOverrides),
         showWelcomeLogo: data.showWelcomeLogo === true,
         welcomeLogoMaxRem: clampWelcomeLogoMaxRem(data.welcomeLogoMaxRem),
         welcomeLogoPath: welcomePath,
@@ -256,16 +259,19 @@ export function HomePage() {
                   Modules
                 </p>
                 <ul className="flex flex-col gap-3">
-                  {visibleModules.map((m) => (
-                    <li key={m.id} className="flex">
-                      <HomeLinkCard
-                        title={m.title}
-                        description={m.description}
-                        href={m.to}
-                        moduleIconId={m.id}
-                      />
-                    </li>
-                  ))}
+                  {visibleModules.map((m) => {
+                    const card = resolveModuleCardForHome(m, config.moduleCardOverrides)
+                    return (
+                      <li key={m.id} className="flex">
+                        <HomeLinkCard
+                          title={card.title}
+                          description={card.description}
+                          href={m.to}
+                          moduleIconId={card.moduleIconId}
+                        />
+                      </li>
+                    )
+                  })}
                 </ul>
               </div>
             ) : null}
@@ -327,6 +333,7 @@ export function HomePage() {
                 Array.isArray(next.moduleOrder) ? next.moduleOrder : undefined
               ),
               modulesHiddenFromHome: normalizeModulesHiddenFromHomeApi(next.modulesHiddenFromHome),
+              moduleCardOverrides: normalizeModuleCardOverrides(next.moduleCardOverrides),
               showWelcomeLogo: next.showWelcomeLogo === true,
               welcomeLogoMaxRem: clampWelcomeLogoMaxRem(next.welcomeLogoMaxRem),
               welcomeLogoPath:

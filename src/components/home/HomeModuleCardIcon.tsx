@@ -77,6 +77,21 @@ function WikiIcon() {
   )
 }
 
+/** Robot / AMR fleet */
+function AmrIcon() {
+  return (
+    <Shell className="bg-orange-500/15 text-orange-900 dark:bg-orange-500/20 dark:text-orange-100">
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+        />
+      </svg>
+    </Shell>
+  )
+}
+
 /** Cog — roles, users, database, settings */
 function AdminIcon() {
   return (
@@ -118,6 +133,8 @@ export function HomeModuleCardIcon({ moduleId }: { moduleId: string }) {
       return <WikiIcon />
     case 'files':
       return <FilesIcon />
+    case 'amr':
+      return <AmrIcon />
     case 'admin':
       return <AdminIcon />
     default:

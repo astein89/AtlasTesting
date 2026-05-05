@@ -259,6 +259,11 @@ export function initSchema(db: DbWrapper) {
   migrateStoredFilesRecycleOriginalFolder(db)
   migrateStoredFilesRecycleFolderLabel(db)
   migrateRolesGrantModuleFiles(db)
+  migrateAmrTables(db)
+  migrateAmrMissionWorkerClosed(db)
+  migrateAmrMultistopSessions(db)
+  migrateAmrMissionRecordLockedRobot(db)
+  migrateRolesGrantModuleAmr(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
@@ -901,10 +906,15 @@ function migrateRoles(db: DbWrapper) {
           'module.testing',
           'module.wiki',
           'module.files',
+          'module.amr',
           'wiki.edit',
           'testing.data.write',
           'files.manage',
           'links.edit',
+          'amr.missions.manage',
+          'amr.stands.manage',
+          'amr.settings',
+          'amr.tools.dev',
         ]),
       ],
       [
@@ -915,6 +925,7 @@ function migrateRoles(db: DbWrapper) {
           'module.testing',
           'module.wiki',
           'module.files',
+          'module.amr',
         ]),
       ],
     ]
@@ -1139,6 +1150,214 @@ function migrateStoredFilesRecycleFolderLabel(db: DbWrapper) {
  * Grant `module.files` / `files.manage` on existing installs (seed only runs on empty `roles`).
  * Mirrors default viewer vs editor split: wiki readers get list/download; wiki editors get upload/delete.
  */
+/** AMR stands, missions, and status audit log (SQLite baseline). */
+function migrateAmrTables(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_stands (
+        id TEXT PRIMARY KEY,
+        zone TEXT NOT NULL DEFAULT '',
+        location_label TEXT NOT NULL DEFAULT '',
+        external_ref TEXT NOT NULL,
+        dwg_ref TEXT,
+        orientation TEXT NOT NULL DEFAULT '0',
+        x REAL NOT NULL DEFAULT 0,
+        y REAL NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT
+      )
+    `)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_mission_records (
+        id TEXT PRIMARY KEY,
+        job_code TEXT NOT NULL UNIQUE,
+        mission_code TEXT NOT NULL,
+        container_code TEXT,
+        created_by TEXT,
+        mission_type TEXT NOT NULL DEFAULT 'RACK_MOVE',
+        mission_payload_json TEXT NOT NULL,
+        last_status INTEGER,
+        persistent_container INTEGER NOT NULL DEFAULT 0,
+        worker_closed INTEGER NOT NULL DEFAULT 0,
+        finalized INTEGER NOT NULL DEFAULT 0,
+        container_out_done INTEGER NOT NULL DEFAULT 0,
+        final_position TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_mission_status_log (
+        id TEXT PRIMARY KEY,
+        mission_record_id TEXT NOT NULL,
+        job_status INTEGER,
+        raw_json TEXT,
+        recorded_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (mission_record_id) REFERENCES amr_mission_records(id) ON DELETE CASCADE
+      )
+    `)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_fleet_api_log (
+        id TEXT PRIMARY KEY,
+        recorded_at TEXT DEFAULT (datetime('now')),
+        source TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        http_status INTEGER NOT NULL,
+        mission_record_id TEXT,
+        user_id TEXT,
+        request_json TEXT,
+        response_json TEXT
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_mission_records_finalized ON amr_mission_records(finalized)')
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_status_log_mission ON amr_mission_status_log(mission_record_id)')
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_fleet_api_log_recorded ON amr_fleet_api_log(recorded_at)')
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_amr_stands_external ON amr_stands(external_ref)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Split worker polling stop (`worker_closed`) from business completion (`finalized` = fleet OK only: 30 / 35). */
+function migrateAmrMissionWorkerClosed(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_mission_records')
+    if (cols.length === 0) return
+    if (!cols.includes('worker_closed')) {
+      db.run('ALTER TABLE amr_mission_records ADD COLUMN worker_closed INTEGER NOT NULL DEFAULT 0')
+    }
+    db.run('UPDATE amr_mission_records SET worker_closed = 1 WHERE finalized = 1')
+    db.run(
+      `UPDATE amr_mission_records SET finalized = CASE WHEN last_status IN (30, 35) THEN 1 ELSE 0 END WHERE worker_closed = 1`
+    )
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_mission_records_worker_closed ON amr_mission_records(worker_closed)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Multi-stop rack missions: session row + optional link on mission records. */
+function migrateAmrMultistopSessions(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_multistop_sessions (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        pickup_position TEXT NOT NULL DEFAULT '',
+        plan_json TEXT NOT NULL,
+        total_segments INTEGER NOT NULL,
+        next_segment_index INTEGER NOT NULL DEFAULT 1,
+        locked_robot_id TEXT,
+        container_code TEXT,
+        persistent_container INTEGER NOT NULL DEFAULT 0,
+        enter_orientation TEXT NOT NULL DEFAULT '0',
+        robot_ids_json TEXT,
+        base_mission_code TEXT,
+        created_by TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_multistop_sessions_status ON amr_multistop_sessions(status)')
+    const msCols = tableColumnNames(db, 'amr_multistop_sessions')
+    if (msCols.length > 0 && !msCols.includes('base_mission_code')) {
+      db.run('ALTER TABLE amr_multistop_sessions ADD COLUMN base_mission_code TEXT')
+    }
+    if (msCols.length > 0 && !msCols.includes('continue_not_before')) {
+      db.run('ALTER TABLE amr_multistop_sessions ADD COLUMN continue_not_before TEXT')
+    }
+    const cols = tableColumnNames(db, 'amr_mission_records')
+    if (cols.length === 0) return
+    if (!cols.includes('multistop_session_id')) {
+      db.run('ALTER TABLE amr_mission_records ADD COLUMN multistop_session_id TEXT REFERENCES amr_multistop_sessions(id)')
+    }
+    if (!cols.includes('multistop_step_index')) {
+      db.run('ALTER TABLE amr_mission_records ADD COLUMN multistop_step_index INTEGER')
+    }
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_mission_records_multistop ON amr_mission_records(multistop_session_id)')
+  } catch {
+    // Ignore
+  }
+}
+
+/** Fleet-assigned robot for this job (from jobQuery), for UI / unlockRobotId resolution. */
+function migrateAmrMissionRecordLockedRobot(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_mission_records')
+    if (cols.length === 0) return
+    if (!cols.includes('locked_robot_id')) {
+      db.run('ALTER TABLE amr_mission_records ADD COLUMN locked_robot_id TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Grant AMR module permissions on existing installs (seed only runs on empty roles). */
+function migrateRolesGrantModuleAmr(db: DbWrapper) {
+  try {
+    const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{
+      slug: string
+      permissions: string
+    }>
+    const nested = [
+      'amr.missions.manage',
+      'amr.stands.manage',
+      'amr.settings',
+      'amr.tools.dev',
+    ] as const
+    for (const { slug, permissions } of rows) {
+      let arr: unknown
+      try {
+        arr = JSON.parse(permissions)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(arr)) continue
+      const list = arr.filter((x): x is string => typeof x === 'string')
+      if (list.includes('*')) continue
+      const next = new Set(list)
+      let changed = false
+      const addModule = () => {
+        if (!next.has('module.amr')) {
+          next.add('module.amr')
+          changed = true
+        }
+      }
+      const addNestedForEditor = () => {
+        addModule()
+        for (const k of nested) {
+          if (!next.has(k)) {
+            next.add(k)
+            changed = true
+          }
+        }
+      }
+      if (slug === 'viewer') {
+        addModule()
+      } else if (slug === 'user') {
+        addNestedForEditor()
+      } else {
+        if (
+          list.includes('module.wiki') ||
+          list.includes('module.testing') ||
+          list.includes('module.locations') ||
+          list.includes('module.files')
+        ) {
+          addModule()
+        }
+      }
+      if (!changed) continue
+      db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify([...next].sort()), slug)
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 function migrateRolesGrantModuleFiles(db: DbWrapper) {
   try {
     const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{

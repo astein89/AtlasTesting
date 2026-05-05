@@ -17,3 +17,11 @@ config.json
 
 # Vite temp config (transpiled from vite.config.ts)
 vite.config.ts.timestamp-*.mjs
+
+# AMR emulator persisted runtime state and tunable settings (per-developer)
+scripts/amr-emulator-ui/sim-settings.json
+scripts/amr-emulator-ui/emulator-state.json
+scripts/amr-emulator-ui/emulator-state.bak.json
+scripts/amr-emulator-ui/emulator-state.port-*.json
+scripts/amr-emulator-ui/emulator-state.port-*.bak.json
+scripts/amr-emulator-ui/emulator-state.corrupt.*

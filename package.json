@@ -14,6 +14,7 @@
     "start": "NODE_ENV=production node dist/server/index.js",
     "db:seed": "tsx server/db/seed.ts",
     "db:migrate": "tsx scripts/migrate-sqlite-to-pg.ts",
+    "amr:emulator": "node scripts/amr-fleet-emulator.mjs",
     "migrate:uploads-testing": "tsx server/scripts/migrate-root-uploads-to-testing.ts",
     "ctl": "bash scripts/ctl.sh"
   },

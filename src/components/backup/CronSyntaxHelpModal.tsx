@@ -67,7 +67,6 @@ export function CronSyntaxHelpModal({ onClose }: { onClose: () => void }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      onClick={onClose}
     >
       <div
         className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-card shadow-xl"

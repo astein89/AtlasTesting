@@ -14,6 +14,13 @@ import {
 
 const DONT_MAP = ''
 
+function importRowErrorMessage(e: unknown): string {
+  const r = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+  if (typeof r === 'string' && r.trim()) return r.trim()
+  if (e instanceof Error && e.message) return e.message
+  return 'Request failed'
+}
+
 const IMPORTABLE_FIELD_TYPES = [
   'text',
   'longtext',
@@ -54,6 +61,7 @@ export function ImportDataModal({
   const [recordedAtColumn, setRecordedAtColumn] = useState<string>(DONT_MAP)
   const [submitting, setSubmitting] = useState(false)
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
+  const [importFailures, setImportFailures] = useState<Array<{ rowNumber: number; reason: string }> | null>(null)
 
   const visibleFields = useMemo(
     () =>
@@ -81,6 +89,11 @@ export function ImportDataModal({
   /** Run auto-map once per (file headers + importable field set); reset when choosing a new file. */
   const autoMappedKeyRef = useRef<string>('')
 
+  const handleDismiss = useCallback(() => {
+    setImportFailures(null)
+    onClose()
+  }, [onClose])
+
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
@@ -89,6 +102,7 @@ export function ImportDataModal({
     setParsed(null)
     setFieldToColumn({})
     setRecordedAtColumn(DONT_MAP)
+    setImportFailures(null)
     autoMappedKeyRef.current = ''
     parseImportFile(f)
       .then(setParsed)
@@ -124,9 +138,11 @@ export function ImportDataModal({
       return
     }
     setSubmitting(true)
+    setImportFailures(null)
     setImportProgress({ done: 0, total: parsed.rows.length })
+    const failures: Array<{ rowNumber: number; reason: string }> = []
+    let imported = 0
     try {
-      let imported = 0
       for (let i = 0; i < parsed.rows.length; i++) {
         const row = parsed.rows[i]
         const data: Record<string, string | number | boolean | string[]> = {}
@@ -161,21 +177,32 @@ export function ImportDataModal({
         }
         const finalized = finalizeRecordDataAfterImportOrBulk(fields, plan, data)
         const recordedAt = recordedAtColumn ? coerceRecordedAt(row[recordedAtColumn] ?? '') : undefined
-        await api.post('/records', {
-          testPlanId: planId,
-          testId,
-          data: finalized,
-          status: 'partial',
-          ...(recordedAt && { recordedAt }),
-        })
-        imported++
-        setImportProgress({ done: imported, total: parsed.rows.length })
+        try {
+          await api.post('/records', {
+            testPlanId: planId,
+            testId,
+            data: finalized,
+            status: 'partial',
+            ...(recordedAt && { recordedAt }),
+          })
+          imported++
+        } catch (e: unknown) {
+          failures.push({ rowNumber: i + 1, reason: importRowErrorMessage(e) })
+        }
+        setImportProgress({ done: i + 1, total: parsed.rows.length })
       }
-      onImported()
-      onClose()
+
+      if (imported > 0) {
+        onImported()
+      }
+
+      if (failures.length === 0) {
+        onClose()
+      } else {
+        setImportFailures(failures)
+      }
     } catch (e: unknown) {
-      const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      showAlert(err || 'Import failed')
+      showAlert(importRowErrorMessage(e) || 'Import failed')
     } finally {
       setSubmitting(false)
       setImportProgress(null)
@@ -208,7 +235,7 @@ export function ImportDataModal({
           <h2 className="text-lg font-semibold text-foreground">Import data from file</h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleDismiss}
             className="rounded p-1 text-foreground/70 hover:bg-background hover:text-foreground"
             aria-label="Close"
           >
@@ -308,17 +335,42 @@ export function ImportDataModal({
           {/* Step 3 – Import */}
           {importProgress && (
             <p className="mb-4 text-sm text-foreground/80">
-              Imported {importProgress.done} / {importProgress.total} rows…
+              Processed {importProgress.done} / {importProgress.total} rows…
             </p>
+          )}
+
+          {importFailures && importFailures.length > 0 && parsed && (
+            <div
+              className="mb-4 rounded-lg border border-amber-500/35 bg-amber-500/[0.07] p-4 dark:bg-amber-500/10"
+              role="region"
+              aria-label="Import failures"
+            >
+              <p className="mb-3 text-sm text-foreground">
+                Imported{' '}
+                <strong className="font-semibold">{parsed.rows.length - importFailures.length}</strong> of{' '}
+                <strong className="font-semibold">{parsed.rows.length}</strong> rows. Rows below could not be imported:
+              </p>
+              <ul className="max-h-56 space-y-2 overflow-y-auto text-sm">
+                {importFailures.map((f) => (
+                  <li
+                    key={f.rowNumber}
+                    className="border-b border-border/70 pb-2 last:border-0 last:pb-0"
+                  >
+                    <span className="font-medium text-foreground">Row {f.rowNumber}</span>
+                    <span className="text-foreground/85"> — {f.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleDismiss}
             className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-background"
           >
-            Cancel
+            {importFailures?.length ? 'Close' : 'Cancel'}
           </button>
           <button
             type="button"
