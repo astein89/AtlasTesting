@@ -17,8 +17,13 @@ export function isRobotOffMapStatus(status: unknown): boolean {
   return Number.isFinite(n) && n === 1
 }
 
-/** Status codes excluded from mission robot selection (not assignable). */
-const EXCLUDED_FROM_MISSION_PICKER = new Set([2, 6, 7]) // Offline, Updating, Abnormal
+/** Status codes excluded from New Mission robot selection (not assignable). */
+const EXCLUDED_FROM_MISSION_PICKER = new Set([
+  1, // Departure — not on map
+  2, // Offline
+  6, // Updating
+  7, // Abnormal
+])
 
 /** Fleet robots considered available for mission assignment. */
 export function isActiveRobotFleetStatus(status: unknown): boolean {

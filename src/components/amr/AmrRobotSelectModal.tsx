@@ -75,7 +75,7 @@ export function AmrRobotSelectModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="amr-robot-select-title"
-        className="relative z-10 flex max-h-[min(92vh,680px)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg"
+        className="relative z-10 flex max-h-[min(92vh,680px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg"
       >
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
           <h2 id="amr-robot-select-title" className="text-base font-semibold text-foreground">

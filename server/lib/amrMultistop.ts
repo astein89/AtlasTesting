@@ -13,6 +13,11 @@ export type MultistopPlanDest = {
   continueMode?: ContinueMode
   /** Seconds to wait before auto-continue when continueMode is auto. */
   autoContinueSeconds?: number
+  /**
+   * Fleet NODE_POINT at this destination: drop pallet vs pickup-only at intermediate stops.
+   * Final segment end leg always uses drop (`true`) regardless.
+   */
+  putDown?: boolean
 }
 
 /** Release timing after `containerIn`, before the first `submitMission` (pickup row in UI). */
@@ -49,6 +54,7 @@ function parseDestinationRecord(o: Record<string, unknown>): MultistopPlanDest |
     waitingMillis: 0,
     continueMode: cf.continueMode,
   }
+  if (typeof o.putDown === 'boolean') base.putDown = o.putDown
   if (cf.continueMode !== 'auto' || cf.autoContinueSeconds === undefined) return base
   return { ...base, continueMode: 'auto', autoContinueSeconds: cf.autoContinueSeconds }
 }
@@ -91,21 +97,19 @@ export function normalizeDestinationInput(o: Record<string, unknown>): Normalize
         error: `autoContinueSeconds must be 0–${MAX_AUTO_CONTINUE_SECONDS} when continueMode is auto`,
       }
     }
-    return {
-      ok: true,
-      dest: {
-        position,
-        passStrategy: 'AUTO',
-        waitingMillis: 0,
-        continueMode: 'auto',
-        autoContinueSeconds: Math.floor(n),
-      },
+    const dest: MultistopPlanDest = {
+      position,
+      passStrategy: 'AUTO',
+      waitingMillis: 0,
+      continueMode: 'auto',
+      autoContinueSeconds: Math.floor(n),
     }
+    if (typeof o.putDown === 'boolean') dest.putDown = o.putDown
+    return { ok: true, dest }
   }
-  return {
-    ok: true,
-    dest: { position, passStrategy: 'AUTO', waitingMillis: 0, continueMode: 'manual' },
-  }
+  const dest: MultistopPlanDest = { position, passStrategy: 'AUTO', waitingMillis: 0, continueMode: 'manual' }
+  if (typeof o.putDown === 'boolean') dest.putDown = o.putDown
+  return { ok: true, dest }
 }
 
 export type NormalizePickupContinueResult =
@@ -220,7 +224,8 @@ export function buildSegmentMissionData(
   if (segmentIndex < 0 || segmentIndex >= total) throw new Error('segmentIndex out of range')
   const startPos = segmentIndex === 0 ? pickupPosition.trim() : dests[segmentIndex - 1].position.trim()
   const end = dests[segmentIndex]
-  const endPutDown = segmentIndex === total - 1
+  /** Final stop always drops; intermediate uses plan `putDown` (default pickup-only). */
+  const endPutDown = segmentIndex === total - 1 ? true : end.putDown === true
   const startLeg = {
     sequence: 1,
     position: startPos,

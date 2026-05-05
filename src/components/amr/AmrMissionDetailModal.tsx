@@ -115,13 +115,26 @@ type MultistopPlanDest = {
   position: string
   continueMode?: 'manual' | 'auto'
   autoContinueSeconds?: number
+  /** Intermediate stops: fleet drop vs pickup at this NODE_POINT; final stop is always drop. */
+  putDown?: boolean
 }
 
 type DraftDest = MultistopPlanDest & { id: string }
 
+/** Last destination is always drop; others use explicit `putDown` (default pickup-only). */
+function normalizeDraftPutDownRows(rows: DraftDest[]): DraftDest[] {
+  const n = rows.length
+  if (n === 0) return rows
+  return rows.map((r, i) => ({
+    ...r,
+    putDown: i === n - 1 ? true : r.putDown === true,
+  }))
+}
+
 /** Payload rows stored / PATCHed — fleet missionData stays AUTO / zero wait; app fields for release timing. */
 function draftToPlan(rows: DraftDest[]): Record<string, unknown>[] {
-  return rows.map((row) => {
+  const normalized = normalizeDraftPutDownRows(rows)
+  return normalized.map((row) => {
     const position = row.position.trim()
     const mode = row.continueMode === 'auto' ? 'auto' : 'manual'
     const base: Record<string, unknown> = {
@@ -129,6 +142,7 @@ function draftToPlan(rows: DraftDest[]): Record<string, unknown>[] {
       passStrategy: 'AUTO',
       waitingMillis: 0,
       continueMode: mode,
+      putDown: row.putDown === true,
     }
     if (mode === 'auto') {
       const sec = Math.max(0, Math.min(Math.floor(row.autoContinueSeconds ?? 0), 86400))
@@ -155,6 +169,7 @@ function parsePlanDestinations(planJson: unknown): MultistopPlanDest[] | null {
           ? row.autoContinueSeconds
           : Number(row.autoContinueSeconds)
       const entry: MultistopPlanDest = { position, continueMode: cm }
+      if (typeof row.putDown === 'boolean') entry.putDown = row.putDown
       if (cm === 'auto' && Number.isFinite(n) && n >= 0) {
         entry.autoContinueSeconds = Math.min(Math.max(0, Math.floor(n)), 86400)
       }
@@ -168,6 +183,16 @@ function parsePlanDestinations(planJson: unknown): MultistopPlanDest[] | null {
 
 function planToDraft(plan: MultistopPlanDest[]): DraftDest[] {
   return plan.map((d) => ({ ...d, id: uuidv4() }))
+}
+
+function formatPalletAtStopReadOnly(
+  row: MultistopPlanDest,
+  segmentIndexInPlan: number,
+  totalDestinations: number
+): string {
+  if (totalDestinations < 1) return 'At stop: —'
+  if (segmentIndexInPlan >= totalDestinations - 1) return 'At stop: Drop pallet (final)'
+  return row.putDown === true ? 'At stop: Drop pallet' : 'At stop: Pickup pallet'
 }
 
 function formatReleaseAfterStopReadOnly(
@@ -417,9 +442,14 @@ function SortableTailDestCard({
       <div className="min-w-0 flex flex-col gap-2">
         {stopHeading}
         {typeof segmentIndexInPlan === 'number' && typeof totalDestinations === 'number' ? (
-          <p className="mt-2 text-xs text-foreground/65">
-            {formatReleaseAfterStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
-          </p>
+          <>
+            <p className="mt-2 text-xs text-foreground/65">
+              {formatPalletAtStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
+            </p>
+            <p className="mt-1 text-xs text-foreground/65">
+              {formatReleaseAfterStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
+            </p>
+          </>
         ) : null}
       </div>
     </div>
@@ -466,6 +496,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   /** Defaults for the new row; take effect once this stop has a following destination (see helper copy). */
   const [addStopContinueMode, setAddStopContinueMode] = useState<'manual' | 'auto'>('manual')
   const [addStopAutoSeconds, setAddStopAutoSeconds] = useState(0)
+  /** Intermediate-stop edit: fleet drop vs pickup at this NODE_POINT (final stop is always drop). */
+  const [routeStopPutDown, setRouteStopPutDown] = useState(true)
   const [addStopErr, setAddStopErr] = useState<string | null>(null)
   const [addStopSuggestOpen, setAddStopSuggestOpen] = useState(false)
   const [addStopPickerOpen, setAddStopPickerOpen] = useState(false)
@@ -566,7 +598,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         setMsData(d)
         const parsed = parsePlanDestinations(d.session?.plan_json)
         if (parsed) {
-          const draft = planToDraft(parsed)
+          const draft = normalizeDraftPutDownRows(planToDraft(parsed))
           const pc = parsePickupContinueFromPlanJson(d.session?.plan_json) ?? defaultPickupContinueDraft()
           setDraftDestinations(draft)
           setDraftPickupContinue(pc)
@@ -624,7 +656,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       setDraftDestinations((prev) => {
         if (!prev) return prev
         if (prev.length <= nextSegmentIndex + 1) return prev
-        return prev.filter((r) => r.id !== id)
+        return normalizeDraftPutDownRows(prev.filter((r) => r.id !== id))
       })
     },
     [nextSegmentIndex]
@@ -643,6 +675,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     setAddStopPosition('')
     setAddStopContinueMode('manual')
     setAddStopAutoSeconds(0)
+    setRouteStopPutDown(true)
     setAddStopSuggestOpen(false)
     setAddStopPickerOpen(false)
     cancelAddStopSuggestClose()
@@ -653,10 +686,13 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     (rowId: string) => {
       const row = draftDestinations?.find((r) => r.id === rowId)
       if (!row) return
+      const idx = draftDestinations?.findIndex((r) => r.id === rowId) ?? -1
+      const isFinal = draftDestinations != null && idx >= 0 && idx >= draftDestinations.length - 1
       setAddStopErr(null)
       setAddStopPosition(row.position)
       setAddStopContinueMode(row.continueMode === 'auto' ? 'auto' : 'manual')
       setAddStopAutoSeconds(row.autoContinueSeconds ?? 0)
+      setRouteStopPutDown(isFinal ? true : row.putDown === true)
       setAddStopSuggestOpen(false)
       setAddStopPickerOpen(false)
       cancelAddStopSuggestClose()
@@ -718,7 +754,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         const newIdx = tail.findIndex((r) => r.id === over.id)
         if (oldIdx < 0 || newIdx < 0) return prev
         const head = prev.slice(0, nextSegmentIndex)
-        const nextRows = [...head, ...arrayMove(tail, oldIdx, newIdx)]
+        const nextRows = normalizeDraftPutDownRows([...head, ...arrayMove(tail, oldIdx, newIdx)])
         void persistPlanFromDraftRows(nextRows)
         return nextRows
       })
@@ -754,6 +790,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       }
     }
 
+    const palletDrop = routeStopPutDown
+
     closeRouteStopModal()
 
     if (modal.mode === 'add') {
@@ -761,12 +799,13 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       const row: DraftDest = {
         id,
         position: pos,
+        putDown: true,
         continueMode: cm,
         ...(cm === 'auto' ? { autoContinueSeconds: sec } : {}),
       }
       setDraftDestinations((prev) => {
         if (!prev) return prev
-        const newRows = [...prev, row]
+        const newRows = normalizeDraftPutDownRows([...prev, row])
         queueMicrotask(() => {
           void persistPlanFromDraftRows(newRows)
         })
@@ -778,16 +817,24 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     const rowId = modal.rowId
     setDraftDestinations((prev) => {
       if (!prev) return prev
-      const next = prev.map((r) => {
-        if (r.id !== rowId) return r
-        if (isFinal) {
-          return { ...r, position: pos }
-        }
-        if (cm === 'auto') {
-          return { ...r, position: pos, continueMode: 'auto' as const, autoContinueSeconds: sec }
-        }
-        return { ...r, position: pos, continueMode: 'manual' as const }
-      })
+      const next = normalizeDraftPutDownRows(
+        prev.map((r) => {
+          if (r.id !== rowId) return r
+          if (isFinal) {
+            return { ...r, position: pos }
+          }
+          if (cm === 'auto') {
+            return {
+              ...r,
+              position: pos,
+              putDown: palletDrop,
+              continueMode: 'auto' as const,
+              autoContinueSeconds: sec,
+            }
+          }
+          return { ...r, position: pos, putDown: palletDrop, continueMode: 'manual' as const }
+        })
+      )
       queueMicrotask(() => {
         void persistPlanFromDraftRows(next)
       })
@@ -802,6 +849,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     closeRouteStopModal,
     persistPlanFromDraftRows,
     draftDestinations,
+    routeStopPutDown,
   ])
 
   const addStopSuggestedStands = useMemo(() => {
@@ -819,6 +867,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     editStopSegmentIndex >= draftDestinations.length - 1
   const showRouteModalReleaseControls =
     routeStopModal?.mode === 'add' || (routeStopModal?.mode === 'edit' && !editStopIsFinal)
+  /** Add-stop appends a final destination; editing a middle stop can toggle pickup vs drop. */
+  const showRouteModalPutDownToggle =
+    routeStopModal?.mode === 'edit' && draftDestinations != null && !editStopIsFinal
 
   const sessionStatus = msData?.session?.status != null ? String(msData.session.status) : null
   const awaitingContinue = sessionStatus === 'awaiting_continue'
@@ -1486,15 +1537,34 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 <div className="flex flex-col gap-2 lg:col-start-2 lg:row-start-1 lg:max-w-[min(100%,20rem)] lg:shrink-0">
                   <div className="flex items-center gap-3 text-foreground/70">
                     <ToggleSwitch
-                      checked
-                      disabled
-                      onCheckedChange={() => {}}
-                      aria-label="Drop Pallet"
-                      title="Final stop is always drop"
+                      checked={showRouteModalPutDownToggle ? routeStopPutDown : true}
+                      disabled={!showRouteModalPutDownToggle}
+                      onCheckedChange={(on) => {
+                        setRouteStopPutDown(on)
+                        setAddStopErr(null)
+                      }}
+                      aria-label={
+                        showRouteModalPutDownToggle
+                          ? routeStopPutDown
+                            ? 'Drop Pallet'
+                            : 'Pickup Pallet'
+                          : 'Drop Pallet'
+                      }
+                      title={
+                        showRouteModalPutDownToggle
+                          ? undefined
+                          : 'Final stop is always drop'
+                      }
                       size="sm"
                       className="shrink-0"
                     />
-                    <span className="min-w-0 flex-1 text-sm">Drop Pallet</span>
+                    <span className="min-w-0 flex-1 text-sm">
+                      {showRouteModalPutDownToggle
+                        ? routeStopPutDown
+                          ? 'Drop Pallet'
+                          : 'Pickup Pallet'
+                        : 'Drop Pallet'}
+                    </span>
                   </div>
                   {showRouteModalReleaseControls ? (
                     <>

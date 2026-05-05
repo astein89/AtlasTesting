@@ -155,7 +155,12 @@ export type MultistopFleetTimelineResult =
 /** Mirrors `buildSegmentMissionData` in `server/lib/amrMultistop.ts`. */
 function buildSegmentMissionDataPreview(
   pickupPosition: string,
-  destinations: Array<{ position: string; passStrategy?: 'AUTO' | 'MANUAL'; waitingMillis?: number }>,
+  destinations: Array<{
+    position: string
+    passStrategy?: 'AUTO' | 'MANUAL'
+    waitingMillis?: number
+    putDown?: boolean
+  }>,
   segmentIndex: number
 ): Array<Record<string, unknown>> {
   const dests = destinations
@@ -163,7 +168,7 @@ function buildSegmentMissionDataPreview(
   if (segmentIndex < 0 || segmentIndex >= total) return []
   const startPos = segmentIndex === 0 ? pickupPosition.trim() : dests[segmentIndex - 1].position.trim()
   const end = dests[segmentIndex]
-  const endPutDown = segmentIndex === total - 1
+  const endPutDown = segmentIndex === total - 1 ? true : end.putDown === true
   return [
     {
       sequence: 1,
@@ -192,7 +197,12 @@ export function buildMultistopFleetTimeline(
   settings: AmrFleetSettings,
   args: {
     pickupPosition: string
-    destinations: Array<{ position: string; passStrategy?: 'AUTO' | 'MANUAL'; waitingMillis?: number }>
+    destinations: Array<{
+      position: string
+      passStrategy?: 'AUTO' | 'MANUAL'
+      waitingMillis?: number
+      putDown?: boolean
+    }>
     persistent: boolean
     robotIds?: string[]
   }

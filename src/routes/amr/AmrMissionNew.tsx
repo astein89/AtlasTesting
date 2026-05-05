@@ -562,6 +562,7 @@ export function AmrMissionNewForm({
         passStrategy: 'AUTO' as const,
         waitingMillis: 0,
         continueMode: mode,
+        putDown: l.putDown,
       }
       if (mode === 'auto') {
         const sec = Math.max(0, Math.min(Math.floor(cm.autoContinueSeconds ?? 0), 86400))
@@ -675,6 +676,7 @@ export function AmrMissionNewForm({
       position: l.position.trim(),
       passStrategy: 'AUTO' as const,
       waitingMillis: 0,
+      putDown: l.putDown,
     }))
     return buildMultistopFleetTimeline(rackMoveDebugFleetSettings, {
       pickupPosition,
