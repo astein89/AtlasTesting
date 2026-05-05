@@ -535,6 +535,7 @@ export function AmrMissions() {
                 <table className="w-full min-w-[36rem] text-left text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/40 text-foreground/80">
+                      <th className="whitespace-nowrap px-3 py-2 text-base font-medium">Robot</th>
                       <SortableTh
                         label="Job / mission code"
                         active={appSort.col === 'job_code'}
@@ -559,7 +560,7 @@ export function AmrMissions() {
                   <tbody>
                     {sortedActiveMissionGroups.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-3 py-6 text-center text-sm text-foreground/60">
+                        <td colSpan={5} className="px-3 py-6 text-center text-sm text-foreground/60">
                           No active missions.
                         </td>
                       </tr>
@@ -573,6 +574,10 @@ export function AmrMissions() {
                             : String(created ?? '')
                         if (group.kind === 'single') {
                           const headRec = headRecordForMissionDetail(group)
+                          const robotLabel =
+                            typeof r.locked_robot_id === 'string' && r.locked_robot_id.trim()
+                              ? r.locked_robot_id.trim()
+                              : '—'
                           return (
                             <tr
                               key={String(r.id)}
@@ -586,6 +591,7 @@ export function AmrMissions() {
                                 }
                               }}
                             >
+                              <td className="px-3 py-2 font-mono text-lg leading-snug text-foreground/90">{robotLabel}</td>
                               <td className="px-3 py-2 font-mono text-xs">
                                 <span className="block">{String(r.job_code ?? '')}</span>
                               </td>
@@ -602,6 +608,10 @@ export function AmrMissions() {
                         const attentionMeta = sessionId ? attentionBySession.get(sessionId) : undefined
                         const sessRaw = multistopSessionStatusFromGroup(group)
                         const waitingForStart = multistopWaitingForFirstSegmentStart(r, attentionMeta ?? null)
+                        const robotLabel =
+                          typeof r.locked_robot_id === 'string' && r.locked_robot_id.trim()
+                            ? r.locked_robot_id.trim()
+                            : '—'
                         return (
                           <tr
                             key={String(r.id)}
@@ -622,6 +632,7 @@ export function AmrMissions() {
                               }
                             }}
                           >
+                            <td className="px-3 py-2 font-mono text-lg leading-snug text-foreground/90">{robotLabel}</td>
                             <td className="px-3 py-2 font-mono text-xs">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <span className="block">{String(r.job_code ?? '')}</span>

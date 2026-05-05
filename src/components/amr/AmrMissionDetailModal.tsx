@@ -131,7 +131,7 @@ function draftToPlan(rows: DraftDest[]): Record<string, unknown>[] {
       continueMode: mode,
     }
     if (mode === 'auto') {
-      const sec = Math.max(1, Math.min(Math.floor(row.autoContinueSeconds ?? 0), 86400))
+      const sec = Math.max(0, Math.min(Math.floor(row.autoContinueSeconds ?? 0), 86400))
       base.autoContinueSeconds = sec
     }
     return base
@@ -155,8 +155,8 @@ function parsePlanDestinations(planJson: unknown): MultistopPlanDest[] | null {
           ? row.autoContinueSeconds
           : Number(row.autoContinueSeconds)
       const entry: MultistopPlanDest = { position, continueMode: cm }
-      if (cm === 'auto' && Number.isFinite(n) && n >= 1) {
-        entry.autoContinueSeconds = Math.min(Math.floor(n), 86400)
+      if (cm === 'auto' && Number.isFinite(n) && n >= 0) {
+        entry.autoContinueSeconds = Math.min(Math.max(0, Math.floor(n)), 86400)
       }
       out.push(entry)
     }
@@ -180,6 +180,9 @@ function formatReleaseAfterStopReadOnly(
   const mode = row.continueMode === 'auto' ? 'auto' : 'manual'
   if (mode === 'auto') {
     const s = row.autoContinueSeconds
+    if (typeof s === 'number' && Number.isFinite(s) && s === 0) {
+      return 'After arrival: Auto-release immediately'
+    }
     if (typeof s === 'number' && Number.isFinite(s) && s >= 1) {
       return `After arrival: Auto-release after ${Math.min(Math.floor(s), 86400)}s`
     }
@@ -202,8 +205,8 @@ function parsePickupContinueFromPlanJson(planJson: unknown): {
       typeof pcr.autoContinueSeconds === 'number'
         ? pcr.autoContinueSeconds
         : Number(pcr.autoContinueSeconds)
-    if (pcm === 'auto' && Number.isFinite(pn) && pn >= 1) {
-      return { continueMode: 'auto', autoContinueSeconds: Math.min(Math.floor(pn), 86400) }
+    if (pcm === 'auto' && Number.isFinite(pn) && pn >= 0) {
+      return { continueMode: 'auto', autoContinueSeconds: Math.min(Math.max(0, Math.floor(pn)), 86400) }
     }
     return { continueMode: 'manual' }
   } catch {
@@ -215,8 +218,9 @@ function formatPickupReleaseLine(pc: {
   continueMode: 'manual' | 'auto'
   autoContinueSeconds?: number
 }): string {
-  if (pc.continueMode === 'auto' && typeof pc.autoContinueSeconds === 'number' && pc.autoContinueSeconds >= 1) {
-    return `Before first leg: Auto-release after ${pc.autoContinueSeconds}s`
+  if (pc.continueMode === 'auto' && typeof pc.autoContinueSeconds === 'number') {
+    if (pc.autoContinueSeconds === 0) return 'Before first leg: Auto-release immediately'
+    if (pc.autoContinueSeconds >= 1) return `Before first leg: Auto-release after ${pc.autoContinueSeconds}s`
   }
   return 'Before first leg: Manual release'
 }
@@ -261,27 +265,51 @@ function validateMultistopPlan(
   }
   for (let i = 0; i < plan.length - 1; i++) {
     const r = plan[i]
-    if (r.continueMode === 'auto' && (r.autoContinueSeconds ?? 0) < 1) {
-      return `Destination ${i + 1}: Auto Release needs at least 1 second.`
+    if (r.continueMode === 'auto') {
+      const s = r.autoContinueSeconds ?? 0
+      if (!Number.isFinite(s) || s < 0 || s > 86400) {
+        return `Destination ${i + 1}: Auto Release needs 0–86400 seconds.`
+      }
     }
   }
   return null
 }
 
+type PickupContinueDraft = {
+  continueMode: 'manual' | 'auto'
+  autoContinueSeconds?: number
+}
+
+function defaultPickupContinueDraft(): PickupContinueDraft {
+  return { continueMode: 'manual' }
+}
+
+function validatePickupContinueDraft(pc: PickupContinueDraft | null): string | null {
+  if (!pc || pc.continueMode !== 'auto') return null
+  const s = pc.autoContinueSeconds ?? 0
+  if (!Number.isFinite(s) || s < 0 || s > 86400) {
+    return 'Before first leg: Auto Release needs 0–86400 seconds.'
+  }
+  return null
+}
+
+function planEditSnapshot(rows: DraftDest[] | null, pickup: PickupContinueDraft | null): string {
+  if (!rows) return ''
+  return JSON.stringify({
+    d: draftToPlan(rows),
+    p: pickup ?? { continueMode: 'manual' as const },
+  })
+}
+
 function SortableTailDestCard({
   row,
   tailSlot,
-  canRemove,
-  onPatch,
-  onRemove,
-  readOnly,
   reorderable,
   stopNum,
   totalStops,
   legStart,
   legEnd,
   legToolbar,
-  standLocation,
   sortableDisabled,
   segmentIndexInPlan,
   totalDestinations,
@@ -289,33 +317,18 @@ function SortableTailDestCard({
   row: DraftDest
   /** 1 = next fleet leg (first in tail); drives highlight vs later stops. */
   tailSlot: number
-  canRemove: boolean
-  onPatch: (id: string, patch: Partial<MultistopPlanDest>) => void
-  onRemove: (id: string) => void
-  /** When true, show summary only (used for the upcoming leg until the user clicks Edit). */
-  readOnly?: boolean
   /** When false, drag handle is hidden (nothing to reorder). */
   reorderable?: boolean
   stopNum: number
   totalStops: number
   legStart: string
   legEnd: string
-  /** Edit / Remove in the heading (next leg + later stops when collapsed). */
+  /** Edit / Remove — editing opens the route stop modal. */
   legToolbar?: {
     editLabel: string
     onEdit: () => void
     onRemove: () => void
     canRemove: boolean
-  } | null
-  /** Same External Ref UX as new missions (suggest + map picker). */
-  standLocation?: {
-    stands: AmrStandPickerRow[]
-    suggestOpen: boolean
-    suggestedStands: AmrStandPickerRow[]
-    onPositionFocus: () => void
-    onPositionBlur: () => void
-    onCloseSuggest: () => void
-    onOpenPicker: () => void
   } | null
   /** When true, card stays in the sortable list but cannot be dragged (view-only route). */
   sortableDisabled?: boolean
@@ -403,181 +416,11 @@ function SortableTailDestCard({
       ) : null}
       <div className="min-w-0 flex flex-col gap-2">
         {stopHeading}
-        {readOnly &&
-        typeof segmentIndexInPlan === 'number' &&
-        typeof totalDestinations === 'number' ? (
+        {typeof segmentIndexInPlan === 'number' && typeof totalDestinations === 'number' ? (
           <p className="mt-2 text-xs text-foreground/65">
             {formatReleaseAfterStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
           </p>
         ) : null}
-        {readOnly ? null : (
-          <div className="flex flex-wrap items-start gap-2">
-            <div className="min-w-0 flex-1 space-y-2">
-              {isNext ? (
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-primary">Next fleet stop</span>
-                </div>
-              ) : null}
-              <label className="block text-xs font-medium text-foreground/70">
-                <span className="text-foreground/80">Location (External Ref)</span>
-                {standLocation ? (
-                  <div className="mt-1 flex min-h-[40px] items-stretch gap-2">
-                    <div className="relative min-w-0 flex-1">
-                      <input
-                        id={`amr-detail-tail-pos-${row.id}`}
-                        autoComplete="off"
-                        spellCheck={false}
-                        enterKeyHint="done"
-                        title="Scan or pick a stand External Ref (keyboard / barcode)"
-                        className={`min-h-[40px] w-full rounded-lg border border-border bg-background py-2 pl-3 font-mono text-sm ${row.position.trim() ? 'pr-10' : 'pr-3'}`}
-                        value={row.position}
-                        onChange={(e) => onPatch(row.id, { position: e.target.value })}
-                        onFocus={standLocation.onPositionFocus}
-                        onBlur={standLocation.onPositionBlur}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') {
-                            standLocation.onCloseSuggest()
-                            return
-                          }
-                          if (e.key !== 'Enter') return
-                          e.preventDefault()
-                          standLocation.onCloseSuggest()
-                        }}
-                        placeholder="Scan or type External Ref…"
-                      />
-                      {row.position.trim() ? (
-                        <button
-                          type="button"
-                          tabIndex={-1}
-                          className="absolute right-1.5 top-1/2 z-[15] flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-foreground/55 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          aria-label="Clear location"
-                          title="Clear"
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            onPatch(row.id, { position: '' })
-                            standLocation.onCloseSuggest()
-                          }}
-                        >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      ) : null}
-                      {standLocation.suggestOpen ? (
-                        standLocation.suggestedStands.length > 0 ? (
-                          <ul
-                            className="absolute left-0 right-0 top-full z-[60] mt-0.5 max-h-48 overflow-y-auto rounded-lg border border-border bg-card py-1 text-card-foreground shadow-md"
-                            role="listbox"
-                          >
-                            {standLocation.suggestedStands.map((s) => (
-                              <li key={s.id} role="option">
-                                <button
-                                  type="button"
-                                  className="w-full px-3 py-2 text-left font-mono text-sm font-medium hover:bg-muted"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => {
-                                    onPatch(row.id, { position: s.external_ref })
-                                    standLocation.onCloseSuggest()
-                                  }}
-                                >
-                                  {s.external_ref}
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : standLocation.stands.length > 0 ? (
-                          <div className="absolute left-0 right-0 top-full z-[60] mt-0.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground/70 shadow-md">
-                            No matching stands
-                          </div>
-                        ) : null
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      className="flex h-10 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label="Choose location on map"
-                      title="Choose location"
-                      onClick={() => {
-                        standLocation.onCloseSuggest()
-                        standLocation.onOpenPicker()
-                      }}
-                    >
-                      <LocationPinIcon className="h-5 w-5" />
-                    </button>
-                  </div>
-                ) : (
-                  <input
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm"
-                    value={row.position}
-                    onChange={(e) => onPatch(row.id, { position: e.target.value })}
-                    placeholder="Stand / node code"
-                  />
-                )}
-              </label>
-            </div>
-            {legToolbar ? null : (
-              <div className="flex shrink-0 flex-col items-end gap-1.5">
-                <button
-                  type="button"
-                  disabled={!canRemove}
-                  title={canRemove ? 'Remove this destination' : 'Keep at least one remaining stop'}
-                  className="rounded-md border border-red-500/30 bg-background px-2 py-1 text-xs text-red-600 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400"
-                  onClick={() => onRemove(row.id)}
-                >
-                  Remove
-                </button>
-              </div>
-            )}
-            {typeof segmentIndexInPlan === 'number' &&
-            typeof totalDestinations === 'number' &&
-            segmentIndexInPlan < totalDestinations - 1 ? (
-              <div className="mt-2 flex flex-col gap-2">
-                <div className="flex items-center gap-3">
-                  <ToggleSwitch
-                    checked={row.continueMode === 'auto'}
-                    onCheckedChange={(on) =>
-                      onPatch(row.id, {
-                        continueMode: on ? 'auto' : 'manual',
-                        autoContinueSeconds: row.autoContinueSeconds ?? 0,
-                      })
-                    }
-                    aria-label={
-                      row.continueMode === 'auto' ? 'Auto Release' : 'Manual Release'
-                    }
-                    size="sm"
-                    className="shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 text-xs">
-                    {row.continueMode === 'auto' ? 'Auto Release' : 'Manual Release'}
-                  </span>
-                </div>
-                {row.continueMode === 'auto' ? (
-                  <label className="flex flex-wrap items-center gap-2 pl-1 text-xs text-foreground/85">
-                    <span className="text-foreground/70">After</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={86400}
-                      inputMode="numeric"
-                      className="w-[5rem] rounded-md border border-border bg-background px-2 py-1 font-mono text-xs"
-                      value={row.autoContinueSeconds ?? 0}
-                      onChange={(e) => {
-                        const n = Number(e.target.value)
-                        onPatch(row.id, {
-                          continueMode: 'auto',
-                          autoContinueSeconds: Number.isFinite(n) ? n : 0,
-                        })
-                      }}
-                    />
-                    <span>s</span>
-                  </label>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        )}
       </div>
     </div>
   )
@@ -611,37 +454,24 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [continueBusy, setContinueBusy] = useState(false)
   const [patchBusy, setPatchBusy] = useState(false)
   const [draftDestinations, setDraftDestinations] = useState<DraftDest[] | null>(null)
+  /** Editable when session is waiting at segment 0 (before first destination leg); PATCH `pickupContinue`. */
+  const [draftPickupContinue, setDraftPickupContinue] = useState<PickupContinueDraft | null>(null)
   const [savedPlanSnapshot, setSavedPlanSnapshot] = useState('')
   const [planEditErr, setPlanEditErr] = useState<string | null>(null)
-  const [editingNextLeg, setEditingNextLeg] = useState(false)
-  /** Which later tail row (not index 0) has the location editor expanded; null = all collapsed. */
-  const [editingTailRowId, setEditingTailRowId] = useState<string | null>(null)
 
   const [standRows, setStandRows] = useState<AmrStandPickerRow[]>([])
-  const [suggestRowId, setSuggestRowId] = useState<string | null>(null)
-  const [pickerRowId, setPickerRowId] = useState<string | null>(null)
-  const suggestCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const [addStopModalOpen, setAddStopModalOpen] = useState(false)
+  type RouteStopModalState = null | { mode: 'add' } | { mode: 'edit'; rowId: string }
+  const [routeStopModal, setRouteStopModal] = useState<RouteStopModalState>(null)
   const [addStopPosition, setAddStopPosition] = useState('')
+  /** Defaults for the new row; take effect once this stop has a following destination (see helper copy). */
+  const [addStopContinueMode, setAddStopContinueMode] = useState<'manual' | 'auto'>('manual')
+  const [addStopAutoSeconds, setAddStopAutoSeconds] = useState(0)
   const [addStopErr, setAddStopErr] = useState<string | null>(null)
   const [addStopSuggestOpen, setAddStopSuggestOpen] = useState(false)
   const [addStopPickerOpen, setAddStopPickerOpen] = useState(false)
   const addStopSuggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Avoid msLoading flicker when parent polling bumps `record.updated_at` but session id is unchanged. */
   const prevFetchedMultistopSessionIdRef = useRef<string | null>(null)
-
-  const cancelSuggestClose = useCallback(() => {
-    if (suggestCloseTimerRef.current) {
-      clearTimeout(suggestCloseTimerRef.current)
-      suggestCloseTimerRef.current = null
-    }
-  }, [])
-
-  const scheduleSuggestClose = useCallback(() => {
-    cancelSuggestClose()
-    suggestCloseTimerRef.current = setTimeout(() => setSuggestRowId(null), 180)
-  }, [cancelSuggestClose])
 
   const cancelAddStopSuggestClose = useCallback(() => {
     if (addStopSuggestTimerRef.current) {
@@ -666,24 +496,17 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     if (!record) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (pickerRowId || addStopPickerOpen) {
+      if (addStopPickerOpen) {
         e.preventDefault()
-        setPickerRowId(null)
         setAddStopPickerOpen(false)
         return
       }
-      if (addStopModalOpen) {
+      if (routeStopModal) {
         e.preventDefault()
         cancelAddStopSuggestClose()
         setAddStopSuggestOpen(false)
-        setAddStopModalOpen(false)
+        setRouteStopModal(null)
         setAddStopErr(null)
-        return
-      }
-      if (suggestRowId) {
-        e.preventDefault()
-        cancelSuggestClose()
-        setSuggestRowId(null)
         return
       }
       onClose()
@@ -693,11 +516,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   }, [
     record,
     onClose,
-    pickerRowId,
     addStopPickerOpen,
-    addStopModalOpen,
-    suggestRowId,
-    cancelSuggestClose,
+    routeStopModal,
     cancelAddStopSuggestClose,
   ])
 
@@ -716,16 +536,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   }, [])
 
   useEffect(() => {
-    setSuggestRowId(null)
-    setPickerRowId(null)
-    cancelSuggestClose()
     cancelAddStopSuggestClose()
     setAddStopSuggestOpen(false)
     setAddStopPickerOpen(false)
-    setAddStopModalOpen(false)
+    setRouteStopModal(null)
     setAddStopErr(null)
-    setEditingTailRowId(null)
-  }, [sessionId, cancelSuggestClose, cancelAddStopSuggestClose])
+  }, [sessionId, cancelAddStopSuggestClose])
 
   useEffect(() => {
     if (!sessionId) {
@@ -733,8 +549,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       setMsData(null)
       setMsErr(null)
       setDraftDestinations(null)
+      setDraftPickupContinue(null)
       setSavedPlanSnapshot('')
-      setEditingTailRowId(null)
       return
     }
     const sessionIdChanged = prevFetchedMultistopSessionIdRef.current !== sessionId
@@ -751,10 +567,13 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         const parsed = parsePlanDestinations(d.session?.plan_json)
         if (parsed) {
           const draft = planToDraft(parsed)
+          const pc = parsePickupContinueFromPlanJson(d.session?.plan_json) ?? defaultPickupContinueDraft()
           setDraftDestinations(draft)
-          setSavedPlanSnapshot(JSON.stringify(draftToPlan(draft)))
+          setDraftPickupContinue(pc)
+          setSavedPlanSnapshot(planEditSnapshot(draft, pc))
         } else {
           setDraftDestinations(null)
+          setDraftPickupContinue(null)
           setSavedPlanSnapshot('')
         }
       })
@@ -776,10 +595,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
   }, [msData])
 
-  useEffect(() => {
-    setEditingNextLeg(false)
-    setEditingTailRowId(null)
-  }, [nextSegmentIndex])
 
   /** Resolved plan for leg labels: prefer live draft, else session snapshot. */
   const planPlainForLegLabels = useMemo((): MultistopPlanDest[] | null => {
@@ -801,16 +616,11 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
 
   const hasPlanChanges = useMemo(() => {
     if (!draftDestinations) return false
-    return JSON.stringify(draftToPlan(draftDestinations)) !== savedPlanSnapshot
-  }, [draftDestinations, savedPlanSnapshot])
-
-  const patchDraftRow = useCallback((id: string, patch: Partial<MultistopPlanDest>) => {
-    setDraftDestinations((prev) => (prev ? prev.map((r) => (r.id === id ? { ...r, ...patch } : r)) : prev))
-  }, [])
+    return planEditSnapshot(draftDestinations, draftPickupContinue) !== savedPlanSnapshot
+  }, [draftDestinations, draftPickupContinue, savedPlanSnapshot])
 
   const removeDraftRow = useCallback(
     (id: string) => {
-      setEditingTailRowId((cur) => (cur === id ? null : cur))
       setDraftDestinations((prev) => {
         if (!prev) return prev
         if (prev.length <= nextSegmentIndex + 1) return prev
@@ -820,36 +630,73 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     [nextSegmentIndex]
   )
 
+  const closeRouteStopModal = useCallback(() => {
+    setRouteStopModal(null)
+    setAddStopErr(null)
+    setAddStopSuggestOpen(false)
+    setAddStopPickerOpen(false)
+    cancelAddStopSuggestClose()
+  }, [cancelAddStopSuggestClose])
+
   const openAddStopModal = useCallback(() => {
     setAddStopErr(null)
     setAddStopPosition('')
+    setAddStopContinueMode('manual')
+    setAddStopAutoSeconds(0)
     setAddStopSuggestOpen(false)
     setAddStopPickerOpen(false)
     cancelAddStopSuggestClose()
-    setAddStopModalOpen(true)
+    setRouteStopModal({ mode: 'add' })
   }, [cancelAddStopSuggestClose])
 
-  const closeAddStopModal = useCallback(() => {
-    setAddStopModalOpen(false)
-    setAddStopErr(null)
-    setAddStopSuggestOpen(false)
-    setAddStopPickerOpen(false)
-    cancelAddStopSuggestClose()
-  }, [cancelAddStopSuggestClose])
+  const openEditStopModal = useCallback(
+    (rowId: string) => {
+      const row = draftDestinations?.find((r) => r.id === rowId)
+      if (!row) return
+      setAddStopErr(null)
+      setAddStopPosition(row.position)
+      setAddStopContinueMode(row.continueMode === 'auto' ? 'auto' : 'manual')
+      setAddStopAutoSeconds(row.autoContinueSeconds ?? 0)
+      setAddStopSuggestOpen(false)
+      setAddStopPickerOpen(false)
+      cancelAddStopSuggestClose()
+      setRouteStopModal({ mode: 'edit', rowId })
+    },
+    [draftDestinations, cancelAddStopSuggestClose]
+  )
 
   const persistPlanFromDraftRows = useCallback(async (rows: DraftDest[]): Promise<boolean> => {
     if (!sessionId) return false
     const plan = draftToPlan(rows)
     const err = validateMultistopPlan(rows)
-    if (err) {
-      setPlanEditErr(err)
+    const pErr =
+      nextSegmentIndex === 0 && draftPickupContinue != null
+        ? validatePickupContinueDraft(draftPickupContinue)
+        : null
+    if (err || pErr) {
+      setPlanEditErr(err ?? pErr ?? null)
       return false
     }
     setPlanEditErr(null)
     setPatchBusy(true)
     try {
-      await patchAmrMultistopSession(sessionId, { destinations: plan })
-      setSavedPlanSnapshot(JSON.stringify(plan))
+      const body: Record<string, unknown> = { destinations: plan }
+      if (nextSegmentIndex === 0 && draftPickupContinue) {
+        const pc = draftPickupContinue
+        if (pc.continueMode === 'auto') {
+          body.pickupContinue = {
+            continueMode: 'auto',
+            autoContinueSeconds: Math.min(
+              86400,
+              Math.max(0, Math.floor(pc.autoContinueSeconds ?? 0))
+            ),
+          }
+        } else {
+          body.pickupContinue = { continueMode: 'manual' }
+        }
+      }
+      await patchAmrMultistopSession(sessionId, body)
+      setSavedPlanSnapshot(planEditSnapshot(rows, draftPickupContinue))
       return true
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { error?: string } } }
@@ -858,7 +705,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     } finally {
       setPatchBusy(false)
     }
-  }, [sessionId])
+  }, [sessionId, nextSegmentIndex, draftPickupContinue])
 
   const handleTailDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -879,38 +726,99 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     [nextSegmentIndex, persistPlanFromDraftRows]
   )
 
-  const commitAddStopFromModal = useCallback(() => {
+  const commitRouteStopModal = useCallback(() => {
+    if (!routeStopModal) return
+    const modal = routeStopModal
     const pos = normalizeExternalRefFromStands(standRows, addStopPosition)
     if (!pos.trim()) {
       setAddStopErr('Enter an External Ref for this stop.')
       return
     }
-    const id = uuidv4()
-    closeAddStopModal()
+
+    const cm = addStopContinueMode
+    const sec = cm === 'auto' ? Math.min(86400, Math.max(0, Math.floor(addStopAutoSeconds))) : 0
+
+    let si = -1
+    let isFinal = false
+    if (modal.mode === 'edit') {
+      si = draftDestinations?.findIndex((r) => r.id === modal.rowId) ?? -1
+      isFinal =
+        draftDestinations != null && si >= 0 && si >= draftDestinations.length - 1
+    }
+    const releaseUiActive = modal.mode === 'add' || (modal.mode === 'edit' && !isFinal)
+    if (releaseUiActive && cm === 'auto') {
+      const s = addStopAutoSeconds
+      if (!Number.isFinite(s) || s < 0 || s > 86400) {
+        setAddStopErr('Auto Release needs 0–86400 seconds.')
+        return
+      }
+    }
+
+    closeRouteStopModal()
+
+    if (modal.mode === 'add') {
+      const id = uuidv4()
+      const row: DraftDest = {
+        id,
+        position: pos,
+        continueMode: cm,
+        ...(cm === 'auto' ? { autoContinueSeconds: sec } : {}),
+      }
+      setDraftDestinations((prev) => {
+        if (!prev) return prev
+        const newRows = [...prev, row]
+        queueMicrotask(() => {
+          void persistPlanFromDraftRows(newRows)
+        })
+        return newRows
+      })
+      return
+    }
+
+    const rowId = modal.rowId
     setDraftDestinations((prev) => {
       if (!prev) return prev
-      const newRows = [
-        ...prev,
-        { id, position: pos, continueMode: 'manual' as const, autoContinueSeconds: 0 },
-      ]
-      queueMicrotask(() => {
-        void persistPlanFromDraftRows(newRows)
+      const next = prev.map((r) => {
+        if (r.id !== rowId) return r
+        if (isFinal) {
+          return { ...r, position: pos }
+        }
+        if (cm === 'auto') {
+          return { ...r, position: pos, continueMode: 'auto' as const, autoContinueSeconds: sec }
+        }
+        return { ...r, position: pos, continueMode: 'manual' as const }
       })
-      return newRows
+      queueMicrotask(() => {
+        void persistPlanFromDraftRows(next)
+      })
+      return next
     })
-  }, [addStopPosition, standRows, closeAddStopModal, persistPlanFromDraftRows])
-
-  const suggestedStands = useMemo(() => {
-    if (!suggestRowId || !draftDestinations) return []
-    const d = draftDestinations.find((r) => r.id === suggestRowId)
-    if (!d) return []
-    return filterStandsForSuggest(standRows, d.position)
-  }, [suggestRowId, draftDestinations, standRows])
+  }, [
+    routeStopModal,
+    addStopPosition,
+    addStopContinueMode,
+    addStopAutoSeconds,
+    standRows,
+    closeRouteStopModal,
+    persistPlanFromDraftRows,
+    draftDestinations,
+  ])
 
   const addStopSuggestedStands = useMemo(() => {
-    if (!addStopModalOpen) return []
+    if (!routeStopModal) return []
     return filterStandsForSuggest(standRows, addStopPosition)
-  }, [addStopModalOpen, standRows, addStopPosition])
+  }, [routeStopModal, standRows, addStopPosition])
+
+  const editStopSegmentIndex =
+    routeStopModal?.mode === 'edit' && draftDestinations
+      ? draftDestinations.findIndex((r) => r.id === routeStopModal.rowId)
+      : -1
+  const editStopIsFinal =
+    editStopSegmentIndex >= 0 &&
+    draftDestinations != null &&
+    editStopSegmentIndex >= draftDestinations.length - 1
+  const showRouteModalReleaseControls =
+    routeStopModal?.mode === 'add' || (routeStopModal?.mode === 'edit' && !editStopIsFinal)
 
   const sessionStatus = msData?.session?.status != null ? String(msData.session.status) : null
   const awaitingContinue = sessionStatus === 'awaiting_continue'
@@ -919,12 +827,21 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     typeof continueNotBeforeRaw === 'string' && continueNotBeforeRaw.trim()
       ? continueNotBeforeRaw.trim()
       : null
+  const autoContinueWaitMs = continueNotBeforeIso ? remainingMsUntilIso(continueNotBeforeIso) : null
   const [, setCountdownTick] = useState(0)
   useEffect(() => {
     if (!awaitingContinue || !continueNotBeforeIso) return
+    const ms = remainingMsUntilIso(continueNotBeforeIso)
+    /** No ticking for immediate (0s) auto-continue — avoids a stuck "0s" countdown. */
+    if (ms == null || ms === 0) return
     const t = setInterval(() => setCountdownTick((x) => x + 1), 1000)
     return () => clearInterval(t)
   }, [awaitingContinue, continueNotBeforeIso])
+
+  const pickupContinueHint = useMemo(
+    () => parsePickupContinueFromPlanJson(msData?.session?.plan_json),
+    [msData?.session?.plan_json]
+  )
 
   if (!record) return null
 
@@ -946,10 +863,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const routeActionsEnabled = canManage && awaitingContinue
   const pickupPos =
     msData?.session?.pickup_position != null ? String(msData.session.pickup_position) : null
-  const pickupContinueHint = useMemo(
-    () => parsePickupContinueFromPlanJson(msData?.session?.plan_json),
-    [msData?.session?.plan_json]
-  )
 
   const lockedRobotFromSession =
     sessionId && msData?.session && typeof msData.session.locked_robot_id === 'string'
@@ -1104,11 +1017,60 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               {!msLoading && msData ? (
                 <>
                   {pickupPos ? (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       <p className="text-sm">
                         Pickup: <span className="font-mono">{pickupPos}</span>
                       </p>
-                      {pickupContinueHint ? (
+                      {routeActionsEnabled && nextSegmentIndex === 0 && draftPickupContinue ? (
+                        <div className="rounded-lg border border-border bg-muted/25 px-3 py-2">
+                          <p className="text-xs font-medium text-foreground/75">Before first leg</p>
+                          <div className="mt-2 flex items-center gap-3">
+                            <ToggleSwitch
+                              checked={draftPickupContinue.continueMode === 'auto'}
+                              onCheckedChange={(on) =>
+                                setDraftPickupContinue((prev) => {
+                                  const base = prev ?? defaultPickupContinueDraft()
+                                  return {
+                                    ...base,
+                                    continueMode: on ? 'auto' : 'manual',
+                                    autoContinueSeconds: base.autoContinueSeconds ?? 0,
+                                  }
+                                })
+                              }
+                              aria-label={
+                                draftPickupContinue.continueMode === 'auto' ? 'Auto Release' : 'Manual Release'
+                              }
+                              size="sm"
+                              className="shrink-0"
+                            />
+                            <span className="min-w-0 flex-1 text-xs text-foreground/85">
+                              {draftPickupContinue.continueMode === 'auto' ? 'Auto Release' : 'Manual Release'}
+                            </span>
+                          </div>
+                          {draftPickupContinue.continueMode === 'auto' ? (
+                            <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/85">
+                              <span className="text-foreground/70">After</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={86400}
+                                inputMode="numeric"
+                                className="w-[5rem] rounded-md border border-border bg-background px-2 py-1 font-mono text-xs"
+                                value={draftPickupContinue.autoContinueSeconds ?? 0}
+                                onChange={(e) => {
+                                  const n = Number(e.target.value)
+                                  setDraftPickupContinue((prev) => ({
+                                    ...(prev ?? defaultPickupContinueDraft()),
+                                    continueMode: 'auto',
+                                    autoContinueSeconds: Number.isFinite(n) ? n : 0,
+                                  }))
+                                }}
+                              />
+                              <span>s</span>
+                            </label>
+                          ) : null}
+                        </div>
+                      ) : pickupContinueHint ? (
                         <p className="text-xs text-foreground/65">{formatPickupReleaseLine(pickupContinueHint)}</p>
                       ) : null}
                     </div>
@@ -1180,16 +1142,17 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
 
                             {routeActionsEnabled ? (
                               <div className="flex w-full min-w-0 flex-col gap-2">
-                                {continueNotBeforeIso ? (
+                                {continueNotBeforeIso &&
+                                autoContinueWaitMs != null &&
+                                autoContinueWaitMs > 0 ? (
                                   <p
                                     className="text-xs font-medium tabular-nums text-foreground/85"
                                     aria-live="polite"
                                   >
-                                    Auto-continues in{' '}
-                                    {formatRemainingMmSs(remainingMsUntilIso(continueNotBeforeIso) ?? 0)}
+                                    Release in {formatRemainingMmSs(autoContinueWaitMs)}
                                     {' · '}
                                     <span className="font-normal text-foreground/65">
-                                      use Continue now to override
+                                      use Release now to override
                                     </span>
                                   </p>
                                 ) : null}
@@ -1201,10 +1164,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                   onClick={() => void onContinue()}
                                 >
                                   {continueBusy
-                                    ? 'Continuing…'
+                                    ? 'Releasing…'
                                     : continueNotBeforeIso
-                                      ? 'Continue now'
-                                      : 'Continue to next stop'}
+                                      ? 'Release now'
+                                      : 'Release Mission'}
                                 </button>
                                 <button
                                   type="button"
@@ -1231,16 +1194,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                   tailSlot={i + 1}
                                   segmentIndexInPlan={si}
                                   totalDestinations={draftDestinations.length}
-                                  canRemove={draftDestinations.length > nextSegmentIndex + 1}
-                                  onPatch={patchDraftRow}
-                                  onRemove={removeDraftRow}
-                                  readOnly={
-                                    !routeActionsEnabled
-                                      ? true
-                                      : i === 0
-                                        ? !editingNextLeg
-                                        : editingTailRowId !== row.id
-                                  }
                                   reorderable={routeActionsEnabled && tailDestRows.length > 1}
                                   sortableDisabled={!routeActionsEnabled}
                                   stopNum={si + 1}
@@ -1251,55 +1204,19 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     routeActionsEnabled
                                       ? i === 0
                                         ? {
-                                            editLabel: editingNextLeg ? 'Done editing' : 'Edit',
-                                            onEdit: () => {
-                                              setEditingTailRowId(null)
-                                              setEditingNextLeg((v) => !v)
-                                            },
+                                            editLabel: 'Edit',
+                                            onEdit: () => openEditStopModal(row.id),
                                             onRemove: () => {
                                               if (firstTailId) removeDraftRow(firstTailId)
                                             },
                                             canRemove: canRemoveNext,
                                           }
                                         : {
-                                            editLabel:
-                                              editingTailRowId === row.id ? 'Done editing' : 'Edit',
-                                            onEdit: () => {
-                                              setEditingNextLeg(false)
-                                              setEditingTailRowId((cur) =>
-                                                cur === row.id ? null : row.id
-                                              )
-                                            },
+                                            editLabel: 'Edit',
+                                            onEdit: () => openEditStopModal(row.id),
                                             onRemove: () => removeDraftRow(row.id),
                                             canRemove: draftDestinations.length > nextSegmentIndex + 1,
                                           }
-                                      : null
-                                  }
-                                  standLocation={
-                                    routeActionsEnabled
-                                      ? {
-                                          stands: standRows,
-                                          suggestOpen: suggestRowId === row.id,
-                                          suggestedStands,
-                                          onPositionFocus: () => {
-                                            cancelSuggestClose()
-                                            setSuggestRowId(row.id)
-                                          },
-                                          onPositionBlur: () => {
-                                            const n = normalizeExternalRefFromStands(standRows, row.position)
-                                            if (n !== row.position) patchDraftRow(row.id, { position: n })
-                                            scheduleSuggestClose()
-                                          },
-                                          onCloseSuggest: () => {
-                                            cancelSuggestClose()
-                                            setSuggestRowId(null)
-                                          },
-                                          onOpenPicker: () => {
-                                            cancelSuggestClose()
-                                            setSuggestRowId(null)
-                                            setPickerRowId(row.id)
-                                          },
-                                        }
                                       : null
                                   }
                                 />
@@ -1400,108 +1317,126 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           </button>
         </div>
       </div>
-      {pickerRowId || addStopPickerOpen ? (
+      {addStopPickerOpen ? (
         <AmrStandPickerModal
           stands={standRows}
           stackOrder="aboveDialogs"
-          onClose={() => {
-            setPickerRowId(null)
-            setAddStopPickerOpen(false)
-          }}
+          onClose={() => setAddStopPickerOpen(false)}
           onSelect={(externalRef) => {
-            if (addStopPickerOpen) {
-              setAddStopPosition(externalRef)
-              setAddStopPickerOpen(false)
-              return
-            }
-            if (pickerRowId) {
-              patchDraftRow(pickerRowId, { position: externalRef })
-              setPickerRowId(null)
-            }
+            setAddStopPosition(externalRef)
+            setAddStopPickerOpen(false)
           }}
         />
       ) : null}
 
-      {addStopModalOpen ? (
+      {routeStopModal ? (
         <div
           className="fixed inset-0 z-[60] flex items-end justify-center p-0 sm:items-center sm:p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="amr-add-stop-title"
+          aria-labelledby="amr-route-stop-title"
         >
           <div className="absolute inset-0 bg-black/50" aria-hidden />
           <div
-            className="relative z-10 flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-border px-4 py-3 sm:px-5">
-              <h2 id="amr-add-stop-title" className="text-sm font-semibold text-foreground">
-                Add stop
+              <h2 id="amr-route-stop-title" className="text-sm font-semibold text-foreground">
+                {routeStopModal.mode === 'edit' ? 'Edit stop' : 'Add stop'}
               </h2>
-              <p className="mt-1 text-xs text-foreground/65">
-                Enter details, then add to the remaining route. The plan is saved automatically.
-              </p>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
               {addStopErr ? <p className="mb-3 text-xs text-red-600">{addStopErr}</p> : null}
-              <label className="block text-xs font-medium text-foreground/70">
-                <span className="text-foreground/80">Location (External Ref)</span>
-                <div className="mt-1 flex min-h-[40px] items-stretch gap-2">
+              <div className="grid gap-3 rounded-lg border border-border/80 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="col-span-full flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 flex-1 text-xs font-medium text-foreground/65">
+                    {routeStopModal.mode === 'edit' &&
+                    draftDestinations &&
+                    editStopSegmentIndex >= 0
+                      ? `Stop ${editStopSegmentIndex + 1} of ${draftDestinations.length}`
+                      : 'New stop'}
+                  </span>
+                </div>
+                <div className="col-span-full min-w-0">
+              <label htmlFor="amr-add-stop-pos" className="block text-sm text-foreground/80">
+                Location (External Ref)
+              </label>
+              <div className="mt-1 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-x-4 lg:gap-y-2">
+                <div className="flex min-h-[40px] min-w-0 w-full items-stretch gap-2 lg:col-start-1 lg:row-start-1">
                   <div className="relative min-w-0 flex-1">
-                    <input
-                      id="amr-add-stop-pos"
-                      autoComplete="off"
-                      spellCheck={false}
-                      enterKeyHint="done"
-                      title="Scan or pick a stand External Ref (keyboard / barcode)"
-                      className={`min-h-[40px] w-full rounded-lg border border-border bg-background py-2 pl-3 font-mono text-sm ${addStopPosition.trim() ? 'pr-10' : 'pr-3'}`}
-                      value={addStopPosition}
-                      onChange={(e) => {
-                        setAddStopPosition(e.target.value)
-                        setAddStopErr(null)
-                      }}
-                      onFocus={() => {
-                        cancelAddStopSuggestClose()
-                        setAddStopSuggestOpen(true)
-                      }}
-                      onBlur={() => {
-                        const n = normalizeExternalRefFromStands(standRows, addStopPosition)
-                        if (n !== addStopPosition) setAddStopPosition(n)
-                        scheduleAddStopSuggestClose()
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') {
+                    <div className="flex min-h-[40px] items-stretch overflow-hidden rounded-lg border border-border bg-background focus-within:ring-2 focus-within:ring-ring">
+                      <input
+                        id="amr-add-stop-pos"
+                        autoComplete="off"
+                        spellCheck={false}
+                        enterKeyHint="done"
+                        title="Scan or pick a stand External Ref (keyboard / barcode)"
+                        className="min-h-[40px] min-w-0 flex-1 border-0 bg-transparent py-2 pl-3 font-mono text-base outline-none ring-0 transition-[color,box-shadow] placeholder:text-foreground/45 focus:ring-0 md:text-sm"
+                        value={addStopPosition}
+                        onChange={(e) => {
+                          setAddStopPosition(e.target.value)
+                          setAddStopErr(null)
+                        }}
+                        onFocus={() => {
+                          cancelAddStopSuggestClose()
+                          setAddStopSuggestOpen(true)
+                        }}
+                        onBlur={() => {
+                          const n = normalizeExternalRefFromStands(standRows, addStopPosition)
+                          if (n !== addStopPosition) setAddStopPosition(n)
+                          scheduleAddStopSuggestClose()
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            cancelAddStopSuggestClose()
+                            setAddStopSuggestOpen(false)
+                            return
+                          }
+                          if (e.key !== 'Enter') return
+                          e.preventDefault()
                           cancelAddStopSuggestClose()
                           setAddStopSuggestOpen(false)
-                          return
-                        }
-                        if (e.key !== 'Enter') return
-                        e.preventDefault()
-                        cancelAddStopSuggestClose()
-                        setAddStopSuggestOpen(false)
-                        commitAddStopFromModal()
-                      }}
-                      placeholder="Scan or type External Ref…"
-                    />
-                    {addStopPosition.trim() ? (
+                          void commitRouteStopModal()
+                        }}
+                        placeholder="Scan or type External Ref…"
+                      />
+                      {addStopPosition.trim() ? (
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          className="relative z-[15] flex shrink-0 items-center justify-center self-stretch px-1 text-foreground/55 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label="Clear location"
+                          title="Clear"
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setAddStopPosition('')
+                            cancelAddStopSuggestClose()
+                            setAddStopSuggestOpen(false)
+                          }}
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      ) : null}
                       <button
                         type="button"
-                        tabIndex={-1}
-                        className="absolute right-1.5 top-1/2 z-[15] flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-foreground/55 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label="Clear location"
-                        title="Clear"
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          setAddStopPosition('')
+                        className="flex min-h-[40px] w-10 shrink-0 items-center justify-center border-l border-border/70 bg-muted/20 text-foreground/85 hover:bg-muted hover:text-foreground focus-visible:relative focus-visible:z-[15] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Show stand list"
+                        aria-expanded={addStopSuggestOpen}
+                        title="Show stand list"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
                           cancelAddStopSuggestClose()
-                          setAddStopSuggestOpen(false)
+                          setAddStopSuggestOpen((o) => !o)
                         }}
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
                       </button>
-                    ) : null}
+                    </div>
                     {addStopSuggestOpen ? (
                       addStopSuggestedStands.length > 0 ? (
                         <ul
@@ -1547,22 +1482,81 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                     <LocationPinIcon className="h-5 w-5" />
                   </button>
                 </div>
-              </label>
+
+                <div className="flex flex-col gap-2 lg:col-start-2 lg:row-start-1 lg:max-w-[min(100%,20rem)] lg:shrink-0">
+                  <div className="flex items-center gap-3 text-foreground/70">
+                    <ToggleSwitch
+                      checked
+                      disabled
+                      onCheckedChange={() => {}}
+                      aria-label="Drop Pallet"
+                      title="Final stop is always drop"
+                      size="sm"
+                      className="shrink-0"
+                    />
+                    <span className="min-w-0 flex-1 text-sm">Drop Pallet</span>
+                  </div>
+                  {showRouteModalReleaseControls ? (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <ToggleSwitch
+                          checked={addStopContinueMode === 'auto'}
+                          onCheckedChange={(on) => {
+                            setAddStopContinueMode(on ? 'auto' : 'manual')
+                            setAddStopErr(null)
+                          }}
+                          aria-label={addStopContinueMode === 'auto' ? 'Auto Release' : 'Manual Release'}
+                          size="sm"
+                          className="shrink-0"
+                        />
+                        <span className="min-w-0 flex-1 text-sm">
+                          {addStopContinueMode === 'auto' ? 'Auto Release' : 'Manual Release'}
+                        </span>
+                      </div>
+                      {addStopContinueMode === 'auto' ? (
+                        <label
+                          htmlFor="amr-add-stop-continue-secs"
+                          className="flex flex-wrap items-center gap-2 pl-1 text-sm text-foreground/85 lg:col-start-2 lg:row-start-2 lg:max-w-[min(100%,20rem)]"
+                        >
+                          <span className="text-foreground/70">After</span>
+                          <input
+                            id="amr-add-stop-continue-secs"
+                            type="number"
+                            min={0}
+                            max={86400}
+                            inputMode="numeric"
+                            className="w-[5.5rem] rounded-md border border-border bg-background px-2 py-1 font-mono text-sm"
+                            value={addStopAutoSeconds}
+                            onChange={(e) => {
+                              const n = Number(e.target.value)
+                              setAddStopAutoSeconds(Number.isFinite(n) ? n : 0)
+                              setAddStopErr(null)
+                            }}
+                          />
+                          <span>s</span>
+                        </label>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              </div>
+                </div>
+              </div>
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-4 py-3 sm:px-5">
               <button
                 type="button"
                 className="min-h-[44px] rounded-lg border border-border px-4 text-sm text-foreground hover:bg-muted"
-                onClick={closeAddStopModal}
+                onClick={closeRouteStopModal}
               >
                 Cancel
               </button>
               <button
                 type="button"
                 className="min-h-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
-                onClick={() => void commitAddStopFromModal()}
+                onClick={() => void commitRouteStopModal()}
               >
-                Add to route
+                {routeStopModal.mode === 'edit' ? 'Save' : 'Add to route'}
               </button>
             </div>
           </div>

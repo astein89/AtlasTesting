@@ -159,17 +159,94 @@ function filterStandsForSuggest(stands: AmrStandPickerRow[], query: string): Amr
   return sorted.filter((s) => s.external_ref.toLowerCase().includes(t)).slice(0, 80)
 }
 
+type MissionFormFieldError =
+  | { kind: 'location'; legIndices: number[] }
+  | { kind: 'autoSeconds'; legIndex: number }
+
+function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; message: string; fieldError: MissionFormFieldError } {
+  const missingLoc: number[] = []
+  for (let i = 0; i < legs.length; i++) {
+    if (!legs[i].position.trim()) missingLoc.push(i)
+  }
+  if (missingLoc.length > 0) {
+    const stops = missingLoc.map((i) => i + 1).join(', ')
+    return {
+      ok: false,
+      message:
+        missingLoc.length === 1
+          ? `Stop ${missingLoc[0] + 1} needs a location (External Ref).`
+          : `Every stop needs a location (External Ref). Missing: stops ${stops}.`,
+      fieldError: { kind: 'location', legIndices: missingLoc },
+    }
+  }
+  if (legs.length >= 2) {
+    for (let idx = 0; idx < legs.length - 1; idx++) {
+      const leg = legs[idx]
+      if (leg.continueMode === 'auto') {
+        const s = leg.autoContinueSeconds ?? 0
+        if (!Number.isFinite(s) || s < 0 || s > 86400) {
+          return {
+            ok: false,
+            message: `Stop ${idx + 1}: Auto Release needs 0–86400 seconds.`,
+            fieldError: { kind: 'autoSeconds', legIndex: idx },
+          }
+        }
+      }
+    }
+  }
+  return { ok: true }
+}
+
 export type AmrMissionNewFormProps = {
   variant?: 'page' | 'modal'
   /** When set (e.g. modal), overrides router location for `container` / `from` query params. */
   initialSearch?: string
   onRequestClose?: () => void
+  /** Modal shell: sync validation/API errors to a banner above the form body. */
+  onMissionErrorChange?: (message: string) => void
+  /** Increment (e.g. after banner dismiss) to clear mission error + field highlights in the form. */
+  clearMissionErrorsNonce?: number
+}
+
+export function MissionErrorBanner({
+  message,
+  onDismiss,
+  flush,
+}: {
+  message: string
+  onDismiss: () => void
+  /** Full-width strip under a modal title (no rounded card). */
+  flush?: boolean
+}) {
+  const t = message.trim()
+  if (!t) return null
+  return (
+    <div
+      role="alert"
+      className={
+        flush
+          ? 'flex items-start justify-between gap-3 border-b border-red-500/35 bg-red-500/10 px-4 py-2.5 text-sm dark:bg-red-500/15 sm:px-5'
+          : 'flex items-start justify-between gap-3 rounded-lg border border-red-500/40 bg-red-500/[0.09] px-3 py-2.5 text-sm shadow-sm dark:bg-red-500/15'
+      }
+    >
+      <p className="min-w-0 flex-1 leading-snug text-red-950 dark:text-red-50">{t}</p>
+      <button
+        type="button"
+        className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-900/85 hover:bg-red-500/15 dark:text-red-100"
+        onClick={onDismiss}
+      >
+        Dismiss
+      </button>
+    </div>
+  )
 }
 
 export function AmrMissionNewForm({
   variant = 'page',
   initialSearch,
   onRequestClose,
+  onMissionErrorChange,
+  clearMissionErrorsNonce,
 }: AmrMissionNewFormProps) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -182,11 +259,48 @@ export function AmrMissionNewForm({
   const [containerCode, setContainerCode] = useState('')
   const [persistent, setPersistent] = useState(false)
   const [legs, setLegs] = useState<Leg[]>(() => [
-    newLeg({ putDown: false, continueMode: 'auto', autoContinueSeconds: 1 }),
+    newLeg({ putDown: false, continueMode: 'auto', autoContinueSeconds: 0 }),
     newLeg({ putDown: true }),
   ])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [fieldError, setFieldError] = useState<MissionFormFieldError | null>(null)
+  const prevClearNonceRef = useRef<number | undefined>(undefined)
+  /** True after a client-side validation failure; auto-clear banner when `legs` become valid. API errors keep ref false. */
+  const validationErrorActiveRef = useRef(false)
+
+  useEffect(() => {
+    onMissionErrorChange?.(error)
+  }, [error, onMissionErrorChange])
+
+  useEffect(() => {
+    if (clearMissionErrorsNonce === undefined) return
+    if (prevClearNonceRef.current === undefined) {
+      prevClearNonceRef.current = clearMissionErrorsNonce
+      return
+    }
+    if (clearMissionErrorsNonce === prevClearNonceRef.current) return
+    prevClearNonceRef.current = clearMissionErrorsNonce
+    setError('')
+    setFieldError(null)
+    validationErrorActiveRef.current = false
+  }, [clearMissionErrorsNonce])
+
+  useEffect(() => {
+    const v = validateNewMissionForm(legs)
+    if (v.ok) {
+      if (validationErrorActiveRef.current) {
+        validationErrorActiveRef.current = false
+        setError('')
+        setFieldError(null)
+      }
+      return
+    }
+    if (validationErrorActiveRef.current) {
+      setFieldError(v.fieldError)
+      setError(v.message)
+    }
+  }, [legs])
   const [rackMoveDebugLastErrorJson, setRackMoveDebugLastErrorJson] = useState<unknown>(null)
   const [rackMoveDebugFleetSettings, setRackMoveDebugFleetSettings] = useState<AmrFleetSettings | null>(null)
   const [robotFleetRows, setRobotFleetRows] = useState<Record<string, unknown>[]>([])
@@ -199,6 +313,8 @@ export function AmrMissionNewForm({
 
   const containerInputRef = useRef<HTMLInputElement | null>(null)
   const legPositionInputRefs = useRef<(HTMLInputElement | null)[]>([])
+  /** Composite location field (input + clear + stand-list chevron) — used to align the suggest popover. */
+  const legLocationFieldWrapRefs = useRef<(HTMLDivElement | null)[]>([])
   const createMissionButtonRef = useRef<HTMLButtonElement | null>(null)
   const suggestCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const robotFleetMountedRef = useRef(true)
@@ -343,12 +459,14 @@ export function AmrMissionNewForm({
       setSuggestLayout(null)
       return
     }
+    const wrap = legLocationFieldWrapRefs.current[idx]
     const el = legPositionInputRefs.current[idx]
-    if (!el) {
+    const measureEl = wrap ?? el
+    if (!measureEl) {
       setSuggestLayout(null)
       return
     }
-    const rect = el.getBoundingClientRect()
+    const rect = measureEl.getBoundingClientRect()
     const margin = 4
     const maxListPx = 192
     const spaceBelow = window.innerHeight - rect.bottom - margin
@@ -429,7 +547,7 @@ export function AmrMissionNewForm({
         ? {
             continueMode: 'auto',
             autoContinueSeconds: Math.max(
-              1,
+              0,
               Math.min(Math.floor(pickupLeg.autoContinueSeconds ?? 0), 86400)
             ),
           }
@@ -446,7 +564,7 @@ export function AmrMissionNewForm({
         continueMode: mode,
       }
       if (mode === 'auto') {
-        const sec = Math.max(1, Math.min(Math.floor(cm.autoContinueSeconds ?? 0), 86400))
+        const sec = Math.max(0, Math.min(Math.floor(cm.autoContinueSeconds ?? 0), 86400))
         return { ...base, autoContinueSeconds: sec }
       }
       return base
@@ -579,23 +697,32 @@ export function AmrMissionNewForm({
 
   const submit = async (openOverviewAfter = false) => {
     setError('')
+    setFieldError(null)
+    validationErrorActiveRef.current = false
     if (canAmrApiDebug) setRackMoveDebugLastErrorJson(null)
-    const missionData = buildMissionData()
-    for (const step of missionData) {
-      if (!step.position) {
-        setError('Each stop needs a location (External Ref).')
-        return
-      }
-    }
 
-    if (legs.length >= 2) {
-      for (let idx = 0; idx < legs.length - 1; idx++) {
-        const leg = legs[idx]
-        if (leg.continueMode === 'auto' && (leg.autoContinueSeconds ?? 0) < 1) {
-          setError(`Stop ${idx + 1}: Auto Release needs at least 1 second.`)
-          return
+    const validation = validateNewMissionForm(legs)
+    if (!validation.ok) {
+      validationErrorActiveRef.current = true
+      setError(validation.message)
+      setFieldError(validation.fieldError)
+      queueMicrotask(() => {
+        if (validation.fieldError.kind === 'location') {
+          const i = validation.fieldError.legIndices[0]
+          legPositionInputRefs.current[i]?.focus()
+          legPositionInputRefs.current[i]?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        } else {
+          document
+            .getElementById(`amr-mission-leg-continue-secs-${validation.fieldError.legIndex}`)
+            ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          ;(
+            document.getElementById(
+              `amr-mission-leg-continue-secs-${validation.fieldError.legIndex}`
+            ) as HTMLInputElement | null
+          )?.focus()
         }
-      }
+      })
+      return
     }
 
     setSaving(true)
@@ -616,9 +743,10 @@ export function AmrMissionNewForm({
     } catch (e: unknown) {
       const ax = e as { response?: { data?: unknown } }
       if (canAmrApiDebug) setRackMoveDebugLastErrorJson(ax?.response?.data ?? { message: String(e) })
-      setError(
+      const msg =
         (ax?.response?.data as { error?: string } | undefined)?.error ?? 'Mission create failed'
-      )
+      validationErrorActiveRef.current = false
+      setError(msg)
     } finally {
       setSaving(false)
     }
@@ -814,6 +942,10 @@ export function AmrMissionNewForm({
               const putDownOn =
                 idx === 0 ? false : idx === legs.length - 1 ? true : leg.putDown
               const putLocked = idx === 0 || idx === legs.length - 1
+              const locationInvalid =
+                fieldError?.kind === 'location' && fieldError.legIndices.includes(idx)
+              const autoSecondsInvalid =
+                fieldError?.kind === 'autoSeconds' && fieldError.legIndex === idx
               return (
                 <SortableLegCard key={leg.id} id={leg.id} disableDrag={dragLocked}>
                   {(grip) => (
@@ -872,7 +1004,16 @@ export function AmrMissionNewForm({
               </label>
               <div className="mt-1 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-x-4 lg:gap-y-2">
                 <div className="flex min-h-[40px] min-w-0 w-full items-stretch gap-2 lg:col-start-1 lg:row-start-1">
-                  <div className="relative min-w-0 flex-1">
+                  <div
+                    ref={(el) => {
+                      legLocationFieldWrapRefs.current[idx] = el
+                    }}
+                    className={`relative flex min-h-[40px] min-w-0 flex-1 items-stretch overflow-hidden rounded-lg bg-background focus-within:ring-2 focus-within:ring-ring ${
+                      locationInvalid
+                        ? 'border-2 border-red-500 ring-2 ring-red-500/25 focus-within:ring-red-500/40 dark:border-red-400'
+                        : 'border border-border'
+                    }`}
+                  >
                     <input
                       ref={(el) => {
                         legPositionInputRefs.current[idx] = el
@@ -882,13 +1023,19 @@ export function AmrMissionNewForm({
                       enterKeyHint={idx < legs.length - 1 ? 'next' : 'done'}
                       disabled={startLocked}
                       title={startLocked ? undefined : 'Scan or pick a stand External Ref (keyboard / barcode)'}
-                      className={`min-h-[40px] w-full rounded-lg border border-border bg-background py-2 pl-3 font-mono text-base md:text-sm disabled:cursor-not-allowed disabled:opacity-70 ${!startLocked && leg.position.trim() ? 'pr-10' : 'pr-3'}`}
+                      aria-invalid={locationInvalid || undefined}
+                      className="min-h-[40px] min-w-0 flex-1 border-0 bg-transparent py-2 pl-3 font-mono text-base outline-none ring-0 transition-[color,box-shadow] placeholder:text-foreground/45 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-70 md:text-sm"
                       value={leg.position}
-                      onChange={(e) => updateLeg(idx, { position: e.target.value })}
-                      onFocus={() => {
+                      onChange={(e) => {
+                        const v = e.target.value
+                        updateLeg(idx, { position: v })
                         if (startLocked) return
                         cancelSuggestClose()
-                        setOpenSuggestLegIdx(idx)
+                        if (v.length > 0) {
+                          setOpenSuggestLegIdx(idx)
+                        } else {
+                          setOpenSuggestLegIdx(null)
+                        }
                       }}
                       onBlur={() => {
                         if (startLocked) return
@@ -912,7 +1059,7 @@ export function AmrMissionNewForm({
                       <button
                         type="button"
                         tabIndex={-1}
-                        className="absolute right-1.5 top-1/2 z-[15] flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-foreground/55 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="relative z-[15] flex shrink-0 items-center justify-center self-stretch px-1 text-foreground/55 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         aria-label="Clear location"
                         title="Clear"
                         onMouseDown={(e) => {
@@ -926,6 +1073,24 @@ export function AmrMissionNewForm({
                         </svg>
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      disabled={startLocked}
+                      className="flex min-h-[40px] w-10 shrink-0 items-center justify-center border-l border-border/70 bg-muted/20 text-foreground/85 hover:bg-muted hover:text-foreground focus-visible:relative focus-visible:z-[15] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`Show stand list for stop ${idx + 1}`}
+                      aria-expanded={openSuggestLegIdx === idx}
+                      title={startLocked ? undefined : 'Show stand list'}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (startLocked) return
+                        cancelSuggestClose()
+                        setOpenSuggestLegIdx((cur) => (cur === idx ? null : idx))
+                      }}
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
                   </div>
                   <button
                     type="button"
@@ -1000,7 +1165,12 @@ export function AmrMissionNewForm({
                       min={0}
                       max={86400}
                       inputMode="numeric"
-                      className="w-[5.5rem] rounded-md border border-border bg-background px-2 py-1 font-mono text-sm"
+                      aria-invalid={autoSecondsInvalid || undefined}
+                      className={`w-[5.5rem] rounded-md bg-background px-2 py-1 font-mono text-sm ${
+                        autoSecondsInvalid
+                          ? 'border-2 border-red-500 ring-2 ring-red-500/25 dark:border-red-400'
+                          : 'border border-border'
+                      }`}
                       value={leg.autoContinueSeconds ?? 0}
                       onChange={(e) => {
                         const n = Number(e.target.value)
@@ -1114,8 +1284,16 @@ export function AmrMissionNewForm({
                 You do not have permission to create missions. Use Cancel to return to Missions or close this dialog.
               </p>
             ) : null}
+            {canManage && error && !onMissionErrorChange ? (
+              <MissionErrorBanner
+                message={error}
+                onDismiss={() => {
+                  setError('')
+                  setFieldError(null)
+                }}
+              />
+            ) : null}
             {canManage ? missionFields : null}
-            {canManage && error ? <p className="text-sm text-red-600">{error}</p> : null}
           </div>
           <div className="shrink-0 border-t border-border bg-card pt-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] -mx-4 px-4 sm:-mx-5 sm:px-5">
             {missionActionRow}
@@ -1133,8 +1311,16 @@ export function AmrMissionNewForm({
               <span className="font-medium text-foreground">Continue</span> on Missions for each following stop.
             </p>
           </div>
+          {error ? (
+            <MissionErrorBanner
+              message={error}
+              onDismiss={() => {
+                setError('')
+                setFieldError(null)
+              }}
+            />
+          ) : null}
           {missionFields}
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
           {missionActionRow}
         </div>
       )}
@@ -1164,7 +1350,6 @@ export function AmrMissionNewForm({
             if (idx === null) return
             updateLeg(idx, { position: externalRef })
             setPickerLegIdx(null)
-            queueMicrotask(() => focusNextLegPositionInput(idx))
           }}
         />
       ) : null}

@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { AmrMissionNewForm } from '@/routes/amr/AmrMissionNew'
+import { useEffect, useState } from 'react'
+import { AmrMissionNewForm, MissionErrorBanner } from '@/routes/amr/AmrMissionNew'
 
 export function AmrMissionNewModal({
   open,
@@ -10,6 +10,16 @@ export function AmrMissionNewModal({
   onClose: () => void
   initialSearch?: string
 }) {
+  const [missionError, setMissionError] = useState('')
+  const [clearErrorsNonce, setClearErrorsNonce] = useState(0)
+
+  useEffect(() => {
+    if (!open) {
+      setMissionError('')
+      setClearErrorsNonce(0)
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -46,8 +56,22 @@ export function AmrMissionNewModal({
             </svg>
           </button>
         </div>
+        <MissionErrorBanner
+          flush
+          message={missionError}
+          onDismiss={() => {
+            setMissionError('')
+            setClearErrorsNonce((n) => n + 1)
+          }}
+        />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-5">
-          <AmrMissionNewForm variant="modal" initialSearch={initialSearch} onRequestClose={onClose} />
+          <AmrMissionNewForm
+            variant="modal"
+            initialSearch={initialSearch}
+            onRequestClose={onClose}
+            onMissionErrorChange={setMissionError}
+            clearMissionErrorsNonce={clearErrorsNonce}
+          />
         </div>
       </div>
     </div>

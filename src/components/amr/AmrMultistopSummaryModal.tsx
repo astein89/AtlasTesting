@@ -81,8 +81,8 @@ function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
           ? row.autoContinueSeconds
           : Number(row.autoContinueSeconds)
       const entry: PlanDest = { position, continueMode: cm }
-      if (cm === 'auto' && Number.isFinite(n) && n >= 1) {
-        entry.autoContinueSeconds = Math.min(Math.floor(n), 86400)
+      if (cm === 'auto' && Number.isFinite(n) && n >= 0) {
+        entry.autoContinueSeconds = Math.min(Math.max(0, Math.floor(n)), 86400)
       }
       out.push(entry)
     }
@@ -96,8 +96,11 @@ function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
         typeof pcr.autoContinueSeconds === 'number'
           ? pcr.autoContinueSeconds
           : Number(pcr.autoContinueSeconds)
-      if (pcm === 'auto' && Number.isFinite(pn) && pn >= 1) {
-        pickupContinue = { continueMode: 'auto', autoContinueSeconds: Math.min(Math.floor(pn), 86400) }
+      if (pcm === 'auto' && Number.isFinite(pn) && pn >= 0) {
+        pickupContinue = {
+          continueMode: 'auto',
+          autoContinueSeconds: Math.min(Math.max(0, Math.floor(pn)), 86400),
+        }
       } else {
         pickupContinue = { continueMode: 'manual' }
       }
@@ -109,8 +112,9 @@ function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
 }
 
 function formatPickupRelease(pc: { continueMode: 'manual' | 'auto'; autoContinueSeconds?: number }): string {
-  if (pc.continueMode === 'auto' && typeof pc.autoContinueSeconds === 'number' && pc.autoContinueSeconds >= 1) {
-    return `Before first leg: Auto-release after ${pc.autoContinueSeconds}s`
+  if (pc.continueMode === 'auto' && typeof pc.autoContinueSeconds === 'number') {
+    if (pc.autoContinueSeconds === 0) return 'Before first leg: Auto-release immediately'
+    if (pc.autoContinueSeconds >= 1) return `Before first leg: Auto-release after ${pc.autoContinueSeconds}s`
   }
   return 'Before first leg: Manual release'
 }
@@ -122,6 +126,9 @@ function formatReleaseAfterDestination(dest: PlanDest | undefined, isLastStop: b
   const mode = dest.continueMode === 'auto' ? 'auto' : 'manual'
   if (mode === 'auto') {
     const s = dest.autoContinueSeconds
+    if (typeof s === 'number' && Number.isFinite(s) && s === 0) {
+      return 'After arrival: Auto-release immediately'
+    }
     if (typeof s === 'number' && Number.isFinite(s) && s >= 1) {
       return `After arrival: Auto-release after ${s}s`
     }
@@ -512,54 +519,61 @@ export function AmrMultistopSummaryModal({
                   <li
                     key={i}
                     ref={i === focusLegIndex ? focusLegRef : undefined}
-                    className={`flex flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-sm scroll-mt-3 ${bucketRowClass(
-                      bucket
-                    )}`}
+                    className={`rounded-lg border px-3 py-2.5 text-sm scroll-mt-3 ${bucketRowClass(bucket)}`}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-semibold text-foreground/80">
-                        Stop {i + 1}
-                        {legIndices.length ? ` of ${legIndices.length}` : ''}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                          bucket === 'next_continue'
-                            ? 'bg-amber-500/20 text-amber-950 dark:text-amber-100'
-                            : bucket === 'current'
-                              ? 'bg-primary/15 text-primary'
-                              : 'bg-muted/80 text-foreground/70'
-                        }`}
-                      >
-                        {bucketLabel(bucket)}
-                      </span>
-                      {rec?.last_status != null ? (
-                        <MissionJobStatusBadge value={rec.last_status as number} />
+                    <div className="flex flex-nowrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-semibold text-foreground/80">
+                            Stop {i + 1}
+                            {legIndices.length ? ` of ${legIndices.length}` : ''}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                              bucket === 'next_continue'
+                                ? 'bg-amber-500/20 text-amber-950 dark:text-amber-100'
+                                : bucket === 'current'
+                                  ? 'bg-primary/15 text-primary'
+                                  : 'bg-muted/80 text-foreground/70'
+                            }`}
+                          >
+                            {bucketLabel(bucket)}
+                          </span>
+                          {rec?.last_status != null ? (
+                            <MissionJobStatusBadge value={rec.last_status as number} />
+                          ) : null}
+                        </div>
+                        <p className="break-all font-mono text-xs leading-relaxed text-foreground/85">
+                          <span className="text-foreground/50">From </span>
+                          {start}
+                          <span className="mx-1 text-foreground/35">→</span>
+                          <span className="text-foreground/50">To </span>
+                          {end}
+                        </p>
+                        {rec?.job_code ? (
+                          <p className="font-mono text-[10px] text-foreground/55">{String(rec.job_code)}</p>
+                        ) : null}
+                        {bucket === 'upcoming' ? (
+                          <p className="text-xs text-foreground/65">
+                            {formatReleaseAfterDestination(plan?.[i], isLastStop)}
+                          </p>
+                        ) : null}
+                      </div>
+                      {bucket === 'next_continue' && continueNotBeforeIso ? (
+                        <div
+                          className="flex shrink-0 flex-col items-end justify-start gap-1 text-right"
+                          aria-live="polite"
+                        >
+                          <AmrAutoContinueCountdown
+                            continueNotBeforeIso={continueNotBeforeIso}
+                            className="text-lg font-semibold tabular-nums text-foreground sm:text-xl"
+                          />
+                          <span className="max-w-[11rem] text-[10px] leading-snug text-foreground/55">
+                            Release below to override
+                          </span>
+                        </div>
                       ) : null}
                     </div>
-                    <p className="break-all font-mono text-xs leading-relaxed text-foreground/85">
-                      <span className="text-foreground/50">From </span>
-                      {start}
-                      <span className="mx-1 text-foreground/35">→</span>
-                      <span className="text-foreground/50">To </span>
-                      {end}
-                    </p>
-                    {rec?.job_code ? (
-                      <p className="font-mono text-[10px] text-foreground/55">{String(rec.job_code)}</p>
-                    ) : null}
-                    {bucket === 'upcoming' ? (
-                      <p className="text-xs text-foreground/65">
-                        {formatReleaseAfterDestination(plan?.[i], isLastStop)}
-                      </p>
-                    ) : null}
-                    {bucket === 'next_continue' && continueNotBeforeIso ? (
-                      <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-xs" aria-live="polite">
-                        <AmrAutoContinueCountdown
-                          continueNotBeforeIso={continueNotBeforeIso}
-                          className="text-xs font-medium tabular-nums text-foreground/85"
-                        />
-                        <span className="text-foreground/60">— Continue below to override</span>
-                      </p>
-                    ) : null}
                   </li>
                 )
               })}
@@ -580,12 +594,10 @@ export function AmrMultistopSummaryModal({
               onClick={() => void onContinue()}
             >
               {continueBusy
-                ? 'Continuing…'
+                ? 'Releasing…'
                 : continueNotBeforeIso
-                  ? 'Continue now'
-                  : nextSeg === 0
-                    ? 'Start mission'
-                    : 'Continue to next stop'}
+                  ? 'Release now'
+                  : 'Release Mission'}
             </button>
             <button
               type="button"

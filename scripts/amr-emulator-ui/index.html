@@ -1030,7 +1030,7 @@
             idEl.value = ''
             typeEl.innerHTML = robotTypeOptionsHtml(ROBOT_TYPES[0])
             closeModal('modal-add-robot')
-            await refresh()
+            await refresh(true)
           } catch (e) {
             toast(String(e.message || e), 'err')
           } finally {
@@ -1069,7 +1069,7 @@
             codeEl.value = ''
             document.getElementById('modal-add-job-positions').value = ''
             closeModal('modal-add-job')
-            await refresh()
+            await refresh(true)
           } catch (e) {
             toast(String(e.message || e), 'err')
           } finally {
@@ -1102,7 +1102,7 @@
             toast(`Container ${cc} added`)
             codeEl.value = ''
             closeModal('modal-add-container')
-            await refresh()
+            await refresh(true)
           } catch (e) {
             toast(String(e.message || e), 'err')
           } finally {
@@ -1246,7 +1246,7 @@
             try {
               await api('PATCH', `/__emulator/robots/${encodeURIComponent(rid)}`, patchFromCard(card))
               toast(`Robot ${rid} updated`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
             } finally {
@@ -1264,7 +1264,7 @@
             try {
               await api('DELETE', `/__emulator/robots/${encodeURIComponent(rid)}`)
               toast(`Robot ${rid} removed`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
             } finally {
@@ -1385,7 +1385,7 @@
             const n = Number(r?.removed) || 0
             if (n === 0) toast('No terminal jobs to remove')
             else toast(`Removed ${n} completed / terminal job${n === 1 ? '' : 's'}`)
-            await refresh()
+            await refresh(true)
           } catch (e) {
             toast(String(e.message || e), 'err')
           } finally {
@@ -1401,7 +1401,7 @@
             try {
               await api('POST', `/__emulator/jobs/${encodeURIComponent(code)}/sim/start`)
               toast(`Sim started for ${code}`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
               btn.disabled = false
@@ -1417,7 +1417,7 @@
             try {
               await api('POST', `/__emulator/jobs/${encodeURIComponent(code)}/sim/stop`)
               toast(`Sim stopped for ${code}`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
               btn.disabled = false
@@ -1433,7 +1433,7 @@
             try {
               await api('PATCH', `/__emulator/jobs/${encodeURIComponent(code)}`, patchFromCard(card))
               toast(`Job ${code} updated`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
             } finally {
@@ -1451,7 +1451,7 @@
             try {
               await api('DELETE', `/__emulator/jobs/${encodeURIComponent(code)}`)
               toast(`Job ${code} removed`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
             } finally {
@@ -1546,7 +1546,7 @@
             try {
               await api('PATCH', `/__emulator/containers/${encodeURIComponent(code)}`, patchFromCard(card))
               toast(`Container ${code} updated`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
             } finally {
@@ -1564,7 +1564,7 @@
             try {
               await api('DELETE', `/__emulator/containers/${encodeURIComponent(code)}`)
               toast(`Container ${code} removed`)
-              await refresh()
+              await refresh(true)
             } catch (e) {
               toast(String(e.message || e), 'err')
             } finally {
@@ -1651,16 +1651,26 @@
         autoRefreshTimer = setTimeout(refresh, ms)
       }
 
-      async function refresh() {
+      /** Full re-render resets form controls. Skip while focus is inside a tab panel (editing or about to click Apply). */
+      function shouldSkipPanelRender(panelEl, force) {
+        if (force) return false
+        const a = document.activeElement
+        return !!(panelEl && a && panelEl.contains(a))
+      }
+
+      async function refresh(force = false) {
         clearAutoRefresh()
         let pollMs = 1000
         try {
           const state = await loadState()
           const msRaw = Number(state?.sim?.settings?.autoRefreshIntervalMs)
           pollMs = Number.isFinite(msRaw) ? Math.max(250, Math.min(120000, msRaw)) : 1000
-          renderRobots(state.robots || [])
-          renderJobs(state.jobs || [], state.sim || { jobs: [] })
-          renderContainers(state.containers || [])
+          const robotsPanel = document.getElementById('panel-robots')
+          const jobsPanel = document.getElementById('panel-jobs')
+          const containersPanel = document.getElementById('panel-containers')
+          if (!shouldSkipPanelRender(robotsPanel, force)) renderRobots(state.robots || [])
+          if (!shouldSkipPanelRender(jobsPanel, force)) renderJobs(state.jobs || [], state.sim || { jobs: [] })
+          if (!shouldSkipPanelRender(containersPanel, force)) renderContainers(state.containers || [])
           scheduleNextPoll(pollMs)
         } catch (e) {
           toast(String(e.message || e), 'err')
@@ -1751,7 +1761,7 @@
             await api('PATCH', '/__emulator/sim/settings', collect())
             toast('Sim settings saved')
             closeModal('modal-sim-settings')
-            await refresh()
+            await refresh(true)
           } catch (e) {
             toast(String(e.message || e), 'err')
           } finally {
@@ -1760,13 +1770,13 @@
         })
       }
 
-      document.getElementById('btn-refresh').addEventListener('click', () => refresh())
+      document.getElementById('btn-refresh').addEventListener('click', () => refresh(true))
       document.getElementById('btn-reset').addEventListener('click', async () => {
         if (!confirm('Reset emulator to seeded defaults?')) return
         try {
           await api('POST', '/__emulator/reset')
           toast('State reset')
-          await refresh()
+          await refresh(true)
         } catch (e) {
           toast(String(e.message || e), 'err')
         }
@@ -1775,7 +1785,7 @@
         try {
           const r = await api('POST', '/__emulator/sim/start-all')
           toast(`Started ${r?.started ?? 0} job sim${(r?.started ?? 0) === 1 ? '' : 's'}`)
-          await refresh()
+          await refresh(true)
         } catch (e) {
           toast(String(e.message || e), 'err')
         }
@@ -1784,7 +1794,7 @@
         try {
           const r = await api('POST', '/__emulator/sim/stop-all')
           toast(`Stopped ${r?.stopped ?? 0} job sim${(r?.stopped ?? 0) === 1 ? '' : 's'}`)
-          await refresh()
+          await refresh(true)
         } catch (e) {
           toast(String(e.message || e), 'err')
         }

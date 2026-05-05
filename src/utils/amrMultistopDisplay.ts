@@ -107,10 +107,25 @@ export function groupMissionRecords(records: Record<string, unknown>[]): Grouped
   return groups
 }
 
+function trimStr(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined
+  const t = v.trim()
+  return t || undefined
+}
+
+/**
+ * Robot executing or holding the mission: active segment’s `locked_robot_id`, else session
+ * `session_locked_robot_id` (e.g. between legs on `awaiting_continue`).
+ */
+function mergedMissionRobotId(head: Record<string, unknown>, latest: Record<string, unknown>): string | undefined {
+  return trimStr(latest.locked_robot_id) ?? trimStr(head.locked_robot_id) ?? trimStr(head.session_locked_robot_id)
+}
+
 /** One synthetic mission row for sorting, filtering, and table cells (rollup from latest segment). */
 export function flattenGroupedMissionRow(group: GroupedMissionRow): Record<string, unknown> {
   if (group.kind === 'single') return { ...group.record }
   const { head, latest, sessionId, segmentCount } = group
+  const robotId = mergedMissionRobotId(head, latest)
   return {
     ...head,
     last_status: latest.last_status,
@@ -120,6 +135,7 @@ export function flattenGroupedMissionRow(group: GroupedMissionRow): Record<strin
     multistop_session_id: sessionId,
     multistop_segment_count: segmentCount,
     multistop_session_status: head.multistop_session_status ?? latest.multistop_session_status,
+    locked_robot_id: robotId ?? null,
   }
 }
 

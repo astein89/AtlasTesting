@@ -27,7 +27,11 @@ import {
   shouldDeferFirstSegmentSubmit,
   type MultistopPlan,
 } from '../lib/amrMultistop.js'
-import { executeMultistopContinue, multistopSegmentMissionCode } from '../lib/amrMultistopContinue.js'
+import {
+  executeMultistopContinue,
+  multistopSegmentMissionCode,
+  resolveMultistopBaseMissionCode,
+} from '../lib/amrMultistopContinue.js'
 import { rescheduleAmrMissionWorker } from '../lib/amrMissionWorker.js'
 
 const router = Router()
@@ -456,7 +460,8 @@ router.get(
       .prepare(
         `SELECT r.*, u.username AS created_by_username,
                 ms.status AS multistop_session_status,
-                ms.next_segment_index AS multistop_next_segment_index
+                ms.next_segment_index AS multistop_next_segment_index,
+                ms.locked_robot_id AS session_locked_robot_id
          FROM amr_mission_records r
          LEFT JOIN users u ON u.id = r.created_by
          LEFT JOIN amr_multistop_sessions ms ON ms.id = r.multistop_session_id
@@ -501,6 +506,10 @@ router.get(
         created_by_username: null,
         multistop_session_status: 'awaiting_continue',
         multistop_next_segment_index: 0,
+        session_locked_robot_id:
+          typeof ms.locked_robot_id === 'string' && ms.locked_robot_id.trim()
+            ? String(ms.locked_robot_id).trim()
+            : null,
       })
     }
     const merged = [...rows, ...synthetic].sort((a, b) =>
@@ -517,28 +526,39 @@ router.get(
   asyncRoute(async (_req, res) => {
     const rows = (await db
       .prepare(
-        `SELECT id, status, pickup_position, container_code, next_segment_index, total_segments, updated_at, continue_not_before
+        `SELECT id, status, pickup_position, container_code, next_segment_index, total_segments, updated_at, continue_not_before, base_mission_code
          FROM amr_multistop_sessions
          WHERE status IN ('awaiting_continue', 'failed')
          ORDER BY updated_at DESC
          LIMIT 50`
       )
       .all()) as Record<string, unknown>[]
+    const items = await Promise.all(
+      rows.map(async (r) => {
+        const sessionId = String(r.id ?? '')
+        const base = await resolveMultistopBaseMissionCode(db, r, sessionId)
+        const nextSeg = Number(r.next_segment_index)
+        const si = Number.isFinite(nextSeg) ? nextSeg : 0
+        const missionCode = multistopSegmentMissionCode(base, si)
+        return {
+          sessionId,
+          missionCode,
+          status: String(r.status ?? ''),
+          pickupPosition: r.pickup_position != null ? String(r.pickup_position) : '',
+          containerCode: r.container_code != null && String(r.container_code) !== '' ? String(r.container_code) : null,
+          nextSegmentIndex: Number(r.next_segment_index),
+          totalSegments: Number(r.total_segments),
+          updatedAt: r.updated_at != null ? String(r.updated_at) : null,
+          continueNotBefore:
+            r.continue_not_before != null && String(r.continue_not_before).trim()
+              ? String(r.continue_not_before)
+              : null,
+        }
+      })
+    )
     res.json({
-      count: rows.length,
-      items: rows.map((r) => ({
-        sessionId: String(r.id ?? ''),
-        status: String(r.status ?? ''),
-        pickupPosition: r.pickup_position != null ? String(r.pickup_position) : '',
-        containerCode: r.container_code != null && String(r.container_code) !== '' ? String(r.container_code) : null,
-        nextSegmentIndex: Number(r.next_segment_index),
-        totalSegments: Number(r.total_segments),
-        updatedAt: r.updated_at != null ? String(r.updated_at) : null,
-        continueNotBefore:
-          r.continue_not_before != null && String(r.continue_not_before).trim()
-            ? String(r.continue_not_before)
-            : null,
-      })),
+      count: items.length,
+      items,
     })
   })
 )

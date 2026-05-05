@@ -88,6 +88,8 @@ export async function getAmrMissionRecords(options?: { signal?: AbortSignal }) {
 
 export type AmrMissionAttentionItem = {
   sessionId: string
+  /** Current-segment display code (e.g. DCA-RM-…-1), derived from base + next segment index. */
+  missionCode: string
   status: string
   pickupPosition: string
   containerCode: string | null

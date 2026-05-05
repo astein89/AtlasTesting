@@ -298,6 +298,7 @@ export function AmrDashboard() {
           <table className="w-full min-w-[min(100%,28rem)] text-left text-sm md:min-w-[28rem]">
             <thead>
               <tr className="border-b border-border text-foreground/70">
+                <th className="py-2 pr-3 text-base font-medium">Robot</th>
                 <th className="py-2 pr-3 font-medium">Job code</th>
                 <th className="py-2 pr-3 font-medium">Session</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
@@ -306,7 +307,7 @@ export function AmrDashboard() {
             <tbody>
               {activeMissionGroups.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="py-6 text-center text-sm text-foreground/60">
+                  <td colSpan={4} className="py-6 text-center text-sm text-foreground/60">
                     No active missions.
                   </td>
                 </tr>
@@ -315,6 +316,10 @@ export function AmrDashboard() {
                   const r = flattenGroupedMissionRow(group)
                   const sessionId = String(r.multistop_session_id ?? '').trim()
                   const att = sessionId ? attentionBySession.get(sessionId) : undefined
+                  const robotLabel =
+                    typeof r.locked_robot_id === 'string' && r.locked_robot_id.trim()
+                      ? r.locked_robot_id.trim()
+                      : '—'
                   if (group.kind === 'single') {
                     const headRec = headRecordForMissionDetail(group)
                     return (
@@ -330,6 +335,7 @@ export function AmrDashboard() {
                           }
                         }}
                       >
+                      <td className="py-2 pr-3 font-mono text-lg leading-snug text-foreground/90">{robotLabel}</td>
                       <td className="py-2 pr-3 font-mono text-xs">{String(r.job_code ?? '')}</td>
                       <td className="py-2 pr-3 text-xs text-foreground/70">—</td>
                         <td className="py-2 pr-3">
@@ -353,6 +359,7 @@ export function AmrDashboard() {
                         }
                       }}
                     >
+                      <td className="py-2 pr-3 font-mono text-lg leading-snug text-foreground/90">{robotLabel}</td>
                       <td className="py-2 pr-3 font-mono text-xs">{String(r.job_code ?? '')}</td>
                       <td className="py-2 pr-3 text-xs text-foreground/80">
                         <span className="block">{sess ? friendlyMultistopSessionStatus(sess) : '—'}</span>

@@ -32,7 +32,9 @@ function parseContinueFields(o: Record<string, unknown>): MultistopPickupContinu
   const continueMode: ContinueMode = cmRaw === 'auto' ? 'auto' : 'manual'
   if (continueMode !== 'auto') return { continueMode: 'manual' }
   const n = typeof o.autoContinueSeconds === 'number' ? o.autoContinueSeconds : Number(o.autoContinueSeconds)
-  if (!Number.isFinite(n) || n < 1) return { continueMode: 'manual' }
+  if (!Number.isFinite(n) || n < 0) return { continueMode: 'manual' }
+  if (n === 0) return { continueMode: 'auto', autoContinueSeconds: 0 }
+  if (n < 1) return { continueMode: 'manual' }
   const sec = Math.min(Math.floor(n), MAX_AUTO_CONTINUE_SECONDS)
   return { continueMode: 'auto', autoContinueSeconds: sec }
 }
@@ -83,10 +85,10 @@ export function normalizeDestinationInput(o: Record<string, unknown>): Normalize
   const continueMode: ContinueMode = cmRaw === 'auto' ? 'auto' : 'manual'
   if (continueMode === 'auto') {
     const n = typeof o.autoContinueSeconds === 'number' ? o.autoContinueSeconds : Number(o.autoContinueSeconds)
-    if (!Number.isFinite(n) || n < 1 || n > MAX_AUTO_CONTINUE_SECONDS) {
+    if (!Number.isFinite(n) || n < 0 || n > MAX_AUTO_CONTINUE_SECONDS) {
       return {
         ok: false,
-        error: `autoContinueSeconds must be 1–${MAX_AUTO_CONTINUE_SECONDS} when continueMode is auto`,
+        error: `autoContinueSeconds must be 0–${MAX_AUTO_CONTINUE_SECONDS} when continueMode is auto`,
       }
     }
     return {
@@ -116,10 +118,10 @@ export function normalizePickupContinueInput(o: Record<string, unknown>): Normal
   const continueMode: ContinueMode = cmRaw === 'auto' ? 'auto' : 'manual'
   if (continueMode === 'auto') {
     const n = typeof o.autoContinueSeconds === 'number' ? o.autoContinueSeconds : Number(o.autoContinueSeconds)
-    if (!Number.isFinite(n) || n < 1 || n > MAX_AUTO_CONTINUE_SECONDS) {
+    if (!Number.isFinite(n) || n < 0 || n > MAX_AUTO_CONTINUE_SECONDS) {
       return {
         ok: false,
-        error: `autoContinueSeconds must be 1–${MAX_AUTO_CONTINUE_SECONDS} when continueMode is auto`,
+        error: `autoContinueSeconds must be 0–${MAX_AUTO_CONTINUE_SECONDS} when continueMode is auto`,
       }
     }
     return { ok: true, value: { continueMode: 'auto', autoContinueSeconds: Math.floor(n) } }
@@ -135,8 +137,11 @@ function pickupDeferSource(plan: MultistopPlan): MultistopPickupContinue | null 
   const cm = d0.continueMode ?? 'manual'
   if (cm === 'auto') {
     const sec = d0.autoContinueSeconds
-    if (typeof sec === 'number' && Number.isFinite(sec) && sec >= 1) {
-      return { continueMode: 'auto', autoContinueSeconds: Math.min(Math.floor(sec), MAX_AUTO_CONTINUE_SECONDS) }
+    if (typeof sec === 'number' && Number.isFinite(sec) && sec >= 0) {
+      return {
+        continueMode: 'auto',
+        autoContinueSeconds: Math.min(Math.max(0, Math.floor(sec)), MAX_AUTO_CONTINUE_SECONDS),
+      }
     }
   }
   return { continueMode: 'manual' }
@@ -178,7 +183,9 @@ export function computeContinueDeadlineIso(plan: MultistopPlan, completedSegment
   const dest = dests[completedSegmentIndex]
   if (dest.continueMode !== 'auto') return null
   const sec = dest.autoContinueSeconds
-  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 1) return null
+  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return null
+  if (sec === 0) return new Date(nowMs).toISOString()
+  if (sec < 1) return null
   const delayMs = Math.min(sec, MAX_AUTO_CONTINUE_SECONDS) * 1000
   return new Date(nowMs + delayMs).toISOString()
 }
@@ -195,7 +202,9 @@ export function continueNotBeforeForAwaitingSession(plan: MultistopPlan, nextSeg
   const dest = plan.destinations[waitingStopIdx]
   if (dest.continueMode !== 'auto') return null
   const sec = dest.autoContinueSeconds
-  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 1) return null
+  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return null
+  if (sec === 0) return new Date(nowMs).toISOString()
+  if (sec < 1) return null
   const delayMs = Math.min(sec, MAX_AUTO_CONTINUE_SECONDS) * 1000
   return new Date(nowMs + delayMs).toISOString()
 }

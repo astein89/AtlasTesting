@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { amrFleetProxy } from '@/api/amr'
 import { getAmrSettings } from '@/api/amr'
-import { robotStatusChipClass, robotStatusFriendly } from '@/utils/amrRobotStatus'
+import { isRobotOffMapStatus, robotStatusChipClass, robotStatusFriendly } from '@/utils/amrRobotStatus'
 
 type RobotRow = Record<string, unknown>
 
@@ -350,12 +350,17 @@ export function AmrRobots() {
     return () => clearInterval(t)
   }, [pollMs, loadRobots])
 
+  const visibleRows = useMemo(() => rows.filter((r) => !isRobotOffMapStatus(r.status)), [rows])
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Robots</h1>
-          <p className="mt-1 text-sm text-foreground/70">Live data from robotQuery (polls while this page is open).</p>
+          <p className="mt-1 text-sm text-foreground/70">
+            Live data from robotQuery (polls while this page is open). Robots with status 1 are not on the map and are
+            omitted here.
+          </p>
         </div>
         <button
           type="button"
@@ -369,9 +374,13 @@ export function AmrRobots() {
         <p className="text-sm text-foreground/60">Loading…</p>
       ) : err ? (
         <p className="text-sm text-red-600">{err}</p>
+      ) : visibleRows.length === 0 && rows.length > 0 ? (
+        <p className="text-sm text-foreground/60">
+          Every robot in the fleet response is off-map (status 1). Nothing to show.
+        </p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((r) => (
+          {visibleRows.map((r) => (
             <RobotGridCard
               key={String(r.robotId ?? Math.random())}
               row={r}

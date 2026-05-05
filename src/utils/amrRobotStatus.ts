@@ -11,6 +11,12 @@ export const ROBOT_STATUS_NAMES: Record<number, string> = {
   7: 'Abnormal',
 }
 
+/** Status 1 — not inserted on the map (fleet list / Robots page hides these). */
+export function isRobotOffMapStatus(status: unknown): boolean {
+  const n = typeof status === 'number' ? status : Number(status)
+  return Number.isFinite(n) && n === 1
+}
+
 /** Status codes excluded from mission robot selection (not assignable). */
 const EXCLUDED_FROM_MISSION_PICKER = new Set([2, 6, 7]) // Offline, Updating, Abnormal
 
