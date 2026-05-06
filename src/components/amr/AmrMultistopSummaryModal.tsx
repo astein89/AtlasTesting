@@ -6,6 +6,7 @@ import {
   getAmrMultistopSession,
   getAmrSettings,
   postStandPresence,
+  terminateStuckAmrMultistopSession,
 } from '@/api/amr'
 import { AmrAutoContinueCountdown } from '@/components/amr/AmrAutoContinueCountdown'
 import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
@@ -245,6 +246,8 @@ export function AmrMultistopSummaryModal({
   const [continueBusy, setContinueBusy] = useState(false)
   const [cancelBusy, setCancelBusy] = useState(false)
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
+  const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
+  const [terminateStuckConfirmOpen, setTerminateStuckConfirmOpen] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
   /** Only show session loading when switching sessions; silent refetch when list polling bumps the head record. */
   const prevFetchedMultistopSessionIdRef = useRef<string | null>(null)
@@ -349,6 +352,8 @@ export function AmrMultistopSummaryModal({
     nextSeg === 0 &&
     recordCount === 0 &&
     !msLoading
+  const terminateStuckEnabled =
+    canManage && Boolean(msData) && sessionStatus === 'failed' && !msLoading && Boolean(sessionId)
 
   const continueNotBeforeRaw = msData?.session?.continue_not_before
   const continueNotBeforeIso =
@@ -464,6 +469,23 @@ export function AmrMultistopSummaryModal({
       setMsErr(`${base}${extra}`)
     } finally {
       setCancelBusy(false)
+    }
+  }
+
+  const onTerminateStuckSession = async () => {
+    if (!sessionId || !terminateStuckEnabled) return
+    setTerminateStuckBusy(true)
+    setMsErr(null)
+    try {
+      await terminateStuckAmrMultistopSession(sessionId)
+      setTerminateStuckConfirmOpen(false)
+      setMsRefresh((n) => n + 1)
+      onSessionUpdated?.()
+      onClose()
+    } catch (e: unknown) {
+      setMsErr(getApiErrorMessage(e, 'Could not end failed session'))
+    } finally {
+      setTerminateStuckBusy(false)
     }
   }
 
@@ -750,7 +772,7 @@ export function AmrMultistopSummaryModal({
                   </div>
                   <button
                     type="button"
-                    disabled={continueBusy || cancelBusy}
+                    disabled={continueBusy || cancelBusy || terminateStuckBusy}
                     className="min-h-[40px] w-full rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 sm:w-auto"
                     onClick={() => void onContinue()}
                   >
@@ -759,7 +781,7 @@ export function AmrMultistopSummaryModal({
                   {canForceRelease ? (
                     <button
                       type="button"
-                      disabled={continueBusy || cancelBusy}
+                      disabled={continueBusy || cancelBusy || terminateStuckBusy}
                       className="min-h-[40px] w-full rounded-md border border-red-600/50 bg-background px-3 text-sm font-medium text-red-700 hover:bg-red-500/15 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/50 sm:w-auto"
                       onClick={() => setForceReleaseConfirmOpen(true)}
                     >
@@ -808,21 +830,49 @@ export function AmrMultistopSummaryModal({
             }}
             onConfirm={() => void onCancelMission()}
           />
+          <ConfirmModal
+            open={terminateStuckConfirmOpen}
+            title="End failed session"
+            message={
+              <span>
+                This session is marked <strong className="font-medium">failed</strong> and cannot Continue. DC will stop
+                tracking it, close all related mission rows, and call fleet <strong className="font-medium">missionCancel</strong>{' '}
+                for each segment job code (best effort). Use only after the robots are safe and you accept fleet-side
+                effects.
+              </span>
+            }
+            confirmLabel={terminateStuckBusy ? 'Ending…' : 'End session'}
+            variant="danger"
+            onCancel={() => {
+              if (!terminateStuckBusy) setTerminateStuckConfirmOpen(false)
+            }}
+            onConfirm={() => void onTerminateStuckSession()}
+          />
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
               {cancelEnabled ? (
                 <button
                   type="button"
-                  disabled={cancelBusy || continueBusy}
+                  disabled={cancelBusy || continueBusy || terminateStuckBusy}
                   className="min-h-[44px] w-full rounded-lg border border-red-500/45 bg-background px-4 text-sm font-medium text-red-600 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400 sm:w-auto"
                   onClick={() => setCancelConfirmOpen(true)}
                 >
                   Cancel mission
                 </button>
               ) : null}
+              {terminateStuckEnabled ? (
+                <button
+                  type="button"
+                  disabled={terminateStuckBusy || continueBusy || cancelBusy}
+                  className="min-h-[44px] w-full rounded-lg border border-red-600/50 bg-background px-4 text-sm font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300 sm:w-auto"
+                  onClick={() => setTerminateStuckConfirmOpen(true)}
+                >
+                  {terminateStuckBusy ? 'Ending…' : 'End failed session'}
+                </button>
+              ) : null}
               <button
                 type="button"
-                disabled={!continueEnabled || continueBusy || cancelBusy}
+                disabled={!continueEnabled || continueBusy || cancelBusy || terminateStuckBusy}
                 className="min-h-[44px] w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-foreground hover:bg-amber-500/15 disabled:opacity-50 dark:border-amber-500/35 sm:w-auto"
                 onClick={() => void onContinue()}
               >
@@ -835,7 +885,7 @@ export function AmrMultistopSummaryModal({
             </div>
             <button
               type="button"
-              disabled={cancelBusy || continueBusy}
+              disabled={cancelBusy || continueBusy || terminateStuckBusy}
               className="min-h-[44px] w-full rounded-lg border border-border bg-background px-4 text-sm font-medium hover:bg-muted disabled:opacity-50 sm:w-auto"
               onClick={() => {
                 onOpenFullMission(headRecordForMissionDetail(group))

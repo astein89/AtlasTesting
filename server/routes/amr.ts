@@ -1246,6 +1246,96 @@ router.post(
   })
 )
 
+/**
+ * Failed multistop sessions cannot Continue. Best-effort fleet `missionCancel` on each segment mission code (newest
+ * leg first), then mark all session mission rows closed and session `cancelled` so the worker and UI stop tracking them.
+ */
+router.post(
+  '/dc/missions/multistop/:sessionId/terminate-stuck',
+  authMiddleware,
+  requirePermission('amr.missions.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const sessionId = typeof req.params.sessionId === 'string' ? req.params.sessionId.trim() : ''
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId required' })
+      return
+    }
+    const session = (await db.prepare('SELECT id, status FROM amr_multistop_sessions WHERE id = ?').get(sessionId)) as
+      | { id: string; status: string }
+      | undefined
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' })
+      return
+    }
+    if (String(session.status) !== 'failed') {
+      res.status(409).json({
+        error: 'Only sessions in failed state can be terminated this way. Active or waiting sessions use Cancel or Continue.',
+      })
+      return
+    }
+    const cfg = await getAmrFleetConfig(db)
+    const recRows = (await db
+      .prepare(
+        `SELECT mission_code, job_code, multistop_step_index FROM amr_mission_records
+         WHERE multistop_session_id = ? ORDER BY COALESCE(multistop_step_index, 0) DESC, created_at DESC`
+      )
+      .all(sessionId)) as Array<{
+      mission_code?: string | null
+      job_code?: string | null
+      multistop_step_index?: number | null
+    }>
+    const seen = new Set<string>()
+    const orderedCodes: string[] = []
+    for (const r of recRows) {
+      const mc = typeof r.mission_code === 'string' ? r.mission_code.trim() : ''
+      const jc = typeof r.job_code === 'string' ? r.job_code.trim() : ''
+      const code = mc || jc
+      if (!code || seen.has(code)) continue
+      seen.add(code)
+      orderedCodes.push(code)
+    }
+
+    const fleetCancels: Array<{ missionCode: string; ok: boolean; httpStatus: number; fleetSuccess?: boolean }> = []
+    for (const missionCode of orderedCodes) {
+      const cancelReq = {
+        orgId: cfg.orgId,
+        requestId: genDCA('MC'),
+        missionCode,
+        cancelMode: 'NORMAL',
+      }
+      const cr = await forwardAmrFleetRequest(cfg, 'missionCancel', cancelReq, {
+        db,
+        source: 'multistop-terminate-stuck',
+        missionRecordId: null,
+        userId: req.user!.id,
+      })
+      fleetCancels.push({
+        missionCode,
+        ok: cr.ok,
+        httpStatus: cr.status,
+        fleetSuccess: cr.ok ? fleetJsonIndicatesSuccess(cr.json) : undefined,
+      })
+    }
+
+    const ts = nowTs()
+    await db
+      .prepare(`UPDATE amr_mission_records SET worker_closed = 1, updated_at = ? WHERE multistop_session_id = ?`)
+      .run(ts, sessionId)
+    await db
+      .prepare(
+        `UPDATE amr_multistop_sessions SET status = 'cancelled', continue_not_before = NULL, updated_at = ? WHERE id = ?`
+      )
+      .run(ts, sessionId)
+    rescheduleAmrMissionWorker()
+    res.json({
+      ok: true,
+      sessionId,
+      status: 'cancelled',
+      fleetCancels,
+    })
+  })
+)
+
 router.post(
   '/dc/missions/multistop',
   authMiddleware,

@@ -16,6 +16,7 @@ export const MISSION_JOB_STATUS_NAMES: Record<number, string> = {
 /**
  * Fleet codes the mission worker treats as terminal (`TERMINAL_JOB_STATUS` in `amrMissionWorker.ts`).
  * Missions whose latest `last_status` is one of these are not “active” for list purposes.
+ * Note: status **50 (Warning)** still advances an in-progress multistop session to `awaiting_continue` so Continue works.
  */
 export const TERMINAL_MISSION_JOB_STATUS_CODES = new Set<number>([30, 31, 35, 50, 60])
 

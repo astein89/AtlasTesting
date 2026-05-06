@@ -25,6 +25,7 @@ import {
   getAmrStands,
   patchAmrMultistopSession,
   postStandPresence,
+  terminateStuckAmrMultistopSession,
   type ZoneCategory,
 } from '@/api/amr'
 import { getApiErrorMessage, parseMultistopContinueStandOccupied } from '@/api/client'
@@ -519,6 +520,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [blockedDestPresenceError, setBlockedDestPresenceError] = useState(false)
   const [blockedDestPresenceUnconfig, setBlockedDestPresenceUnconfig] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
+  const [terminateStuckConfirmOpen, setTerminateStuckConfirmOpen] = useState(false)
+  const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
   const [continueBusy, setContinueBusy] = useState(false)
   const [patchBusy, setPatchBusy] = useState(false)
   const [draftDestinations, setDraftDestinations] = useState<DraftDest[] | null>(null)
@@ -1120,6 +1123,24 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     }
   }
 
+  const terminateStuckEnabled = canManage && Boolean(sessionId) && sessionStatus === 'failed'
+
+  const onTerminateStuckSession = async () => {
+    if (!sessionId || !terminateStuckEnabled) return
+    setTerminateStuckBusy(true)
+    setMsErr(null)
+    try {
+      await terminateStuckAmrMultistopSession(sessionId)
+      setTerminateStuckConfirmOpen(false)
+      setMsRefresh((n) => n + 1)
+      onSessionUpdated?.()
+    } catch (e: unknown) {
+      setMsErr(getApiErrorMessage(e, 'Could not end failed session'))
+    } finally {
+      setTerminateStuckBusy(false)
+    }
+  }
+
   const tailDestRows = draftDestinations?.slice(nextSegmentIndex) ?? []
   const canRemoveNext = (draftDestinations?.length ?? 0) > nextSegmentIndex + 1
   const firstTailId = tailDestRows[0]?.id
@@ -1162,6 +1183,23 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
             if (!continueBusy) setForceReleaseConfirmOpen(false)
           }}
           onConfirm={() => void onConfirmForceRelease()}
+        />
+        <ConfirmModal
+          open={terminateStuckConfirmOpen}
+          title="End failed session"
+          message={
+            <span>
+              This session is marked <strong className="font-medium">failed</strong> and cannot Continue. DC will stop
+              tracking it, close all related mission rows, and call fleet <strong className="font-medium">missionCancel</strong>{' '}
+              for each segment job code (best effort). Confirm only when robots are safe.
+            </span>
+          }
+          confirmLabel={terminateStuckBusy ? 'Ending…' : 'End session'}
+          variant="danger"
+          onCancel={() => {
+            if (!terminateStuckBusy) setTerminateStuckConfirmOpen(false)
+          }}
+          onConfirm={() => void onTerminateStuckSession()}
         />
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
           <div className="min-w-0 flex-1">
@@ -1294,6 +1332,22 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               ) : null}
               {!msLoading && msData ? (
                 <>
+                  {terminateStuckEnabled ? (
+                    <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-950 dark:text-amber-100">
+                      <p className="font-medium text-foreground">Session failed — Continue unavailable</p>
+                      <p className="mt-1 text-xs text-foreground/85">
+                        End this route in DC and request fleet missionCancel on each leg (best effort) so tracking stops.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={terminateStuckBusy || continueBusy || patchBusy}
+                        className="mt-3 min-h-[40px] rounded-lg border border-red-600/50 bg-background px-3 text-sm font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+                        onClick={() => setTerminateStuckConfirmOpen(true)}
+                      >
+                        End failed session…
+                      </button>
+                    </div>
+                  ) : null}
                   {pickupPos ? (
                     <div className="space-y-2">
                       <p className="text-sm">

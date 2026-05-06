@@ -50,6 +50,44 @@ const SUMMARY_ONLY_KEYS = new Set(['batteryLevel', 'status'])
 
 const NUMERIC_KEYS = new Set(['x', 'y', 'nodeNumber', 'robotOrientation', 'occupyStatus', 'liftStatus', 'batteryLevel', 'reliability'])
 
+/** Categories on the grid: attention first, then less available, then working states, unknown codes, empty last. */
+const STATUS_GRID_SECTION_ORDER = [7, 2, 6, 4, 5, 3] as const
+
+function statusCategoryKey(status: unknown): number | 'none' {
+  if (status === null || status === undefined || status === '') return 'none'
+  const n = typeof status === 'number' ? status : Number(status)
+  if (!Number.isFinite(n)) return 'none'
+  return n
+}
+
+function robotSortName(row: RobotRow): string {
+  return String(row.robotId ?? '').trim()
+}
+
+function compareRobotsByName(a: RobotRow, b: RobotRow): number {
+  return robotSortName(a).localeCompare(robotSortName(b), undefined, { sensitivity: 'base', numeric: true })
+}
+
+function sortedStatusCategoryKeys(keys: Set<number | 'none'>): (number | 'none')[] {
+  const orderNums = STATUS_GRID_SECTION_ORDER as readonly number[]
+  const out: (number | 'none')[] = []
+  for (const c of STATUS_GRID_SECTION_ORDER) {
+    if (keys.has(c)) out.push(c)
+  }
+  const extras = [...keys].filter(
+    (k): k is number => k !== 'none' && typeof k === 'number' && !orderNums.includes(k)
+  )
+  extras.sort((a, b) => a - b)
+  out.push(...extras)
+  if (keys.has('none')) out.push('none')
+  return out
+}
+
+function categoryHeading(key: number | 'none'): string {
+  if (key === 'none') return 'No status'
+  return robotStatusFriendly(key).label
+}
+
 function humanizeKey(key: string): string {
   return key
     .replace(/([A-Z])/g, ' $1')
@@ -352,6 +390,19 @@ export function AmrRobots() {
 
   const visibleRows = useMemo(() => rows.filter((r) => !isRobotOffMapStatus(r.status)), [rows])
 
+  const statusSections = useMemo(() => {
+    const byKey = new Map<number | 'none', RobotRow[]>()
+    for (const r of visibleRows) {
+      const key = statusCategoryKey(r.status)
+      const list = byKey.get(key)
+      if (list) list.push(r)
+      else byKey.set(key, [r])
+    }
+    for (const list of byKey.values()) list.sort(compareRobotsByName)
+    const keys = sortedStatusCategoryKeys(new Set(byKey.keys()))
+    return keys.map((k) => ({ key: k, heading: categoryHeading(k), rows: byKey.get(k)! }))
+  }, [visibleRows])
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -359,7 +410,7 @@ export function AmrRobots() {
           <h1 className="text-xl font-semibold tracking-tight">Robots</h1>
           <p className="mt-1 text-sm text-foreground/70">
             Live data from robotQuery (polls while this page is open). Robots with status 1 are not on the map and are
-            omitted here.
+            omitted here. The list is grouped by status and sorted alphabetically by robot id.
           </p>
         </div>
         <button
@@ -379,13 +430,25 @@ export function AmrRobots() {
           Every robot in the fleet response is off-map (status 1). Nothing to show.
         </p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleRows.map((r) => (
-            <RobotGridCard
-              key={String(r.robotId ?? Math.random())}
-              row={r}
-              onSelect={() => setDetail(r)}
-            />
+        <div className="space-y-8">
+          {statusSections.map(({ key, heading, rows: sectionRows }) => (
+            <section key={String(key)} className="space-y-3">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border/70 pb-2">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground/80">{heading}</h2>
+                <span className="text-xs font-medium tabular-nums text-foreground/50">
+                  {sectionRows.length} robot{sectionRows.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {sectionRows.map((r, i) => (
+                  <RobotGridCard
+                    key={robotSortName(r) !== '' ? robotSortName(r) : `row-${String(key)}-${i}`}
+                    row={r}
+                    onSelect={() => setDetail(r)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}

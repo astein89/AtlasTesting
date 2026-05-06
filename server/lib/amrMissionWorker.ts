@@ -12,6 +12,12 @@ const TERMINAL_JOB_STATUS = new Set([30, 31, 35, 50, 60])
 const FINALIZED_SUCCESS_STATUS = new Set([30, 35])
 /** Successful completion states — both trigger optional containerOut when not persistent (same as fleet “done”). */
 const CONTAINER_OUT_TRIGGER_STATUS = new Set([30, 35])
+/**
+ * Fleet states that close the segment’s mission row (`worker_closed`) but still move the multistop session to
+ * `awaiting_continue` / `completed` like a successful leg. **50 Warning** often still allows the route to proceed;
+ * without this, we marked the session `failed` and Continue returned 409.
+ */
+const MULTISTOP_SESSION_ADVANCE_STATUS = new Set([...FINALIZED_SUCCESS_STATUS, 50])
 
 /** Must match `mergeConfig` floor for `pollMsMissionWorker` in {@link amrConfig.ts}. */
 const MIN_POLL_MS_MISSION_WORKER = 1000
@@ -193,9 +199,9 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
               | undefined
             const totalSeg = Number(sessRow?.total_segments)
             if (Number.isFinite(totalSeg)) {
-              const okDone = FINALIZED_SUCCESS_STATUS.has(status)
+              const advanceSession = MULTISTOP_SESSION_ADVANCE_STATUS.has(status)
               const rid = robotIdFromFleetJob(job)
-              if (okDone && stepIdx < totalSeg - 1) {
+              if (advanceSession && stepIdx < totalSeg - 1) {
                 const planRow = (await db.prepare('SELECT plan_json FROM amr_multistop_sessions WHERE id = ?').get(msId)) as
                   | { plan_json?: string }
                   | undefined
@@ -207,11 +213,11 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
                     `UPDATE amr_multistop_sessions SET status = ?, locked_robot_id = ?, continue_not_before = ?, updated_at = ? WHERE id = ?`
                   )
                   .run('awaiting_continue', rid || null, continueNotBefore, ts, msId)
-              } else if (okDone && stepIdx === totalSeg - 1) {
+              } else if (advanceSession && stepIdx === totalSeg - 1) {
                 await db
                   .prepare(`UPDATE amr_multistop_sessions SET status = ?, updated_at = ? WHERE id = ?`)
                   .run('completed', ts, msId)
-              } else if (!okDone) {
+              } else if (!advanceSession) {
                 await db
                   .prepare(`UPDATE amr_multistop_sessions SET status = ?, updated_at = ? WHERE id = ?`)
                   .run('failed', ts, msId)

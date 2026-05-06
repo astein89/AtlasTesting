@@ -217,6 +217,24 @@ export async function cancelAmrMultistopSession(sessionId: string) {
   return data
 }
 
+export type TerminateStuckMultistopFleetCancel = {
+  missionCode: string
+  ok: boolean
+  httpStatus: number
+  fleetSuccess?: boolean
+}
+
+/** Failed multistop: best-effort fleet missionCancel per leg + mark session cancelled and close local tracking. */
+export async function terminateStuckAmrMultistopSession(sessionId: string) {
+  const { data } = await api.post<{
+    ok: boolean
+    sessionId: string
+    status: string
+    fleetCancels: TerminateStuckMultistopFleetCancel[]
+  }>(`/amr/dc/missions/multistop/${encodeURIComponent(sessionId)}/terminate-stuck`, {})
+  return data
+}
+
 export type AmrMissionTemplateListItem = {
   id: string
   name: string

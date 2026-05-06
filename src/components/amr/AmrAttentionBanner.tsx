@@ -7,6 +7,7 @@ import {
   getAmrMissionAttention,
   getAmrSettings,
   postStandPresence,
+  terminateStuckAmrMultistopSession,
   type AmrMissionAttentionItem,
 } from '@/api/amr'
 import { AmrAutoContinueCountdown } from '@/components/amr/AmrAutoContinueCountdown'
@@ -50,6 +51,8 @@ export function AmrAttentionBanner() {
   const [releaseOccupiedStandRef, setReleaseOccupiedStandRef] = useState<string | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
+  const [terminateStuckConfirmOpen, setTerminateStuckConfirmOpen] = useState(false)
+  const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
 
   useEffect(() => {
@@ -95,14 +98,22 @@ export function AmrAttentionBanner() {
   const soleNextSegmentIndex = count === 1 ? Number(manualItems[0]?.nextSegmentIndex) : NaN
   const soleNextSegOk = Number.isFinite(soleNextSegmentIndex) && soleNextSegmentIndex === 0
   const releaseEnabled =
-    Boolean(soleSessionId) && soleStatus === 'awaiting_continue' && canManage && !releaseBusy && !cancelBusy
+    Boolean(soleSessionId) &&
+    soleStatus === 'awaiting_continue' &&
+    canManage &&
+    !releaseBusy &&
+    !cancelBusy &&
+    !terminateStuckBusy
   const cancelBannerEnabled =
     Boolean(soleSessionId) &&
     soleStatus === 'awaiting_continue' &&
     soleNextSegOk &&
     canManage &&
     !cancelBusy &&
-    !releaseBusy
+    !releaseBusy &&
+    !terminateStuckBusy
+  const terminateBannerEnabled =
+    Boolean(soleSessionId) && soleStatus === 'failed' && canManage && !terminateStuckBusy && !releaseBusy && !cancelBusy
 
   const releaseTitle = (() => {
     if (!soleSessionId) return undefined
@@ -193,6 +204,22 @@ export function AmrAttentionBanner() {
     }
   }
 
+  const onTerminateStuckSession = async () => {
+    if (!soleSessionId || !terminateBannerEnabled) return
+    setTerminateStuckBusy(true)
+    setReleaseErr(null)
+    try {
+      await terminateStuckAmrMultistopSession(soleSessionId)
+      setTerminateStuckConfirmOpen(false)
+      const d = await getAmrMissionAttention()
+      setAttention({ count: d.count, items: d.items })
+    } catch (e: unknown) {
+      setReleaseErr(getApiErrorMessage(e, 'Could not end failed session'))
+    } finally {
+      setTerminateStuckBusy(false)
+    }
+  }
+
   return (
     <div
       role="status"
@@ -236,6 +263,23 @@ export function AmrAttentionBanner() {
         }}
         onConfirm={() => void onCancelMission()}
       />
+      <ConfirmModal
+        open={terminateStuckConfirmOpen}
+        title="End failed session"
+        message={
+          <span>
+            This session is marked <strong className="font-medium">failed</strong>. DC will stop tracking it, close
+            related mission rows, and call fleet <strong className="font-medium">missionCancel</strong> for each leg
+            (best effort). Confirm only when robots are safe.
+          </span>
+        }
+        confirmLabel={terminateStuckBusy ? 'Ending…' : 'End session'}
+        variant="danger"
+        onCancel={() => {
+          if (!terminateStuckBusy) setTerminateStuckConfirmOpen(false)
+        }}
+        onConfirm={() => void onTerminateStuckSession()}
+      />
       <div className="mx-auto flex max-w-[100%] flex-wrap items-center justify-between gap-2">
         <p className="min-w-0">
           <span className="font-medium">
@@ -264,7 +308,7 @@ export function AmrAttentionBanner() {
               {canForceRelease && releaseOccupiedStandRef ? (
                 <button
                   type="button"
-                  disabled={releaseBusy || cancelBusy}
+                  disabled={releaseBusy || cancelBusy || terminateStuckBusy}
                   className="mt-1.5 w-full rounded border border-red-600/45 bg-background px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
                   onClick={() => setForceReleaseConfirmOpen(true)}
                 >
@@ -276,10 +320,21 @@ export function AmrAttentionBanner() {
           {soleSessionId && cancelBannerEnabled ? (
             <button
               type="button"
-              className="rounded-md border border-red-500/45 bg-background px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+              disabled={terminateStuckBusy}
+              className="rounded-md border border-red-500/45 bg-background px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
               onClick={() => setCancelConfirmOpen(true)}
             >
               Cancel mission
+            </button>
+          ) : null}
+          {soleSessionId && terminateBannerEnabled ? (
+            <button
+              type="button"
+              disabled={terminateStuckBusy}
+              className="rounded-md border border-red-600/50 bg-background px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+              onClick={() => setTerminateStuckConfirmOpen(true)}
+            >
+              {terminateStuckBusy ? 'Ending…' : 'End failed session'}
             </button>
           ) : null}
           {soleSessionId ? (

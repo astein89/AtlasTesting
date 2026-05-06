@@ -161,6 +161,30 @@ export function AmrStandPickerModal({
     return standsForStep.map((s) => s.external_ref.trim()).filter(Boolean)
   }, [standsForStep, step.kind])
 
+  /** Zones that show a single location inline — fetch presence here too (same as stands step). */
+  const zonesStepSolePresenceIds = useMemo(() => {
+    const ids: string[] = []
+    const seen = new Set<string>()
+    for (const g of zoneGroups) {
+      for (const z of g.zones) {
+        const inZone = standsInZone(visibleStands, z)
+        if (inZone.length !== 1) continue
+        const ref = inZone[0]!.external_ref.trim()
+        if (ref && !seen.has(ref)) {
+          seen.add(ref)
+          ids.push(ref)
+        }
+      }
+    }
+    return ids
+  }, [zoneGroups, visibleStands])
+
+  const standIdsForPresence = useMemo(() => {
+    if (step.kind === 'stands') return standIdsForZone
+    if (step.kind === 'zones') return zonesStepSolePresenceIds
+    return []
+  }, [step.kind, standIdsForZone, zonesStepSolePresenceIds])
+
   const [presence, setPresence] = useState<Record<string, boolean | null>>({})
   const [presLoading, setPresLoading] = useState(false)
   const [presError, setPresError] = useState(false)
@@ -197,7 +221,7 @@ export function AmrStandPickerModal({
     }
   }, [])
 
-  const idsKey = standIdsForZone.join('\0')
+  const idsKey = standIdsForPresence.join('\0')
 
   useEffect(() => {
     let cancelled = false
@@ -218,17 +242,17 @@ export function AmrStandPickerModal({
   }, [zoneCategories])
 
   useEffect(() => {
-    if (step.kind !== 'stands' || standIdsForZone.length === 0) return
-    void loadPresence(standIdsForZone, { silent: true })
-  }, [step.kind, idsKey, loadPresence, standIdsForZone])
+    if (standIdsForPresence.length === 0) return
+    void loadPresence(standIdsForPresence, { silent: true })
+  }, [step.kind, idsKey, loadPresence, standIdsForPresence])
 
   useEffect(() => {
-    if (step.kind !== 'stands' || standIdsForZone.length === 0) return
+    if (standIdsForPresence.length === 0) return
     const tid = window.setInterval(() => {
-      void loadPresence(standIdsForZone, { silent: true })
+      void loadPresence(standIdsForPresence, { silent: true })
     }, pollMsContainers)
     return () => clearInterval(tid)
-  }, [step.kind, idsKey, loadPresence, pollMsContainers, standIdsForZone])
+  }, [step.kind, idsKey, loadPresence, pollMsContainers, standIdsForPresence])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -264,14 +288,14 @@ export function AmrStandPickerModal({
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {step.kind === 'stands' && standIdsForZone.length > 0 ? (
+            {standIdsForPresence.length > 0 ? (
               <button
                 type="button"
                 disabled={presLoading}
                 className="rounded-lg px-2 py-1.5 text-xs font-medium text-primary hover:bg-muted disabled:opacity-50"
                 title="Refresh pallet status"
                 aria-label="Refresh pallet status"
-                onClick={() => void loadPresence(standIdsForZone)}
+                onClick={() => void loadPresence(standIdsForPresence)}
               >
                 {presLoading ? '…' : 'Refresh'}
               </button>
@@ -332,7 +356,25 @@ export function AmrStandPickerModal({
                               }
                             }}
                           >
-                            {sole ? soleStandZoneButtonLabel(sole) : zoneLabel(z)}
+                            {sole ? (
+                              <span className="flex w-full items-start justify-between gap-2">
+                                <span className="min-w-0 break-all text-sm font-medium text-foreground">
+                                  {soleStandZoneButtonLabel(sole)}
+                                </span>
+                                <PalletPresenceGlyph
+                                  kind={rowPresenceKind(sole.external_ref.trim(), {
+                                    presence,
+                                    presLoading,
+                                    presError,
+                                    presUnconfig,
+                                  })}
+                                  className="h-4 w-4 shrink-0"
+                                  showLabel
+                                />
+                              </span>
+                            ) : (
+                              zoneLabel(z)
+                            )}
                           </button>
                         )
                       })}
