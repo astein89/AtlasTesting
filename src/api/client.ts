@@ -17,6 +17,33 @@ export function isAbortLikeError(e: unknown): boolean {
   return x?.code === 'ERR_CANCELED' || x?.name === 'CanceledError' || x?.name === 'AbortError'
 }
 
+/** Prefer `error` then `message` from JSON API error bodies. */
+export function getApiErrorMessage(e: unknown, fallback: string): string {
+  const ax = e as { response?: { data?: unknown } }
+  const d = ax?.response?.data
+  if (d && typeof d === 'object' && !Array.isArray(d)) {
+    const o = d as Record<string, unknown>
+    const err = o.error
+    const msg = o.message
+    if (typeof err === 'string' && err.trim()) return err.trim()
+    if (typeof msg === 'string' && msg.trim()) return msg.trim()
+  }
+  return fallback
+}
+
+/** Present when POST …/multistop/:id/continue returns 409 with pallet-at-stand blocking. */
+export function parseMultistopContinueStandOccupied(e: unknown): string | null {
+  const ax = e as {
+    response?: { status?: number; data?: { code?: string; standOccupiedRef?: string } }
+  }
+  if (ax?.response?.status !== 409) return null
+  const d = ax.response.data
+  if (!d || typeof d !== 'object') return null
+  if (d.code !== 'STAND_OCCUPIED') return null
+  const ref = typeof d.standOccupiedRef === 'string' ? d.standOccupiedRef.trim() : ''
+  return ref || null
+}
+
 function setAuthHeader(config: InternalAxiosRequestConfig, token: string) {
   const h = config.headers
   const value = `Bearer ${token}`

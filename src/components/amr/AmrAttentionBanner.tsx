@@ -1,14 +1,29 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
+  cancelAmrMultistopSession,
   continueAmrMultistopSession,
+  getAmrMultistopSession,
   getAmrMissionAttention,
+  getAmrSettings,
+  postStandPresence,
   type AmrMissionAttentionItem,
 } from '@/api/amr'
 import { AmrAutoContinueCountdown } from '@/components/amr/AmrAutoContinueCountdown'
 import { amrPath } from '@/lib/appPaths'
 import { useAuthStore } from '@/store/authStore'
-import { isAbortLikeError } from '@/api/client'
+import {
+  getApiErrorMessage,
+  isAbortLikeError,
+  parseMultistopContinueStandOccupied,
+} from '@/api/client'
+import { ConfirmModal } from '@/components/ui/ConfirmModal'
+import {
+  multistopContinueOccupiedDestinationRef,
+  multistopStandOccupiedContinueMessage,
+  parseMultistopReleasePlanDestinations,
+  sessionNextSegmentIndex,
+} from '@/utils/amrPalletPresenceSanity'
 
 /** Align with mission list polling so the bar clears soon after status changes (~5s max lag vs ~22s). */
 const POLL_MS = 5000
@@ -25,12 +40,17 @@ export function AmrAttentionBanner() {
   const location = useLocation()
   const canAmr = useAuthStore((s) => s.hasPermission('module.amr'))
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
+  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
   const [attention, setAttention] = useState<{ count: number; items: AmrMissionAttentionItem[] }>({
     count: 0,
     items: [],
   })
   const [releaseBusy, setReleaseBusy] = useState(false)
   const [releaseErr, setReleaseErr] = useState<string | null>(null)
+  const [releaseOccupiedStandRef, setReleaseOccupiedStandRef] = useState<string | null>(null)
+  const [cancelBusy, setCancelBusy] = useState(false)
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
+  const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
 
   useEffect(() => {
     if (!canAmr) return
@@ -39,7 +59,6 @@ export function AmrAttentionBanner() {
       void getAmrMissionAttention({ signal: ac.signal })
         .then((d) => {
           setAttention({ count: d.count, items: d.items })
-          setReleaseErr(null)
         })
         .catch((e) => {
           if (isAbortLikeError(e)) return
@@ -73,8 +92,17 @@ export function AmrAttentionBanner() {
   const soleAutoIso =
     count === 1 ? manualItems[0]?.continueNotBefore?.trim() || null : null
   const soleStatus = count === 1 ? String(manualItems[0]?.status ?? '').trim() : ''
+  const soleNextSegmentIndex = count === 1 ? Number(manualItems[0]?.nextSegmentIndex) : NaN
+  const soleNextSegOk = Number.isFinite(soleNextSegmentIndex) && soleNextSegmentIndex === 0
   const releaseEnabled =
-    Boolean(soleSessionId) && soleStatus === 'awaiting_continue' && canManage && !releaseBusy
+    Boolean(soleSessionId) && soleStatus === 'awaiting_continue' && canManage && !releaseBusy && !cancelBusy
+  const cancelBannerEnabled =
+    Boolean(soleSessionId) &&
+    soleStatus === 'awaiting_continue' &&
+    soleNextSegOk &&
+    canManage &&
+    !cancelBusy &&
+    !releaseBusy
 
   const releaseTitle = (() => {
     if (!soleSessionId) return undefined
@@ -82,6 +110,11 @@ export function AmrAttentionBanner() {
     if (soleStatus !== 'awaiting_continue') return 'Release is only available when waiting to continue'
     return undefined
   })()
+
+  useEffect(() => {
+    setReleaseErr(null)
+    setReleaseOccupiedStandRef(null)
+  }, [soleSessionId])
 
   if (!canAmr || count === 0) return null
 
@@ -93,15 +126,70 @@ export function AmrAttentionBanner() {
     if (!soleSessionId || !releaseEnabled) return
     setReleaseBusy(true)
     setReleaseErr(null)
+    setReleaseOccupiedStandRef(null)
     try {
+      const settings = await getAmrSettings()
+      if (settings.missionCreateStandPresenceSanityCheck !== false) {
+        const ms = await getAmrMultistopSession(soleSessionId)
+        const session = (ms.session ?? {}) as Record<string, unknown>
+        const nextSeg = sessionNextSegmentIndex(session)
+        const planRaw = session.plan_json ?? session.planJson
+        const plan = parseMultistopReleasePlanDestinations(planRaw)
+        const ref =
+          Number.isFinite(nextSeg) && plan ? multistopContinueOccupiedDestinationRef(plan, nextSeg) : null
+        if (ref) {
+          const presence = await postStandPresence([ref])
+          if (presence[ref] === true) {
+            setReleaseErr(multistopStandOccupiedContinueMessage(ref))
+            setReleaseOccupiedStandRef(ref)
+            return
+          }
+        }
+      }
       await continueAmrMultistopSession(soleSessionId)
+      setReleaseErr(null)
+      setReleaseOccupiedStandRef(null)
       const d = await getAmrMissionAttention()
       setAttention({ count: d.count, items: d.items })
     } catch (e: unknown) {
-      const ax = e as { response?: { data?: { error?: string } } }
-      setReleaseErr(ax?.response?.data?.error ?? 'Release failed')
+      setReleaseErr(getApiErrorMessage(e, 'Release failed'))
+      setReleaseOccupiedStandRef(parseMultistopContinueStandOccupied(e))
     } finally {
       setReleaseBusy(false)
+    }
+  }
+
+  const onConfirmForceRelease = async () => {
+    if (!soleSessionId || !releaseOccupiedStandRef) return
+    setForceReleaseConfirmOpen(false)
+    setReleaseBusy(true)
+    setReleaseErr(null)
+    try {
+      await continueAmrMultistopSession(soleSessionId, { forceRelease: true })
+      setReleaseOccupiedStandRef(null)
+      const d = await getAmrMissionAttention()
+      setAttention({ count: d.count, items: d.items })
+    } catch (e: unknown) {
+      setReleaseErr(getApiErrorMessage(e, 'Force release failed'))
+      setReleaseOccupiedStandRef(parseMultistopContinueStandOccupied(e))
+    } finally {
+      setReleaseBusy(false)
+    }
+  }
+
+  const onCancelMission = async () => {
+    if (!soleSessionId || !cancelBannerEnabled) return
+    setCancelBusy(true)
+    setReleaseErr(null)
+    try {
+      await cancelAmrMultistopSession(soleSessionId)
+      setCancelConfirmOpen(false)
+      const d = await getAmrMissionAttention()
+      setAttention({ count: d.count, items: d.items })
+    } catch (e: unknown) {
+      setReleaseErr(getApiErrorMessage(e, 'Cancel failed'))
+    } finally {
+      setCancelBusy(false)
     }
   }
 
@@ -110,6 +198,44 @@ export function AmrAttentionBanner() {
       role="status"
       className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground sm:px-6"
     >
+      <ConfirmModal
+        open={forceReleaseConfirmOpen}
+        title="Force release"
+        variant="amber"
+        message={
+          releaseOccupiedStandRef ? (
+            <span>
+              Hyperion still reports a pallet at stand{' '}
+              <span className="font-mono">{releaseOccupiedStandRef}</span>. Force only if the stand is actually clear or
+              you accept the risk of a fleet conflict.
+            </span>
+          ) : (
+            'Force dispatch without a stand-empty check? Only continue if the stand is clear or you accept the risk.'
+          )
+        }
+        confirmLabel={releaseBusy ? 'Releasing…' : 'Force release'}
+        cancelLabel="Cancel"
+        onCancel={() => {
+          if (!releaseBusy) setForceReleaseConfirmOpen(false)
+        }}
+        onConfirm={() => void onConfirmForceRelease()}
+      />
+      <ConfirmModal
+        open={cancelConfirmOpen}
+        title="Cancel mission"
+        message={
+          <span>
+            Remove the container from the pickup stand on the fleet and abandon this session. Only available before the
+            first leg is submitted.
+          </span>
+        }
+        confirmLabel={cancelBusy ? 'Cancelling…' : 'Cancel mission'}
+        variant="danger"
+        onCancel={() => {
+          if (!cancelBusy) setCancelConfirmOpen(false)
+        }}
+        onConfirm={() => void onCancelMission()}
+      />
       <div className="mx-auto flex max-w-[100%] flex-wrap items-center justify-between gap-2">
         <p className="min-w-0">
           <span className="font-medium">
@@ -129,7 +255,32 @@ export function AmrAttentionBanner() {
         </p>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           {releaseErr ? (
-            <span className="max-w-[14rem] text-right text-xs text-destructive">{releaseErr}</span>
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="max-w-md min-w-0 shrink rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-right text-xs font-medium leading-snug text-red-600 dark:border-red-500/35 dark:bg-red-950/40 dark:text-red-400"
+            >
+              <p className="text-pretty">{releaseErr}</p>
+              {canForceRelease && releaseOccupiedStandRef ? (
+                <button
+                  type="button"
+                  disabled={releaseBusy || cancelBusy}
+                  className="mt-1.5 w-full rounded border border-red-600/45 bg-background px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+                  onClick={() => setForceReleaseConfirmOpen(true)}
+                >
+                  Force release anyway
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {soleSessionId && cancelBannerEnabled ? (
+            <button
+              type="button"
+              className="rounded-md border border-red-500/45 bg-background px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+              onClick={() => setCancelConfirmOpen(true)}
+            >
+              Cancel mission
+            </button>
           ) : null}
           {soleSessionId ? (
             <button

@@ -276,9 +276,13 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
     x DOUBLE PRECISION NOT NULL DEFAULT 0,
     y DOUBLE PRECISION NOT NULL DEFAULT 0,
     enabled INTEGER NOT NULL DEFAULT 1,
+    block_pickup INTEGER NOT NULL DEFAULT 0,
+    block_dropoff INTEGER NOT NULL DEFAULT 0,
     created_at TEXT ${tsTextDefault},
     updated_at TEXT
   )`,
+  `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_pickup INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_dropoff INTEGER NOT NULL DEFAULT 0`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_amr_stands_external ON amr_stands(external_ref)`,
   `CREATE TABLE IF NOT EXISTS amr_mission_records (
     id TEXT PRIMARY KEY,
@@ -350,6 +354,15 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_amr_mission_records_multistop ON amr_mission_records(multistop_session_id)`,
   `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS locked_robot_id TEXT`,
   `ALTER TABLE amr_multistop_sessions ADD COLUMN IF NOT EXISTS continue_not_before TEXT`,
+  `CREATE TABLE IF NOT EXISTS amr_mission_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    payload_json TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT ${tsTextDefault},
+    updated_at TEXT,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  )`,
 ]
 
 export async function initSchemaPg(db: AsyncDbWrapper): Promise<void> {

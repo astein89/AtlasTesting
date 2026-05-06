@@ -245,6 +245,26 @@ export function buildSegmentMissionData(
   return [startLeg, endLeg]
 }
 
+/**
+ * Stand that must be empty before continuing segment `nextSegmentIndex`, aligned with {@link buildSegmentMissionData}.
+ * Skips segment 0 (first fleet leg): create-time / pickup-row sanity covers that destination.
+ */
+export function multistopSegmentDropDestinationRef(
+  plan: MultistopPlan,
+  nextSegmentIndex: number
+): string | null {
+  const dests = plan.destinations
+  const n = dests.length
+  if (!Number.isFinite(nextSegmentIndex) || nextSegmentIndex < 0 || nextSegmentIndex >= n) return null
+  if (nextSegmentIndex === 0) return null
+  const end = dests[nextSegmentIndex]
+  const isFinal = nextSegmentIndex === n - 1
+  const endPutDown = isFinal ? true : end.putDown === true
+  if (!endPutDown) return null
+  const ref = end.position.trim()
+  return ref || null
+}
+
 export function robotIdFromFleetJob(job: Record<string, unknown>): string {
   const id = job.robotId ?? job.robot_id
   return typeof id === 'string' ? id.trim() : ''

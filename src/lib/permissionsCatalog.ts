@@ -58,7 +58,17 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     label: 'AMR: create missions, container in/out, cancel / feedback',
     group: 'AMR',
   },
+  {
+    id: 'amr.missions.force_release',
+    label: 'AMR: force release / continue when stand reports a pallet (Hyperion)',
+    group: 'AMR',
+  },
   { id: 'amr.stands.manage', label: 'AMR: manage stands / positions & CSV import', group: 'AMR' },
+  {
+    id: 'amr.stands.override-special',
+    label: 'AMR: override special-location restrictions (no-lift / no-lower)',
+    group: 'AMR',
+  },
   { id: 'amr.settings', label: 'AMR: fleet connection & module defaults', group: 'AMR' },
   { id: 'amr.tools.dev', label: 'AMR: API playground & integration tools', group: 'AMR' },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },
@@ -112,7 +122,14 @@ export const ROLE_EDITOR_MODULE_NESTING: Array<{
   { moduleId: 'module.files', nestedIds: ['files.manage', 'files.recycle'] },
   {
     moduleId: 'module.amr',
-    nestedIds: ['amr.missions.manage', 'amr.stands.manage', 'amr.settings', 'amr.tools.dev'],
+    nestedIds: [
+      'amr.missions.manage',
+      'amr.missions.force_release',
+      'amr.stands.manage',
+      'amr.stands.override-special',
+      'amr.settings',
+      'amr.tools.dev',
+    ],
   },
   { moduleId: 'module.admin', nestedIds: ['roles.manage', 'users.manage', 'settings.access', 'admin.db'] },
 ]

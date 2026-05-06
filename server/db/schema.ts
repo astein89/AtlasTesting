@@ -262,8 +262,11 @@ export function initSchema(db: DbWrapper) {
   migrateAmrTables(db)
   migrateAmrMissionWorkerClosed(db)
   migrateAmrMultistopSessions(db)
+  migrateAmrMissionTemplates(db)
   migrateAmrMissionRecordLockedRobot(db)
+  migrateAmrStandsSpecialLocationFlags(db)
   migrateRolesGrantModuleAmr(db)
+  migrateRolesAddAmrStandsOverrideSpecial(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
@@ -913,6 +916,7 @@ function migrateRoles(db: DbWrapper) {
           'links.edit',
           'amr.missions.manage',
           'amr.stands.manage',
+          'amr.stands.override-special',
           'amr.settings',
           'amr.tools.dev',
         ]),
@@ -1164,6 +1168,8 @@ function migrateAmrTables(db: DbWrapper) {
         x REAL NOT NULL DEFAULT 0,
         y REAL NOT NULL DEFAULT 0,
         enabled INTEGER NOT NULL DEFAULT 1,
+        block_pickup INTEGER NOT NULL DEFAULT 0,
+        block_dropoff INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT
       )
@@ -1283,6 +1289,25 @@ function migrateAmrMultistopSessions(db: DbWrapper) {
   }
 }
 
+/** Saved mission blueprints (org-wide, reusable on New Mission). */
+function migrateAmrMissionTemplates(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_mission_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        payload_json TEXT NOT NULL,
+        created_by TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `)
+  } catch {
+    // Ignore
+  }
+}
+
 /** Fleet-assigned robot for this job (from jobQuery), for UI / unlockRobotId resolution. */
 function migrateAmrMissionRecordLockedRobot(db: DbWrapper) {
   try {
@@ -1290,6 +1315,49 @@ function migrateAmrMissionRecordLockedRobot(db: DbWrapper) {
     if (cols.length === 0) return
     if (!cols.includes('locked_robot_id')) {
       db.run('ALTER TABLE amr_mission_records ADD COLUMN locked_robot_id TEXT')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Special-location flags: `block_pickup` (no lift) and `block_dropoff` (no lower) per stand. */
+function migrateAmrStandsSpecialLocationFlags(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_stands')
+    if (cols.length === 0) return
+    if (!cols.includes('block_pickup')) {
+      db.run('ALTER TABLE amr_stands ADD COLUMN block_pickup INTEGER NOT NULL DEFAULT 0')
+    }
+    if (!cols.includes('block_dropoff')) {
+      db.run('ALTER TABLE amr_stands ADD COLUMN block_dropoff INTEGER NOT NULL DEFAULT 0')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Grant `amr.stands.override-special` wherever `amr.missions.manage` was already granted. */
+function migrateRolesAddAmrStandsOverrideSpecial(db: DbWrapper) {
+  try {
+    const rows = db.prepare('SELECT slug, permissions FROM roles').all() as Array<{
+      slug: string
+      permissions: string
+    }>
+    for (const { slug, permissions } of rows) {
+      let arr: unknown
+      try {
+        arr = JSON.parse(permissions)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(arr)) continue
+      const list = arr.filter((x): x is string => typeof x === 'string')
+      if (list.includes('*')) continue
+      if (!list.includes('amr.missions.manage')) continue
+      if (list.includes('amr.stands.override-special')) continue
+      const next = [...list, 'amr.stands.override-special']
+      db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify(next.sort()), slug)
     }
   } catch {
     // Ignore

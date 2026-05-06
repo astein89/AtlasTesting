@@ -66,6 +66,9 @@ const HomeLinksPage = lazy(() =>
 )
 const AmrDashboard = lazy(() => import('./routes/amr/AmrDashboard').then((m) => ({ default: m.AmrDashboard })))
 const AmrMissions = lazy(() => import('./routes/amr/AmrMissions').then((m) => ({ default: m.AmrMissions })))
+const AmrMissionTemplates = lazy(() =>
+  import('./routes/amr/AmrMissionTemplates').then((m) => ({ default: m.AmrMissionTemplates }))
+)
 const AmrMissionNewRedirect = lazy(() =>
   import('./routes/amr/AmrMissionNewRedirect').then((m) => ({ default: m.AmrMissionNewRedirect }))
 )
@@ -476,6 +479,14 @@ export function createAppBrowserRouter(basePath: string) {
           <Route path="/amr" element={amrLayout}>
             <Route index element={<Navigate to={amrPath('dashboard')} replace />} />
             <Route path="dashboard" element={<AmrDashboard />} />
+            <Route
+              path="missions/templates"
+              element={
+                <Suspense fallback={null}>
+                  <AmrMissionTemplates />
+                </Suspense>
+              }
+            />
             <Route path="missions" element={<AmrMissions />} />
             <Route
               path="missions/new"

@@ -144,6 +144,177 @@
         padding: 1rem 1.1rem;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
       }
+      /** App-like list rows (mobile card pattern): rounded-lg border bg-card px-4 py-3 */
+      .card-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      /** Stand presence: two columns, compact rows, toggle switches */
+      .sp-presence-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.32rem 0.45rem;
+        align-items: stretch;
+      }
+      @media (max-width: 520px) {
+        .sp-presence-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .sp-stand-card {
+        position: relative;
+        padding: 0.32rem 0.42rem !important;
+        display: flex;
+        flex-direction: column;
+        gap: 0.22rem;
+        min-width: 0;
+        box-shadow: none;
+        cursor: pointer;
+        user-select: none;
+      }
+      .sp-stand-card:hover {
+        filter: brightness(1.06);
+      }
+      @media (prefers-color-scheme: light) {
+        .sp-stand-card:hover {
+          filter: brightness(0.99);
+        }
+      }
+      /** Visually hidden; entire card is <label> — click anywhere toggles */
+      .sp-toggle-input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      .sp-stand-ref {
+        margin: 0;
+        font-family: ui-monospace, monospace;
+        font-size: 1.0625rem;
+        line-height: 1.28;
+        word-break: break-all;
+        color: var(--text);
+        font-weight: 500;
+      }
+      .sp-toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        pointer-events: none;
+      }
+      .sp-toggle-track {
+        position: relative;
+        flex-shrink: 0;
+        width: 2rem;
+        height: 1rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--muted) 35%, var(--surface));
+        border: 1px solid var(--border);
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .sp-toggle-track::after {
+        content: '';
+        position: absolute;
+        top: 1px;
+        left: 1px;
+        width: calc(1rem - 4px);
+        height: calc(1rem - 4px);
+        border-radius: 50%;
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        transition: transform 0.15s ease;
+      }
+      .sp-toggle-input:checked ~ .sp-toggle-row .sp-toggle-track {
+        background: color-mix(in srgb, var(--danger) 55%, var(--surface));
+        border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+      }
+      .sp-toggle-input:checked ~ .sp-toggle-row .sp-toggle-track::after {
+        transform: translateX(1.125rem);
+      }
+      .sp-toggle-input:focus-visible ~ .sp-toggle-row .sp-toggle-track {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .sp-stand-card:focus-within {
+        outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+        outline-offset: 1px;
+      }
+      .sp-toggle-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .card-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+        min-width: 0;
+        text-align: left;
+        font: inherit;
+        color: inherit;
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+        transition: background 0.15s ease, filter 0.15s ease;
+      }
+      button.card-row {
+        cursor: pointer;
+      }
+      button.card-row:hover {
+        filter: brightness(1.08);
+      }
+      @media (prefers-color-scheme: light) {
+        button.card-row:hover {
+          filter: brightness(0.985);
+        }
+      }
+      button.card-row:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .card-row-main {
+        min-width: 0;
+        flex: 1;
+      }
+      .card-row-title {
+        margin: 0;
+        font-size: 0.9375rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem 0.5rem;
+      }
+      .card-row-meta {
+        margin: 0.35rem 0 0;
+        font-size: 0.8125rem;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .card-row-meta strong {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .card-row-chevron {
+        flex-shrink: 0;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: var(--accent);
+        padding-top: 0.15rem;
+      }
       .card h3 {
         margin: 0 0 0.75rem;
         font-size: 0.95rem;
@@ -440,6 +611,8 @@
           <p class="sub">
             Edit robot, job, and container records stored in memory. Changes apply immediately to
             <code>robotQuery</code>, <code>jobQuery</code>, and <code>containerQuery</code> responses.
+            Stand external refs for Hyperion emulation: use the <strong>Stand catalog</strong> tab (not Simulator
+            settings).
           </p>
         </div>
         <div class="actions">
@@ -455,15 +628,52 @@
         <button type="button" class="active" data-tab="robots" role="tab" aria-selected="true">Robots</button>
         <button type="button" data-tab="jobs" role="tab" aria-selected="false">Jobs</button>
         <button type="button" data-tab="containers" role="tab" aria-selected="false">Containers</button>
+        <button type="button" data-tab="stand-catalog" role="tab" aria-selected="false">Stand catalog</button>
+        <button type="button" data-tab="stand-presence" role="tab" aria-selected="false">Stand presence</button>
       </div>
 
       <section id="panel-robots" class="panel active" role="tabpanel"></section>
       <section id="panel-jobs" class="panel" role="tabpanel"></section>
       <section id="panel-containers" class="panel" role="tabpanel"></section>
+      <section id="panel-stand-catalog" class="panel" role="tabpanel">
+        <div class="card">
+          <h2 style="margin: 0 0 0.35rem; font-size: 1.05rem; font-weight: 650">Stand presence catalog</h2>
+          <p class="sub" style="margin: 0 0 0.75rem">
+            Emulates Hyperion <code>POST /stand-presence</code> (HTTP Basic). In the DC Automation app (<strong>AMR settings</strong>), set Hyperion base URL to
+            <strong id="sp-origin-hint"></strong> (path <code>/stand-presence</code> is appended automatically).
+            Optional: set <code>AMR_EMULATOR_HYPERION_USER</code> and <code>AMR_EMULATOR_HYPERION_PASSWORD</code> to require
+            matching Basic auth.
+          </p>
+          <label class="field" style="display: block; max-width: 36rem">
+            <span>Bulk add stands (external refs)</span>
+            <textarea
+              id="sp-bulk-text"
+              rows="5"
+              placeholder="One ref per line, or comma / semicolon separated&#10;PF-AMR-01&#10;PF-AMR-02"
+              autocomplete="off"
+              style="width: 100%; margin-top: 0.25rem; font-family: ui-monospace, monospace; font-size: 0.85rem"
+            ></textarea>
+          </label>
+          <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center">
+            <button type="button" class="primary" id="sp-bulk-add">Add stands</button>
+            <button type="button" class="danger" id="sp-delete-all">Delete all stands</button>
+          </div>
+        </div>
+      </section>
+      <section id="panel-stand-presence" class="panel" role="tabpanel">
+        <p class="sub" style="margin: 0 0 1rem">
+          Toggle pallet presence per stand (green = empty, red = pallet). Add or remove external refs in the
+          <strong>Stand catalog</strong> tab.
+        </p>
+        <p class="sub" id="sp-empty" style="display: none">
+          No stands in catalog yet. Open the <strong>Stand catalog</strong> tab to bulk add refs.
+        </p>
+        <div id="sp-list" class="sp-presence-grid"></div>
+      </section>
 
       <p class="link-api">
         Open this panel at <code>/</code> or <code>/__emulator/ui/</code> · Fleet JSON API:
-        <code>POST /api/amr/&lt;operation&gt;</code> · Raw JSON:
+        <code>POST /api/amr/&lt;operation&gt;</code> · Hyperion: <code>POST /stand-presence</code> · Raw JSON:
         <a href="/__emulator/state" target="_blank" rel="noreferrer">/__emulator/state</a>
       </p>
     </div>
@@ -721,6 +931,44 @@
       </div>
     </div>
 
+    <div id="modal-edit-robot" class="modal-overlay" aria-hidden="true">
+      <div class="modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="modal-edit-robot-title">
+        <div class="modal-header">
+          <h2 id="modal-edit-robot-title">Edit robot</h2>
+          <button type="button" class="modal-close" data-close-modal="modal-edit-robot" aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div class="modal-body" id="modal-edit-robot-body"></div>
+        <div class="modal-footer">
+          <button type="button" class="danger" id="modal-edit-robot-delete">Remove</button>
+          <button type="button" data-close-modal="modal-edit-robot">Cancel</button>
+          <button type="button" class="primary" id="modal-edit-robot-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-edit-job" class="modal-overlay" aria-hidden="true">
+      <div class="modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="modal-edit-job-title">
+        <div class="modal-header">
+          <h2 id="modal-edit-job-title">Edit job</h2>
+          <button type="button" class="modal-close" data-close-modal="modal-edit-job" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body" id="modal-edit-job-body"></div>
+        <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap">
+          <div style="display: flex; flex-wrap: wrap; gap: 0.5rem">
+            <button type="button" id="modal-edit-job-sim-start">Start sim</button>
+            <button type="button" id="modal-edit-job-sim-stop">Stop sim</button>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end">
+            <button type="button" class="danger" id="modal-edit-job-delete">Remove</button>
+            <button type="button" data-close-modal="modal-edit-job">Cancel</button>
+            <button type="button" class="primary" id="modal-edit-job-save">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="modal-sim-settings" class="modal-overlay" aria-hidden="true">
       <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="ttl-sim-settings">
         <div class="modal-header">
@@ -858,6 +1106,21 @@
         [60, 'Startup error'],
       ]
 
+      const TERMINAL_JOB_STATUS_SET = new Set([30, 31, 35, 50, 60])
+      let cachedState = null
+
+      function robotStatusLabel(code) {
+        const n = Number(code)
+        const hit = ROBOT_STATUSES.find(([c]) => c === n)
+        return hit ? `${hit[1]} (${hit[0]})` : `Status ${code}`
+      }
+
+      function jobStatusLabel(code) {
+        const n = Number(code)
+        const hit = JOB_STATUSES.find(([c]) => c === n)
+        return hit ? `${hit[1]} (${hit[0]})` : `Status ${code}`
+      }
+
       let toastTimer = null
       function toast(msg, kind = 'ok') {
         document.querySelectorAll('.toast').forEach((el) => el.remove())
@@ -902,6 +1165,7 @@
             document.querySelectorAll('.panel').forEach((p) => {
               p.classList.toggle('active', p.id === `panel-${id}`)
             })
+            if (id === 'stand-presence' || id === 'stand-catalog') void loadStandPresencePanel()
           })
         })
       }
@@ -954,6 +1218,13 @@
         }
         const focusId = focusMap[id]
         if (focusId) setTimeout(() => document.getElementById(focusId)?.focus(), 0)
+        if (id === 'modal-edit-robot' || id === 'modal-edit-job') {
+          setTimeout(() => {
+            const body = document.getElementById(`${id}-body`)
+            const focusEl = body?.querySelector('select, input, textarea')
+            focusEl?.focus?.()
+          }, 0)
+        }
       }
 
       function closeModal(id) {
@@ -970,7 +1241,14 @@
           const open = document.querySelector('.modal-overlay.open')
           if (open) closeModal(open.id)
         })
-        ;['modal-add-robot', 'modal-add-job', 'modal-add-container', 'modal-sim-settings'].forEach((mid) => {
+        ;[
+          'modal-add-robot',
+          'modal-add-job',
+          'modal-add-container',
+          'modal-edit-robot',
+          'modal-edit-job',
+          'modal-sim-settings',
+        ].forEach((mid) => {
           const overlay = document.getElementById(mid)
           overlay.addEventListener('click', (e) => {
             if (e.target !== overlay) return
@@ -1109,6 +1387,114 @@
             btn.disabled = false
           }
         })
+
+        document.getElementById('modal-edit-robot-save').addEventListener('click', async () => {
+          const modal = document.getElementById('modal-edit-robot')
+          const rid = modal.dataset.robotId
+          const bodyEl = document.getElementById('modal-edit-robot-body')
+          if (!rid || !bodyEl) return
+          const btn = document.getElementById('modal-edit-robot-save')
+          btn.disabled = true
+          try {
+            await api('PATCH', `/__emulator/robots/${encodeURIComponent(rid)}`, patchFromCard(bodyEl))
+            toast(`Robot ${rid} updated`)
+            closeModal('modal-edit-robot')
+            await refresh(true)
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-edit-robot-delete').addEventListener('click', async () => {
+          const modal = document.getElementById('modal-edit-robot')
+          const rid = modal.dataset.robotId
+          if (!rid) return
+          if (!confirm(`Remove robot ${rid}?`)) return
+          const btn = document.getElementById('modal-edit-robot-delete')
+          btn.disabled = true
+          try {
+            await api('DELETE', `/__emulator/robots/${encodeURIComponent(rid)}`)
+            toast(`Robot ${rid} removed`)
+            closeModal('modal-edit-robot')
+            await refresh(true)
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-edit-job-save').addEventListener('click', async () => {
+          const modal = document.getElementById('modal-edit-job')
+          const jc = modal.dataset.jobCode
+          const bodyEl = document.getElementById('modal-edit-job-body')
+          if (!jc || !bodyEl) return
+          const btn = document.getElementById('modal-edit-job-save')
+          btn.disabled = true
+          try {
+            await api('PATCH', `/__emulator/jobs/${encodeURIComponent(jc)}`, patchFromCard(bodyEl))
+            toast(`Job ${jc} updated`)
+            closeModal('modal-edit-job')
+            await refresh(true)
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-edit-job-delete').addEventListener('click', async () => {
+          const modal = document.getElementById('modal-edit-job')
+          const jc = modal.dataset.jobCode
+          if (!jc) return
+          if (!confirm(`Remove job ${jc}?`)) return
+          const btn = document.getElementById('modal-edit-job-delete')
+          btn.disabled = true
+          try {
+            await api('DELETE', `/__emulator/jobs/${encodeURIComponent(jc)}`)
+            toast(`Job ${jc} removed`)
+            closeModal('modal-edit-job')
+            await refresh(true)
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-edit-job-sim-start').addEventListener('click', async () => {
+          const jc = document.getElementById('modal-edit-job').dataset.jobCode
+          if (!jc) return
+          const btn = document.getElementById('modal-edit-job-sim-start')
+          btn.disabled = true
+          try {
+            await api('POST', `/__emulator/jobs/${encodeURIComponent(jc)}/sim/start`)
+            toast(`Sim started for ${jc}`)
+            await refresh(true)
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
+
+        document.getElementById('modal-edit-job-sim-stop').addEventListener('click', async () => {
+          const jc = document.getElementById('modal-edit-job').dataset.jobCode
+          if (!jc) return
+          const btn = document.getElementById('modal-edit-job-sim-stop')
+          btn.disabled = true
+          try {
+            await api('POST', `/__emulator/jobs/${encodeURIComponent(jc)}/sim/stop`)
+            toast(`Sim stopped for ${jc}`)
+            await refresh(true)
+          } catch (e) {
+            toast(String(e.message || e), 'err')
+          } finally {
+            btn.disabled = false
+          }
+        })
       }
 
       function addBarRobots() {
@@ -1126,25 +1512,14 @@
         return `<div class="panel-add-bar"><button type="button" class="primary" id="btn-open-add-container">Add container…</button></div>`
       }
 
-      function renderRobots(entries) {
-        const el = document.getElementById('panel-robots')
-        const grid =
-          entries.length === 0
-            ? '<div class="empty">No robots yet. Use <strong>Add robot…</strong> or click Reset for defaults.</div>'
-            : `<div class="grid cols-2">${entries
-                .map(([mapKey, row]) => {
-                  const id = String(mapKey)
-                  const batt =
-                    row.batteryLevel != null && row.batteryLevel !== ''
-                      ? Number(row.batteryLevel)
-                      : ''
-                  const battNum = Number.isFinite(batt) ? Math.min(100, Math.max(0, batt)) : 50
-                  const nn =
-                    row.nodeNumber != null && row.nodeNumber !== '' ? Number(row.nodeNumber) : 0
-                  const nodeNum = Number.isFinite(nn) ? nn : 0
-                  return `
-          <article class="card" data-robot-id="${encodeURIComponent(id)}">
-            <h3><span>Robot</span> <span class="mono">${escapeHtml(id)}</span></h3>
+      function robotEditFormHtml(row) {
+        const batt =
+          row.batteryLevel != null && row.batteryLevel !== '' ? Number(row.batteryLevel) : ''
+        const battNum = Number.isFinite(batt) ? Math.min(100, Math.max(0, batt)) : 50
+        const nn = row.nodeNumber != null && row.nodeNumber !== '' ? Number(row.nodeNumber) : 0
+        const nodeNum = Number.isFinite(nn) ? nn : 0
+        return `
+          <section class="modal-section" style="margin-top: 0; padding-top: 0; border-top: none">
             <div class="field-grid">
               <div class="field">
                 <label>Type</label>
@@ -1227,54 +1602,145 @@
                 <input type="text" data-field="mileage" value="${escapeAttr(String(row.mileage ?? ''))}" />
               </div>
             </div>
-            <div class="row-actions">
-              <button type="button" class="primary btn-save-robot">Apply</button>
-              <button type="button" class="danger btn-del-robot">Remove</button>
+          </section>`
+      }
+
+      function jobEditFormHtml(row) {
+        const positions = Array.isArray(row.positions) ? row.positions : []
+        const pathHint =
+          positions.length > 0
+            ? `<p class="mono" style="margin:0.75rem 0 0;font-size:0.72rem;color:var(--muted)">Sim route preview: ${escapeHtml(
+                positions.join(' → ')
+              )}</p>`
+            : ''
+        return `
+          <section class="modal-section" style="margin-top: 0; padding-top: 0; border-top: none">
+            <div class="field-grid">
+              <div class="field">
+                <label>Mission / job status</label>
+                <select data-field="status" data-kind="int">${jobOptionsHtml(row.status ?? 10)}</select>
+              </div>
+              <div class="field">
+                <label>Map code</label>
+                <input type="text" data-field="mapCode" value="${escapeAttr(String(row.mapCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Workflow ID</label>
+                <input type="number" min="1" step="1" data-field="workflowId" value="${escapeAttr(
+                  String(row.workflowId != null && row.workflowId !== '' ? row.workflowId : '')
+                )}" />
+              </div>
+              <div class="field">
+                <label>Robot ID</label>
+                <input type="text" data-field="robotId" value="${escapeAttr(String(row.robotId ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Container code</label>
+                <input type="text" data-field="containerCode" value="${escapeAttr(String(row.containerCode ?? ''))}" />
+              </div>
+              <div class="field">
+                <label>Begin cell (foreign)</label>
+                <input type="text" data-field="beginCellCodeForeign" value="${escapeAttr(
+                  String(row.beginCellCodeForeign ?? '')
+                )}" />
+              </div>
+              <div class="field">
+                <label>Target cell (foreign)</label>
+                <input type="text" data-field="targetCellCodeForeign" value="${escapeAttr(
+                  String(row.targetCellCodeForeign ?? '')
+                )}" />
+              </div>
+              <div class="field full">
+                <label>Route nodes (one per line or comma-separated)</label>
+                <textarea data-field="positions" rows="4">${escapeHtml(
+                  Array.isArray(row.positions) ? row.positions.join('\n') : ''
+                )}</textarea>
+              </div>
             </div>
-          </article>`
+            ${pathHint}
+          </section>`
+      }
+
+      function syncJobEditSimButtons(row, simEntry) {
+        const running = !!simEntry?.running
+        const isTerminal = TERMINAL_JOB_STATUS_SET.has(Number(row?.status))
+        const startBtn = document.getElementById('modal-edit-job-sim-start')
+        const stopBtn = document.getElementById('modal-edit-job-sim-stop')
+        if (startBtn) startBtn.disabled = running || isTerminal
+        if (stopBtn) stopBtn.disabled = !running
+      }
+
+      function openEditRobot(robotId) {
+        const entries = cachedState?.robots ?? []
+        const pair = entries.find(([k]) => String(k) === String(robotId))
+        if (!pair) {
+          toast('Robot not found', 'err')
+          return
+        }
+        const row = pair[1]
+        document.getElementById('modal-edit-robot-title').textContent = `Edit robot ${robotId}`
+        document.getElementById('modal-edit-robot-body').innerHTML = robotEditFormHtml(row)
+        document.getElementById('modal-edit-robot').dataset.robotId = String(robotId)
+        openModal('modal-edit-robot')
+      }
+
+      function openEditJob(jobCode) {
+        const entries = cachedState?.jobs ?? []
+        const pair = entries.find(([k]) => String(k) === String(jobCode))
+        if (!pair) {
+          toast('Job not found', 'err')
+          return
+        }
+        const row = pair[1]
+        const simByCode = new Map((cachedState?.sim?.jobs ?? []).map((j) => [String(j.code), j]))
+        const simEntry = simByCode.get(String(jobCode))
+        document.getElementById('modal-edit-job-title').textContent = `Edit job ${jobCode}`
+        document.getElementById('modal-edit-job-body').innerHTML = jobEditFormHtml(row)
+        const modal = document.getElementById('modal-edit-job')
+        modal.dataset.jobCode = String(jobCode)
+        syncJobEditSimButtons(row, simEntry)
+        openModal('modal-edit-job')
+      }
+
+      function renderRobots(entries) {
+        const el = document.getElementById('panel-robots')
+        const grid =
+          entries.length === 0
+            ? '<div class="empty">No robots yet. Use <strong>Add robot…</strong> or click Reset for defaults.</div>'
+            : `<div class="card-list">${entries
+                .map(([mapKey, row]) => {
+                  const id = String(mapKey)
+                  const batt =
+                    row.batteryLevel != null && row.batteryLevel !== ''
+                      ? Number(row.batteryLevel)
+                      : ''
+                  const battNum = Number.isFinite(batt) ? Math.min(100, Math.max(0, batt)) : 50
+                  return `
+            <button type="button" class="card-row card-row-clickable" data-robot-id="${encodeURIComponent(id)}">
+              <div class="card-row-main">
+                <p class="card-row-title"><span class="mono">${escapeHtml(id)}</span></p>
+                <p class="card-row-meta"><strong>${escapeHtml(robotStatusLabel(row.status))}</strong> · Battery ${battNum}% · ${escapeHtml(String(row.mapCode ?? '—'))}</p>
+                <p class="card-row-meta">Node <span class="mono">${escapeHtml(String(row.nodeCode ?? '—'))}</span>${
+                    row.containerCode
+                      ? ` · Container <span class="mono">${escapeHtml(String(row.containerCode))}</span>`
+                      : ''
+                  }</p>
+              </div>
+              <span class="card-row-chevron" aria-hidden="true">Edit →</span>
+            </button>`
                 })
                 .join('')}</div>`
         el.innerHTML = addBarRobots() + grid
 
         document.getElementById('btn-open-add-robot').addEventListener('click', () => openModal('modal-add-robot'))
 
-        el.querySelectorAll('.btn-save-robot').forEach((btn) => {
-          const card = btn.closest('.card')
-          const rid = decodeURIComponent(card.getAttribute('data-robot-id'))
-          btn.addEventListener('click', async () => {
-            btn.disabled = true
-            try {
-              await api('PATCH', `/__emulator/robots/${encodeURIComponent(rid)}`, patchFromCard(card))
-              toast(`Robot ${rid} updated`)
-              await refresh(true)
-            } catch (e) {
-              toast(String(e.message || e), 'err')
-            } finally {
-              btn.disabled = false
-            }
-          })
-        })
-
-        el.querySelectorAll('.btn-del-robot').forEach((btn) => {
-          const card = btn.closest('.card')
-          const rid = decodeURIComponent(card.getAttribute('data-robot-id'))
-          btn.addEventListener('click', async () => {
-            if (!confirm(`Remove robot ${rid}?`)) return
-            btn.disabled = true
-            try {
-              await api('DELETE', `/__emulator/robots/${encodeURIComponent(rid)}`)
-              toast(`Robot ${rid} removed`)
-              await refresh(true)
-            } catch (e) {
-              toast(String(e.message || e), 'err')
-            } finally {
-              btn.disabled = false
-            }
+        el.querySelectorAll('.card-row-clickable[data-robot-id]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = decodeURIComponent(btn.getAttribute('data-robot-id'))
+            openEditRobot(id)
           })
         })
       }
-
-      const TERMINAL_JOB_STATUS_SET = new Set([30, 31, 35, 50, 60])
 
       function simBadgeHtml(simEntry, jobStatus) {
         const status = Number(jobStatus)
@@ -1295,75 +1761,18 @@
         const grid =
           entries.length === 0
             ? '<div class="empty">No jobs yet. Use <strong>Add job…</strong> or submit a mission from the app.</div>'
-            : `<div class="grid cols-2">${entries
+            : `<div class="card-list">${entries
                 .map(([code, row]) => {
                   const jc = String(code)
                   const simEntry = simByCode.get(jc)
-                  const isTerminal = TERMINAL_JOB_STATUS_SET.has(Number(row.status))
-                  const running = !!simEntry?.running
-                  const positions = Array.isArray(row.positions) ? row.positions : []
-                  const pathHint =
-                    positions.length > 0
-                      ? `<p class="mono" style="margin:0 0 0.5rem;font-size:0.72rem;color:var(--muted)">Sim route preview: ${escapeHtml(
-                          positions.join(' → ')
-                        )}</p>`
-                      : ''
                   return `
-          <article class="card" data-job-code="${encodeURIComponent(jc)}">
-            <h3>
-              <span>Job <span class="mono" style="margin-left: 0.35rem">${escapeHtml(jc)}</span></span>
-              ${simBadgeHtml(simEntry, row.status)}
-            </h3>
-            <div class="field-grid">
-              <div class="field">
-                <label>Mission / job status</label>
-                <select data-field="status" data-kind="int">${jobOptionsHtml(row.status ?? 10)}</select>
+            <button type="button" class="card-row card-row-clickable" data-job-code="${encodeURIComponent(jc)}">
+              <div class="card-row-main">
+                <p class="card-row-title"><span class="mono">${escapeHtml(jc)}</span> ${simBadgeHtml(simEntry, row.status)}</p>
+                <p class="card-row-meta"><strong>${escapeHtml(jobStatusLabel(row.status ?? 10))}</strong> · Robot <span class="mono">${escapeHtml(String(row.robotId ?? '—'))}</span> · Map ${escapeHtml(String(row.mapCode ?? '—'))}</p>
               </div>
-              <div class="field">
-                <label>Map code</label>
-                <input type="text" data-field="mapCode" value="${escapeAttr(String(row.mapCode ?? ''))}" />
-              </div>
-              <div class="field">
-                <label>Workflow ID</label>
-                <input type="number" min="1" step="1" data-field="workflowId" value="${escapeAttr(
-                        String(row.workflowId != null && row.workflowId !== '' ? row.workflowId : '')
-                      )}" />
-              </div>
-              <div class="field">
-                <label>Robot ID</label>
-                <input type="text" data-field="robotId" value="${escapeAttr(String(row.robotId ?? ''))}" />
-              </div>
-              <div class="field">
-                <label>Container code</label>
-                <input type="text" data-field="containerCode" value="${escapeAttr(String(row.containerCode ?? ''))}" />
-              </div>
-              <div class="field">
-                <label>Begin cell (foreign)</label>
-                <input type="text" data-field="beginCellCodeForeign" value="${escapeAttr(
-                        String(row.beginCellCodeForeign ?? '')
-                      )}" />
-              </div>
-              <div class="field">
-                <label>Target cell (foreign)</label>
-                <input type="text" data-field="targetCellCodeForeign" value="${escapeAttr(
-                        String(row.targetCellCodeForeign ?? '')
-                      )}" />
-              </div>
-              <div class="field full">
-                <label>Route nodes (one per line or comma-separated)</label>
-                <textarea data-field="positions" rows="3">${escapeHtml(
-                        Array.isArray(row.positions) ? row.positions.join('\n') : ''
-                      )}</textarea>
-              </div>
-            </div>
-            ${pathHint}
-            <div class="row-actions">
-              <button type="button" class="primary btn-sim-start" ${running || isTerminal ? 'disabled' : ''}>Start</button>
-              <button type="button" class="btn-sim-stop" ${!running ? 'disabled' : ''}>Stop</button>
-              <button type="button" class="btn-save-job">Apply</button>
-              <button type="button" class="danger btn-del-job">Remove</button>
-            </div>
-          </article>`
+              <span class="card-row-chevron" aria-hidden="true">Edit →</span>
+            </button>`
                 })
                 .join('')}</div>`
         el.innerHTML = addBarJobs() + grid
@@ -1393,70 +1802,10 @@
           }
         })
 
-        el.querySelectorAll('.btn-sim-start').forEach((btn) => {
-          const card = btn.closest('.card')
-          const code = decodeURIComponent(card.getAttribute('data-job-code'))
-          btn.addEventListener('click', async () => {
-            btn.disabled = true
-            try {
-              await api('POST', `/__emulator/jobs/${encodeURIComponent(code)}/sim/start`)
-              toast(`Sim started for ${code}`)
-              await refresh(true)
-            } catch (e) {
-              toast(String(e.message || e), 'err')
-              btn.disabled = false
-            }
-          })
-        })
-
-        el.querySelectorAll('.btn-sim-stop').forEach((btn) => {
-          const card = btn.closest('.card')
-          const code = decodeURIComponent(card.getAttribute('data-job-code'))
-          btn.addEventListener('click', async () => {
-            btn.disabled = true
-            try {
-              await api('POST', `/__emulator/jobs/${encodeURIComponent(code)}/sim/stop`)
-              toast(`Sim stopped for ${code}`)
-              await refresh(true)
-            } catch (e) {
-              toast(String(e.message || e), 'err')
-              btn.disabled = false
-            }
-          })
-        })
-
-        el.querySelectorAll('.btn-save-job').forEach((btn) => {
-          const card = btn.closest('.card')
-          const code = decodeURIComponent(card.getAttribute('data-job-code'))
-          btn.addEventListener('click', async () => {
-            btn.disabled = true
-            try {
-              await api('PATCH', `/__emulator/jobs/${encodeURIComponent(code)}`, patchFromCard(card))
-              toast(`Job ${code} updated`)
-              await refresh(true)
-            } catch (e) {
-              toast(String(e.message || e), 'err')
-            } finally {
-              btn.disabled = false
-            }
-          })
-        })
-
-        el.querySelectorAll('.btn-del-job').forEach((btn) => {
-          const card = btn.closest('.card')
-          const code = decodeURIComponent(card.getAttribute('data-job-code'))
-          btn.addEventListener('click', async () => {
-            if (!confirm(`Remove job ${code}?`)) return
-            btn.disabled = true
-            try {
-              await api('DELETE', `/__emulator/jobs/${encodeURIComponent(code)}`)
-              toast(`Job ${code} removed`)
-              await refresh(true)
-            } catch (e) {
-              toast(String(e.message || e), 'err')
-            } finally {
-              btn.disabled = false
-            }
+        el.querySelectorAll('.card-row-clickable[data-job-code]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const code = decodeURIComponent(btn.getAttribute('data-job-code'))
+            openEditJob(code)
           })
         })
       }
@@ -1658,19 +2007,62 @@
         return !!(panelEl && a && panelEl.contains(a))
       }
 
+      function shouldSkipRobotsRender(force) {
+        if (force) return false
+        if (document.getElementById('modal-edit-robot')?.classList.contains('open')) return true
+        const robotsPanel = document.getElementById('panel-robots')
+        return shouldSkipPanelRender(robotsPanel, false)
+      }
+
+      function shouldSkipJobsRender(force) {
+        if (force) return false
+        if (document.getElementById('modal-edit-job')?.classList.contains('open')) return true
+        const jobsPanel = document.getElementById('panel-jobs')
+        return shouldSkipPanelRender(jobsPanel, false)
+      }
+
+      /** Stand catalog does not rebuild from refresh; Stand presence rebuilds toggles — skip mid-interaction poll. */
+      function shouldReloadStandPresenceOnRefresh(force) {
+        const catalogPanel = document.getElementById('panel-stand-catalog')
+        const presencePanel = document.getElementById('panel-stand-presence')
+        if (catalogPanel?.classList.contains('active')) return true
+        if (!presencePanel?.classList.contains('active')) return false
+        if (shouldSkipPanelRender(presencePanel, force)) return false
+        return true
+      }
+
+      function syncJobEditModalFromState(state) {
+        const modal = document.getElementById('modal-edit-job')
+        if (!modal?.classList.contains('open')) return
+        const code = modal.dataset.jobCode
+        if (!code) return
+        const entries = state.jobs || []
+        const pair = entries.find(([k]) => String(k) === String(code))
+        if (!pair) {
+          closeModal('modal-edit-job')
+          toast('Job no longer exists', 'err')
+          return
+        }
+        const row = pair[1]
+        const simByCode = new Map((state.sim?.jobs ?? []).map((j) => [String(j.code), j]))
+        const simEntry = simByCode.get(String(code))
+        syncJobEditSimButtons(row, simEntry)
+      }
+
       async function refresh(force = false) {
         clearAutoRefresh()
         let pollMs = 1000
         try {
           const state = await loadState()
+          cachedState = state
           const msRaw = Number(state?.sim?.settings?.autoRefreshIntervalMs)
           pollMs = Number.isFinite(msRaw) ? Math.max(250, Math.min(120000, msRaw)) : 1000
-          const robotsPanel = document.getElementById('panel-robots')
-          const jobsPanel = document.getElementById('panel-jobs')
           const containersPanel = document.getElementById('panel-containers')
-          if (!shouldSkipPanelRender(robotsPanel, force)) renderRobots(state.robots || [])
-          if (!shouldSkipPanelRender(jobsPanel, force)) renderJobs(state.jobs || [], state.sim || { jobs: [] })
+          if (!shouldSkipRobotsRender(force)) renderRobots(state.robots || [])
+          if (!shouldSkipJobsRender(force)) renderJobs(state.jobs || [], state.sim || { jobs: [] })
           if (!shouldSkipPanelRender(containersPanel, force)) renderContainers(state.containers || [])
+          if (shouldReloadStandPresenceOnRefresh(force)) void loadStandPresencePanel()
+          syncJobEditModalFromState(state)
           scheduleNextPoll(pollMs)
         } catch (e) {
           toast(String(e.message || e), 'err')
@@ -1800,9 +2192,104 @@
         }
       })
 
+      async function loadStandPresencePanel() {
+        const listEl = document.getElementById('sp-list')
+        const hintEl = document.getElementById('sp-origin-hint')
+        const emptyEl = document.getElementById('sp-empty')
+        if (!listEl) return
+        try {
+          const data = await api('GET', '/__emulator/stand-presence/state', undefined, { cache: 'no-store' })
+          const origin = data.hyperionBaseUrlHint || `${window.location.protocol}//${window.location.host}`
+          if (hintEl) hintEl.textContent = origin
+          const catalog = Array.isArray(data.catalog) ? data.catalog : []
+          const presence = data.presence && typeof data.presence === 'object' ? data.presence : {}
+          if (emptyEl) emptyEl.style.display = catalog.length === 0 ? 'block' : 'none'
+          listEl.innerHTML = catalog
+            .map((ref) => {
+              const present = !!presence[ref]
+              const color = present ? 'var(--danger)' : 'var(--ok)'
+              const label = present ? 'Pallet' : 'Empty'
+              return `<label class="card sp-stand-card">
+  <input type="checkbox" class="sp-toggle-input" data-sp-ref="${escapeAttr(ref)}" ${present ? 'checked' : ''} aria-label="${escapeAttr(ref)}: ${present ? 'pallet present, activate to set empty' : 'empty, activate to set pallet'}" />
+  <p class="sp-stand-ref">${escapeHtml(ref)}</p>
+  <div class="sp-toggle-row" aria-hidden="true">
+    <span class="sp-toggle-track"></span>
+    <span class="sp-toggle-label" style="color:${color}">${escapeHtml(label)}</span>
+  </div>
+</label>`
+            })
+            .join('')
+          listEl.querySelectorAll('input.sp-toggle-input[data-sp-ref]').forEach((cb) => {
+            cb.addEventListener('change', async (ev) => {
+              const el = ev.target
+              const ref = el.getAttribute('data-sp-ref')
+              if (!ref) return
+              try {
+                await api('POST', '/__emulator/stand-presence/set', { externalRef: ref, present: el.checked })
+                toast(`Updated ${ref}`, 'ok')
+                await loadStandPresencePanel()
+              } catch (e) {
+                toast(String(e.message || e), 'err')
+                el.checked = !el.checked
+              }
+            })
+          })
+        } catch (e) {
+          listEl.innerHTML = `<p class="sub" style="color:var(--danger)">${escapeHtml(String(e.message || e))}</p>`
+        }
+      }
+
+      function setupStandPresencePanel() {
+        const btn = document.getElementById('sp-bulk-add')
+        const ta = document.getElementById('sp-bulk-text')
+        const del = document.getElementById('sp-delete-all')
+        if (btn && ta) {
+          btn.addEventListener('click', async () => {
+            const text = ta.value?.trim() || ''
+            if (!text) {
+              toast('Paste at least one external ref', 'err')
+              return
+            }
+            btn.disabled = true
+            try {
+              await api('POST', '/__emulator/stand-presence/bulk-add', { text })
+              toast('Stands added to catalog', 'ok')
+              ta.value = ''
+              await loadStandPresencePanel()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              btn.disabled = false
+            }
+          })
+        }
+        if (del) {
+          del.addEventListener('click', async () => {
+            if (
+              !confirm(
+                'Remove every stand from the emulator catalog and clear pallet toggles? This cannot be undone.'
+              )
+            ) {
+              return
+            }
+            del.disabled = true
+            try {
+              await api('POST', '/__emulator/stand-presence/clear-all')
+              toast('All stands removed', 'ok')
+              await loadStandPresencePanel()
+            } catch (e) {
+              toast(String(e.message || e), 'err')
+            } finally {
+              del.disabled = false
+            }
+          })
+        }
+      }
+
       tabSetup()
       setupAddModals()
       setupSimSettingsModal()
+      setupStandPresencePanel()
       refresh()
     </script>
   </body>

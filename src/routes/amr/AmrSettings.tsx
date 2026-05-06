@@ -13,6 +13,7 @@ export function AmrSettings() {
   const [loading, setLoading] = useState(true)
   const [testing, setTesting] = useState(false)
   const [authKey, setAuthKey] = useState('')
+  const [hyperionPassword, setHyperionPassword] = useState('')
   const [form, setForm] = useState({
     serverIp: '',
     serverPort: 80,
@@ -28,7 +29,11 @@ export function AmrSettings() {
     pollMsRobots: 5000,
     pollMsContainers: 5000,
     hideFleetCompleteAfterMinutesDefault: null as number | null,
+    missionCreateStandPresenceSanityCheck: true,
     authKeyConfigured: false,
+    hyperionBaseUrl: '',
+    hyperionUsername: '',
+    hyperionPasswordConfigured: false,
   })
 
   useEffect(() => {
@@ -49,7 +54,11 @@ export function AmrSettings() {
           pollMsRobots: s.pollMsRobots,
           pollMsContainers: s.pollMsContainers,
           hideFleetCompleteAfterMinutesDefault: s.hideFleetCompleteAfterMinutesDefault ?? null,
+          missionCreateStandPresenceSanityCheck: s.missionCreateStandPresenceSanityCheck !== false,
           authKeyConfigured: s.authKeyConfigured,
+          hyperionBaseUrl: s.hyperionBaseUrl ?? '',
+          hyperionUsername: s.hyperionUsername ?? '',
+          hyperionPasswordConfigured: s.hyperionPasswordConfigured ?? false,
         })
       })
       .finally(() => setLoading(false))
@@ -60,10 +69,16 @@ export function AmrSettings() {
       await putAmrSettings({
         ...form,
         authKey: authKey.trim() || undefined,
+        hyperionPassword: hyperionPassword.trim() || undefined,
       })
       setAuthKey('')
+      setHyperionPassword('')
       const s = await getAmrSettings()
-      setForm((f) => ({ ...f, authKeyConfigured: s.authKeyConfigured }))
+      setForm((f) => ({
+        ...f,
+        authKeyConfigured: s.authKeyConfigured,
+        hyperionPasswordConfigured: s.hyperionPasswordConfigured ?? false,
+      }))
       showAlert('AMR settings were saved successfully.', 'Settings saved')
     } catch (e: unknown) {
       const msg =
@@ -151,6 +166,78 @@ export function AmrSettings() {
           >
             {testing ? 'Testing…' : 'Test connection'}
           </button>
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+        <div>
+          <h2 className="text-sm font-medium">Hyperion API</h2>
+          <p className="mt-1 text-xs text-foreground/60">
+            HTTP Basic credentials for Hyperion (e.g. stand presence at <code className="text-[11px]">/stand-presence</code>
+            ). Stored on the server; password is never shown after save.
+          </p>
+        </div>
+        <label className="block text-sm">
+          Base URL (origin only)
+          <input
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm"
+            disabled={!canEdit}
+            value={form.hyperionBaseUrl}
+            onChange={(e) => setForm((f) => ({ ...f, hyperionBaseUrl: e.target.value }))}
+            placeholder="http://10.73.220.197:1881"
+            autoComplete="off"
+          />
+        </label>
+        <label className="block text-sm">
+          Username
+          <input
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            disabled={!canEdit}
+            value={form.hyperionUsername}
+            onChange={(e) => setForm((f) => ({ ...f, hyperionUsername: e.target.value }))}
+            autoComplete="off"
+          />
+        </label>
+        <label className="block text-sm">
+          Password {form.hyperionPasswordConfigured ? '(configured — enter to replace)' : ''}
+          <input
+            type="password"
+            autoComplete="new-password"
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            disabled={!canEdit}
+            value={hyperionPassword}
+            onChange={(e) => setHyperionPassword(e.target.value)}
+            placeholder="Hyperion API password"
+          />
+        </label>
+        <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug">
+          <input
+            type="checkbox"
+            className="mt-0.5 shrink-0 rounded border-border"
+            checked={form.missionCreateStandPresenceSanityCheck}
+            disabled={!canEdit}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, missionCreateStandPresenceSanityCheck: e.target.checked }))
+            }
+          />
+          <span>
+            <span className="font-medium text-foreground">Stand presence check before mission create</span>
+            <span className="mt-1 block text-xs text-foreground/65">
+              When enabled, creating a multistop mission (new mission or from a template) queries Hyperion before
+              submit. If stop 1 appears empty but another stop reports a pallet, a confirmation appears. Uncheck to
+              skip that request and dialog. In-mission pallet chips and Containers refresh behavior are unchanged.
+            </span>
+          </span>
+        </label>
+        <div className="rounded-lg border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-foreground/80">
+          <p className="font-medium text-foreground">Local fleet emulator</p>
+          <p className="mt-1 leading-relaxed">
+            Bulk add or delete <strong>emulated</strong> stand refs for Hyperion are not configured here. Run{' '}
+            <code className="rounded bg-background px-1 py-0.5 font-mono text-[11px]">npm run amr:emulator</code>, open the
+            emulator UI (default{' '}
+            <code className="rounded bg-background px-1 py-0.5 font-mono text-[11px]">http://127.0.0.1:8099</code>), then
+            use the <strong>Stand catalog</strong> tab.
+          </p>
         </div>
       </section>
 

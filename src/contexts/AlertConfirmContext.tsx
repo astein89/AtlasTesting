@@ -14,6 +14,8 @@ interface AlertConfirmContextValue {
       closeOnBackdropClick?: boolean
       closeOnEscape?: boolean
       showHeaderClose?: boolean
+      footerExtra?: ReactNode
+      omitFooterCancel?: boolean
     }
   ) => Promise<boolean>
 }
@@ -31,6 +33,8 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
     closeOnBackdropClick?: boolean
     closeOnEscape?: boolean
     showHeaderClose?: boolean
+    footerExtra?: ReactNode
+    omitFooterCancel?: boolean
     resolve: (value: boolean) => void
   } | null>(null)
 
@@ -49,6 +53,8 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
         closeOnBackdropClick?: boolean
         closeOnEscape?: boolean
         showHeaderClose?: boolean
+        footerExtra?: ReactNode
+        omitFooterCancel?: boolean
       }
     ): Promise<boolean> => {
       return new Promise((resolve) => {
@@ -61,6 +67,8 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
           closeOnBackdropClick: options?.closeOnBackdropClick,
           closeOnEscape: options?.closeOnEscape,
           showHeaderClose: options?.showHeaderClose,
+          footerExtra: options?.footerExtra,
+          omitFooterCancel: options?.omitFooterCancel,
           resolve,
         })
       })
@@ -97,6 +105,8 @@ export function AlertConfirmProvider({ children }: { children: React.ReactNode }
         closeOnBackdropClick={confirmState?.closeOnBackdropClick ?? false}
         closeOnEscape={confirmState?.closeOnEscape ?? true}
         showHeaderClose={confirmState?.showHeaderClose ?? true}
+        footerExtra={confirmState?.footerExtra}
+        omitFooterCancel={confirmState?.omitFooterCancel}
         onConfirm={handleConfirmOk}
         onCancel={handleConfirmCancel}
       />

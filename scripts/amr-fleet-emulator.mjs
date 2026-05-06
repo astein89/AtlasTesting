@@ -42,6 +42,11 @@ const containers = new Map()
 /** @type {Map<string, { running: boolean, phase: 'created'|'executing'|'waiting', since: number, stepIdx: number, hitWaiting: boolean, robotId: string }>} */
 const simState = new Map()
 
+/** External refs for Hyperion stand-presence emulation (dashboard bulk-add / per-row toggles). */
+let standPresenceCatalog = []
+/** @type {Map<string, boolean>} pallet present */
+const standPresenceByRef = new Map()
+
 const TERMINAL_JOB_STATUS = new Set([30, 31, 35, 50, 60])
 
 const DEFAULT_SIM_SETTINGS = {
@@ -297,11 +302,13 @@ function scheduleSaveState() {
 
 function buildStateSnapshot() {
   return {
-    version: 1,
+    version: 2,
     robots: [...robots.entries()],
     jobs: [...jobs.entries()],
     containers: [...containers.entries()],
     simState: [...simState.entries()],
+    standPresenceCatalog: [...standPresenceCatalog],
+    standPresenceByRef: Object.fromEntries(standPresenceByRef),
   }
 }
 
@@ -356,12 +363,21 @@ function normalizeStateSnapshot(raw) {
   ) {
     return null
   }
+  const standPresenceCatalogIn = Array.isArray(raw.standPresenceCatalog)
+    ? raw.standPresenceCatalog.filter((x) => typeof x === 'string' && x.trim())
+    : []
+  const standPresenceByRefIn =
+    raw.standPresenceByRef && typeof raw.standPresenceByRef === 'object' && !Array.isArray(raw.standPresenceByRef)
+      ? raw.standPresenceByRef
+      : {}
   return {
     version: Number(raw.version) || 1,
     robots: raw.robots,
     jobs: raw.jobs,
     containers: raw.containers,
     simState: raw.simState,
+    standPresenceCatalog: standPresenceCatalogIn,
+    standPresenceByRef: standPresenceByRefIn,
   }
 }
 
@@ -410,6 +426,17 @@ function applyRawToMaps(raw) {
   for (const [k, v] of raw.containers) containers.set(String(k), v)
   for (const [k, v] of raw.simState) {
     simState.set(String(k), { ...v, since: Date.now() })
+  }
+  standPresenceCatalog = Array.isArray(raw.standPresenceCatalog)
+    ? raw.standPresenceCatalog.filter((x) => typeof x === 'string' && x.trim())
+    : []
+  standPresenceByRef.clear()
+  const spr = raw.standPresenceByRef
+  if (spr && typeof spr === 'object' && !Array.isArray(spr)) {
+    for (const [k, v] of Object.entries(spr)) {
+      const key = String(k).trim()
+      if (key) standPresenceByRef.set(key, Boolean(v))
+    }
   }
   lastBatteryTickMs = Date.now()
 }
@@ -704,7 +731,10 @@ function finishMission(code, st, job, robot, now) {
   job.status = 30
   job.completeTime = new Date(now).toISOString()
   if (robot) robot.status = 3
+  moveContainerToMissionDestination(job)
+  applyStandPresenceFromMission(job)
   simState.set(code, { ...st, running: false })
+  scheduleSaveState()
 }
 
 const warnedMissingRobots = new Set()
@@ -713,6 +743,38 @@ function warnMissingRobot(robotId, jobCode) {
   if (warnedMissingRobots.has(key)) return
   warnedMissingRobots.add(key)
   console.warn(`[amr-emulator] sim job ${jobCode} references missing robot ${robotId}`)
+}
+
+function ensureStandCatalogRef(ref) {
+  const key = normKey(ref)
+  if (!key) return
+  if (standPresenceCatalog.includes(key)) return
+  standPresenceCatalog = [...standPresenceCatalog, key].sort()
+}
+
+/** Simulated mission transfer: source stand clears, destination stand gains a pallet. */
+function applyStandPresenceFromMission(job) {
+  const containerCode = normKey(job?.containerCode)
+  if (!containerCode) return
+  const positions = Array.isArray(job?.positions) ? job.positions : []
+  const source = normKey(positions[0])
+  const dest = normKey(positions.at(-1))
+  if (!source || !dest) return
+  ensureStandCatalogRef(source)
+  ensureStandCatalogRef(dest)
+  if (source !== dest) standPresenceByRef.set(source, false)
+  standPresenceByRef.set(dest, true)
+}
+
+function moveContainerToMissionDestination(job) {
+  const containerCode = normKey(job?.containerCode)
+  if (!containerCode) return
+  const row = containers.get(containerCode)
+  if (!row) return
+  const positions = Array.isArray(job?.positions) ? job.positions : []
+  const dest = normKey(positions.at(-1))
+  if (!dest) return
+  containers.set(containerCode, { ...row, containerCode, nodeCode: dest })
 }
 
 // ---------- Boot -----------------------------------------------------------
@@ -873,10 +935,118 @@ app.post('/__emulator/reset', (_req, res) => {
   containers.clear()
   simState.clear()
   warnedMissingRobots.clear()
+  standPresenceCatalog = []
+  standPresenceByRef.clear()
   lastBatteryTickMs = Date.now()
   seed()
   saveStateNow()
   res.json({ ok: true })
+})
+
+function hyperionBasicOk(req) {
+  const wantUser = process.env.AMR_EMULATOR_HYPERION_USER
+  const wantPass = process.env.AMR_EMULATOR_HYPERION_PASSWORD
+  if (!wantUser && !wantPass) return true
+  const h = req.headers.authorization || ''
+  const m = /^Basic\s+(.+)$/i.exec(h)
+  if (!m) return false
+  let decoded
+  try {
+    decoded = Buffer.from(m[1], 'base64').toString('utf8')
+  } catch {
+    return false
+  }
+  const idx = decoded.indexOf(':')
+  const u = idx >= 0 ? decoded.slice(0, idx) : decoded
+  const p = idx >= 0 ? decoded.slice(idx + 1) : ''
+  return u === wantUser && p === wantPass
+}
+
+/** Hyperion-compatible stand presence (DC proxy targets this with Basic auth). */
+app.post('/stand-presence', (req, res) => {
+  if (!hyperionBasicOk(req)) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Hyperion"')
+    return res.status(401).send('Unauthorized')
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {}
+  let ids
+  if (Array.isArray(body.standIds) && body.standIds.length > 0) {
+    ids = body.standIds.map((x) => String(x).trim()).filter(Boolean)
+  }
+  const catalog =
+    standPresenceCatalog.length > 0 ? standPresenceCatalog : [...standPresenceByRef.keys()].sort()
+  const keys = ids && ids.length > 0 ? ids : catalog
+  const out = {}
+  for (const id of keys) {
+    out[id] = standPresenceByRef.has(id) ? standPresenceByRef.get(id) : false
+  }
+  res.json(out)
+})
+
+app.get('/__emulator/stand-presence/state', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({
+    catalog: [...standPresenceCatalog],
+    presence: Object.fromEntries(standPresenceByRef),
+    hyperionBaseUrlHint: `http://127.0.0.1:${PORT}`,
+  })
+})
+
+function parseStandRefsFromBulkBody(body) {
+  if (!body || typeof body !== 'object') return []
+  if (Array.isArray(body.refs)) {
+    return [...new Set(body.refs.map((x) => String(x).trim()).filter(Boolean))]
+  }
+  const text =
+    typeof body.text === 'string'
+      ? body.text
+      : typeof body.bulk === 'string'
+        ? body.bulk
+        : ''
+  if (!text.trim()) return []
+  const parts = text.split(/[\r\n,;]+/)
+  return [...new Set(parts.map((p) => String(p).trim()).filter(Boolean))]
+}
+
+/** Merge external refs into the catalog (new refs default to empty / no pallet). */
+app.post('/__emulator/stand-presence/bulk-add', (req, res) => {
+  const refs = parseStandRefsFromBulkBody(req.body)
+  if (refs.length === 0) {
+    res.status(400).json({
+      error: 'Provide refs (array) or text/bulk (newline, comma, or semicolon separated external refs).',
+    })
+    return
+  }
+  const merged = new Set(standPresenceCatalog)
+  for (const ref of refs) {
+    merged.add(ref)
+    if (!standPresenceByRef.has(ref)) standPresenceByRef.set(ref, false)
+  }
+  standPresenceCatalog = [...merged].sort()
+  scheduleSaveState()
+  res.json({ ok: true, added: refs.length, catalogSize: standPresenceCatalog.length })
+})
+
+app.post('/__emulator/stand-presence/clear-all', (_req, res) => {
+  standPresenceCatalog = []
+  standPresenceByRef.clear()
+  scheduleSaveState()
+  res.json({ ok: true })
+})
+
+app.post('/__emulator/stand-presence/set', (req, res) => {
+  const ref = typeof req.body?.externalRef === 'string' ? req.body.externalRef.trim() : ''
+  if (!ref) {
+    res.status(400).json({ error: 'externalRef required' })
+    return
+  }
+  const present = Boolean(req.body?.present)
+  standPresenceByRef.set(ref, present)
+  if (!standPresenceCatalog.includes(ref)) {
+    standPresenceCatalog = [...standPresenceCatalog, ref].sort()
+  }
+  scheduleSaveState()
+  res.json({ ok: true, externalRef: ref, present })
 })
 
 app.post('/__emulator/jobs/:code/status', (req, res) => {

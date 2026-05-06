@@ -10,6 +10,8 @@ export const STAND_IMPORT_FIELDS = [
   { key: 'x', label: 'X (m)' },
   { key: 'y', label: 'Y (m)' },
   { key: 'enabled', label: 'Enabled' },
+  { key: 'block_pickup', label: 'Block pickup (no lift)' },
+  { key: 'block_dropoff', label: 'Block dropoff (no lower)' },
 ] as const
 
 export type StandImportFieldKey = (typeof STAND_IMPORT_FIELDS)[number]['key']
@@ -23,6 +25,8 @@ const CANONICAL_HEADERS: StandImportFieldKey[] = [
   'x',
   'y',
   'enabled',
+  'block_pickup',
+  'block_dropoff',
 ]
 
 function supplementStandMapping(headers: string[], base: Record<string, string>): Record<string, string> {
@@ -46,6 +50,8 @@ function supplementStandMapping(headers: string[], base: Record<string, string>)
   claim('zone', ['zone'])
   claim('orientation', ['orientation'])
   claim('enabled', ['enabled'])
+  claim('block_pickup', ['blockpickup', 'nopickup', 'nolift'])
+  claim('block_dropoff', ['blockdropoff', 'nodropoff', 'nolower'])
 
   return base
 }
@@ -80,6 +86,10 @@ export function buildStandImportCsv(
         else if (v === '') v = 'true'
         else if (lower === 'true' || lower === '1' || lower === 'yes') v = 'true'
         else v = 'true'
+      } else if (key === 'block_pickup' || key === 'block_dropoff') {
+        const lower = v.toLowerCase()
+        if (lower === 'true' || lower === '1' || lower === 'yes') v = 'true'
+        else v = 'false'
       }
       return escapeCsvCell(v)
     })

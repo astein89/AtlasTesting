@@ -16,18 +16,39 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import {
   AMR_MULTISTOP_MISSION_PATH,
   type AmrFleetSettings,
+  type AmrMissionTemplateListItem,
+  type ZoneCategory,
   amrFleetProxy,
+  createAmrMissionTemplate,
   createMultistopMission,
+  getAmrMissionTemplate,
   getAmrSettings,
   getAmrStands,
+  listAmrMissionTemplates,
+  postStandPresence,
+  updateAmrMissionTemplate,
 } from '@/api/amr'
+import {
+  AmrDestinationOccupiedConfirmBody,
+  AmrDestinationOccupiedConfirmFooterRetry,
+} from '@/components/amr/AmrDestinationOccupiedConfirmBody'
 import { AmrMissionNewDebugModal } from '@/components/amr/AmrMissionNewDebugModal'
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch'
 import { AmrRobotSelectModal, type AmrRobotPickRow } from '@/components/amr/AmrRobotSelectModal'
@@ -37,10 +58,14 @@ import {
   LocationPinIcon,
   type AmrStandPickerRow,
 } from '@/components/amr/AmrStandPickerModal'
+import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
+import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { amrPath } from '@/lib/appPaths'
 import { getBasePath } from '@/lib/basePath'
 import { useAuthStore } from '@/store/authStore'
+import { missionFormToTemplatePayload } from '@/utils/amrMissionTemplate'
 import { previewRackMoveMissionCode } from '@/utils/amrDcaCode'
+import { shouldWarnFirstSegmentDropOccupied } from '@/utils/amrPalletPresenceSanity'
 import { buildMultistopFleetTimeline, buildRackMoveFleetForwardPreview } from '@/utils/amrRackMoveFleetPreview'
 import { isActiveRobotFleetStatus } from '@/utils/amrRobotStatus'
 
@@ -121,7 +146,7 @@ function SortableLegCard({
     <div
       ref={setNodeRef}
       style={style}
-      className={`grid gap-3 rounded-lg border border-border/80 p-3 sm:grid-cols-2 lg:grid-cols-3 ${
+      className={`flex w-full min-w-0 flex-col gap-3 rounded-lg border border-border/80 p-3 sm:p-4 ${
         isDragging ? 'z-[5] scale-[1.01] opacity-95 shadow-lg ring-2 ring-ring' : ''
       }`}
     >
@@ -157,6 +182,26 @@ function filterStandsForSuggest(stands: AmrStandPickerRow[], query: string): Amr
   const t = query.trim().toLowerCase()
   if (!t) return sorted.slice(0, 80)
   return sorted.filter((s) => s.external_ref.toLowerCase().includes(t)).slice(0, 80)
+}
+
+function legRestrictionStatus(
+  stands: AmrStandPickerRow[],
+  position: string,
+  putDownOn: boolean
+): { violated: boolean; message: string } {
+  const t = position.trim()
+  if (!t) return { violated: false, message: '' }
+  const m =
+    stands.find((s) => s.external_ref === t) ??
+    stands.find((s) => s.external_ref.trim().toLowerCase() === t.toLowerCase())
+  if (!m) return { violated: false, message: '' }
+  if (!putDownOn && Number(m.block_pickup ?? 0) > 0) {
+    return { violated: true, message: 'This location does not allow pallet pickup (no lift).' }
+  }
+  if (putDownOn && Number(m.block_dropoff ?? 0) > 0) {
+    return { violated: true, message: 'This location does not allow pallet dropoff (no lower).' }
+  }
+  return { violated: false, message: '' }
 }
 
 type MissionFormFieldError =
@@ -197,8 +242,15 @@ function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; messag
   return { ok: true }
 }
 
+export type AmrMissionNewFormHandle = {
+  /** Opens the save-as-template name dialog (same as header / Templates card). */
+  openSaveTemplate: () => void
+  /** Opens the fleet / submitMission debug dialog (`amr.tools.dev`). */
+  openDebug: () => void
+}
+
 export type AmrMissionNewFormProps = {
-  variant?: 'page' | 'modal'
+  variant?: 'page' | 'modal' | 'templateEditor'
   /** When set (e.g. modal), overrides router location for `container` / `from` query params. */
   initialSearch?: string
   onRequestClose?: () => void
@@ -206,6 +258,14 @@ export type AmrMissionNewFormProps = {
   onMissionErrorChange?: (message: string) => void
   /** Increment (e.g. after banner dismiss) to clear mission error + field highlights in the form. */
   clearMissionErrorsNonce?: number
+  /** `templateEditor` only: edit existing template id, or omit/null for create. */
+  templateEditorId?: string | null
+  /** `templateEditor` only: after successful create/update. */
+  onTemplateEditorSaved?: () => void
+  /** `templateEditor` only (editing): open delete confirmation (handled by parent modal). */
+  onRequestDeleteTemplate?: () => void
+  /** Disables the delete control while deletion is in progress. */
+  deleteTemplateBusy?: boolean
 }
 
 export function MissionErrorBanner({
@@ -241,19 +301,32 @@ export function MissionErrorBanner({
   )
 }
 
-export function AmrMissionNewForm({
-  variant = 'page',
-  initialSearch,
-  onRequestClose,
-  onMissionErrorChange,
-  clearMissionErrorsNonce,
-}: AmrMissionNewFormProps) {
+export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionNewFormProps>(
+  function AmrMissionNewForm(
+    {
+      variant = 'page',
+      initialSearch,
+      onRequestClose,
+      onMissionErrorChange,
+      clearMissionErrorsNonce,
+      templateEditorId = null,
+      onTemplateEditorSaved,
+      onRequestDeleteTemplate,
+      deleteTemplateBusy = false,
+    },
+    ref
+  ) {
   const navigate = useNavigate()
   const location = useLocation()
   const effectiveSearch = initialSearch !== undefined ? initialSearch : location.search
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
+  const canAmrModule = useAuthStore((s) => s.hasPermission('module.amr'))
   const canAmrApiDebug = useAuthStore((s) => s.hasPermission('amr.tools.dev'))
+  const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
+  const { showConfirm } = useAlertConfirm()
   const [stands, setStands] = useState<AmrStandPickerRow[]>([])
+  const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
+  const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
   const [pickerLegIdx, setPickerLegIdx] = useState<number | null>(null)
   const [generatedMissionCode] = useState(() => previewRackMoveMissionCode())
   const [containerCode, setContainerCode] = useState('')
@@ -307,9 +380,81 @@ export function AmrMissionNewForm({
   const [robotFleetLoading, setRobotFleetLoading] = useState(false)
   const [robotFleetErr, setRobotFleetErr] = useState<string | null>(null)
   const [pollMsRobots, setPollMsRobots] = useState(5000)
+  /** Same source as Containers page — drives stand pallet presence auto-refresh. */
+  const [pollMsContainers, setPollMsContainers] = useState(5000)
+  /** From fleet settings: optional Hyperion sanity confirm before create multistop mission. */
+  const [missionCreateStandPresenceSanityCheck, setMissionCreateStandPresenceSanityCheck] = useState(true)
   const [robotSelectOpen, setRobotSelectOpen] = useState(false)
   const [debugModalOpen, setDebugModalOpen] = useState(false)
   const [selectedRobotIds, setSelectedRobotIds] = useState<string[]>([])
+  const [templateList, setTemplateList] = useState<AmrMissionTemplateListItem[]>([])
+  const [templateLoadBusy, setTemplateLoadBusy] = useState(false)
+  const [templateErr, setTemplateErr] = useState<string | null>(null)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [saveTemplateName, setSaveTemplateName] = useState('')
+  const [saveTemplateBusy, setSaveTemplateBusy] = useState(false)
+  const [templateSelectValue, setTemplateSelectValue] = useState('')
+  const [templateEditorName, setTemplateEditorName] = useState('')
+
+  const [standPresenceMap, setStandPresenceMap] = useState<Record<string, boolean | null>>({})
+  const [standPresenceLoading, setStandPresenceLoading] = useState(false)
+  const [standPresenceError, setStandPresenceError] = useState(false)
+  const [standPresenceUnconfig, setStandPresenceUnconfig] = useState(false)
+
+  const uniqueStandRefs = useMemo(() => {
+    const s = new Set<string>()
+    for (const l of legs) {
+      const p = l.position.trim()
+      if (p) s.add(p)
+    }
+    return [...s].sort()
+  }, [legs])
+
+  const loadPresenceForRefs = useCallback(async (refs: string[], opts?: { silent?: boolean }) => {
+    if (refs.length === 0) return
+    const silent = opts?.silent === true
+    if (!silent) {
+      setStandPresenceLoading(true)
+      setStandPresenceError(false)
+      setStandPresenceUnconfig(false)
+    }
+    try {
+      const map = await postStandPresence(refs)
+      setStandPresenceMap((prev) => {
+        const next = { ...prev }
+        for (const r of refs) {
+          next[r] = Object.prototype.hasOwnProperty.call(map, r) ? map[r] : null
+        }
+        return next
+      })
+      setStandPresenceError(false)
+      setStandPresenceUnconfig(false)
+    } catch (e: unknown) {
+      if (silent) return
+      const status = (e as { response?: { status?: number } })?.response?.status
+      if (status === 503) setStandPresenceUnconfig(true)
+      else setStandPresenceError(true)
+    } finally {
+      if (!silent) setStandPresenceLoading(false)
+    }
+  }, [])
+
+  const uniqueStandKey = uniqueStandRefs.join('\0')
+  useEffect(() => {
+    if (uniqueStandRefs.length === 0) return
+    const t = window.setTimeout(() => {
+      void loadPresenceForRefs(uniqueStandRefs, { silent: true })
+    }, 450)
+    return () => clearTimeout(t)
+  }, [uniqueStandKey, loadPresenceForRefs, uniqueStandRefs])
+
+  useEffect(() => {
+    if (uniqueStandRefs.length === 0) return
+    const tid = window.setInterval(() => {
+      void loadPresenceForRefs(uniqueStandRefs, { silent: true })
+    }, pollMsContainers)
+    return () => clearInterval(tid)
+  }, [uniqueStandKey, loadPresenceForRefs, uniqueStandRefs, pollMsContainers])
 
   const containerInputRef = useRef<HTMLInputElement | null>(null)
   const legPositionInputRefs = useRef<(HTMLInputElement | null)[]>([])
@@ -355,6 +500,8 @@ export function AmrMissionNewForm({
           zone: r.zone != null ? String(r.zone) : '',
           location_label: String(r.location_label ?? ''),
           orientation: String(r.orientation ?? '0'),
+          block_pickup: Number(r.block_pickup ?? 0),
+          block_dropoff: Number(r.block_dropoff ?? 0),
         }))
       )
     )
@@ -368,7 +515,12 @@ export function AmrMissionNewForm({
   }, [])
 
   useEffect(() => {
-    void getAmrSettings().then((s) => setPollMsRobots(Math.max(3000, s.pollMsRobots)))
+    void getAmrSettings().then((s) => {
+      setPollMsRobots(Math.max(3000, s.pollMsRobots))
+      setPollMsContainers(Math.max(3000, s.pollMsContainers))
+      setMissionCreateStandPresenceSanityCheck(s.missionCreateStandPresenceSanityCheck !== false)
+      setZoneCategories(Array.isArray(s.zoneCategories) ? s.zoneCategories : [])
+    })
   }, [])
 
   const loadRobotFleet = useCallback(async (opts?: { showSpinner?: boolean }) => {
@@ -517,14 +669,29 @@ export function AmrMissionNewForm({
   }, [legsOrderKey, legs.length])
 
   useEffect(() => {
-    if (!canManage) return
+    if (!canManage || variant === 'templateEditor') return
     containerInputRef.current?.focus()
-  }, [canManage])
+  }, [canManage, variant])
 
   useEffect(() => {
     if (!canAmrApiDebug) return
     void getAmrSettings().then(setRackMoveDebugFleetSettings)
   }, [canAmrApiDebug])
+
+  useEffect(() => {
+    if (!canAmrModule || variant !== 'page') return
+    let cancelled = false
+    void listAmrMissionTemplates()
+      .then((rows) => {
+        if (!cancelled) setTemplateList(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setTemplateList([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [canAmrModule, variant])
 
   const buildMissionData = () => {
     return legs.map((leg, i) => ({
@@ -579,6 +746,7 @@ export function AmrMissionNewForm({
     }
     if (containerCode.trim()) payload.containerCode = containerCode.trim()
     if (selectedRobotIds.length > 0) payload.robotIds = selectedRobotIds
+    if (overrideSpecialLocations) payload.override = true
     return payload
   }
 
@@ -727,6 +895,31 @@ export function AmrMissionNewForm({
       return
     }
 
+    if (missionCreateStandPresenceSanityCheck) {
+      const uniquePresenceRefs = [...new Set(legs.map((l) => l.position.trim()).filter(Boolean))].sort()
+      if (uniquePresenceRefs.length > 0) {
+        try {
+          const presenceBatch = await postStandPresence(uniquePresenceRefs)
+          const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(legs, presenceBatch)
+          if (shouldWarn) {
+            const destTitle = destinationRef.trim()
+            const ok = await showConfirm(
+              <AmrDestinationOccupiedConfirmBody destinationRef={destinationRef} />,
+              {
+                title: destTitle ? `Destination not empty — ${destTitle}` : 'Destination not empty',
+                confirmLabel: 'Create mission anyway',
+                footerExtra: <AmrDestinationOccupiedConfirmFooterRetry />,
+                omitFooterCancel: true,
+              }
+            )
+            if (!ok) return
+          }
+        } catch {
+          /* Hyperion unset / network — do not block create */
+        }
+      }
+    }
+
     setSaving(true)
     try {
       const data = (await createMultistopMission(buildMultistopPayload())) as {
@@ -823,44 +1016,272 @@ export function AmrMissionNewForm({
     createMissionButtonRef.current?.focus()
   }
 
-  const missionActionRow = (
-    <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
+  const applyMissionTemplate = useCallback(async (templateId: string): Promise<boolean> => {
+    if (!templateId.trim()) return false
+    setTemplateErr(null)
+    setTemplateLoadBusy(true)
+    try {
+      const t = await getAmrMissionTemplate(templateId)
+      const mapped = normalizePutDown(
+        t.payload.legs.map((leg) =>
+          newLeg({
+            position: leg.position,
+            putDown: leg.putDown,
+            continueMode: leg.continueMode ?? 'manual',
+            autoContinueSeconds: leg.autoContinueSeconds ?? 0,
+          })
+        )
+      )
+      const locked = lockStartLocation.trim()
+      if (locked) {
+        const copy = [...mapped]
+        if (copy[0]) copy[0] = { ...copy[0], position: locked }
+        setLegs(normalizePutDown(copy))
+      } else {
+        setLegs(mapped)
+      }
+      setPersistent(t.payload.persistentContainer)
+      setSelectedRobotIds(t.payload.robotIds ?? [])
+      setContainerCode(t.payload.containerCode ?? '')
+      setTemplateSelectValue('')
+      return true
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { error?: string } } }
+      setTemplateErr(ax?.response?.data?.error ?? 'Could not load template')
+      return false
+    } finally {
+      setTemplateLoadBusy(false)
+    }
+  }, [lockStartLocation])
+
+  const templateIdFromSearch = useMemo(() => {
+    const raw = effectiveSearch.trim()
+    if (!raw) return ''
+    const params = new URLSearchParams(raw.startsWith('?') ? raw : `?${raw}`)
+    return params.get('template')?.trim() ?? ''
+  }, [effectiveSearch])
+
+  const autoLoadedTemplateIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (variant === 'templateEditor') return
+    const tid = templateIdFromSearch
+    if (!tid) {
+      autoLoadedTemplateIdRef.current = null
+      return
+    }
+    if (autoLoadedTemplateIdRef.current === tid) return
+    let cancelled = false
+    void applyMissionTemplate(tid).then((ok) => {
+      if (!cancelled && ok) autoLoadedTemplateIdRef.current = tid
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [variant, templateIdFromSearch, applyMissionTemplate])
+
+  useEffect(() => {
+    if (variant !== 'templateEditor') return
+    const id = templateEditorId?.trim()
+    if (!id) {
+      setTemplateEditorName('')
+      setTemplateErr(null)
+      setLegs([
+        newLeg({ putDown: false, continueMode: 'auto', autoContinueSeconds: 0 }),
+        newLeg({ putDown: true }),
+      ])
+      setPersistent(false)
+      setSelectedRobotIds([])
+      setContainerCode('')
+      setFieldError(null)
+      setError('')
+      return
+    }
+    let cancelled = false
+    setTemplateErr(null)
+    setTemplateLoadBusy(true)
+    void getAmrMissionTemplate(id)
+      .then((t) => {
+        if (cancelled) return
+        setTemplateEditorName(t.name)
+        const mapped = normalizePutDown(
+          t.payload.legs.map((leg) =>
+            newLeg({
+              position: leg.position,
+              putDown: leg.putDown,
+              continueMode: leg.continueMode ?? 'manual',
+              autoContinueSeconds: leg.autoContinueSeconds ?? 0,
+            })
+          )
+        )
+        setLegs(mapped)
+        setPersistent(t.payload.persistentContainer)
+        setSelectedRobotIds(t.payload.robotIds ?? [])
+        setContainerCode(t.payload.containerCode ?? '')
+        setFieldError(null)
+        setError('')
+      })
+      .catch((e: unknown) => {
+        const ax = e as { response?: { data?: { error?: string } } }
+        if (!cancelled) setTemplateErr(ax?.response?.data?.error ?? 'Could not load template')
+      })
+      .finally(() => {
+        if (!cancelled) setTemplateLoadBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [variant, templateEditorId])
+
+  const openSaveTemplateModal = useCallback(() => {
+    setTemplateErr(null)
+    const v = validateNewMissionForm(legs)
+    if (!v.ok) {
+      setError(v.message)
+      setFieldError(v.fieldError)
+      return
+    }
+    setSaveTemplateName('')
+    setSaveTemplateOpen(true)
+  }, [legs])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openSaveTemplate: openSaveTemplateModal,
+      openDebug: () => setDebugModalOpen(true),
+    }),
+    [openSaveTemplateModal]
+  )
+
+  const submitSaveTemplate = async () => {
+    const name = saveTemplateName.trim()
+    if (!name) return
+    setSaveTemplateBusy(true)
+    setTemplateErr(null)
+    try {
+      await createAmrMissionTemplate({
+        name,
+        payload: missionFormToTemplatePayload(legs, persistent, selectedRobotIds, containerCode),
+        ...(overrideSpecialLocations ? { override: true } : {}),
+      })
+      setSaveTemplateOpen(false)
+      setSaveTemplateName('')
+      const rows = await listAmrMissionTemplates()
+      setTemplateList(rows)
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { error?: string } } }
+      const msg = ax?.response?.data?.error ?? 'Could not save template'
+      setTemplateErr(msg)
+      if (variant === 'modal') setError(msg)
+    } finally {
+      setSaveTemplateBusy(false)
+    }
+  }
+
+  const submitTemplateEditor = async () => {
+    setError('')
+    setFieldError(null)
+    validationErrorActiveRef.current = false
+    const name = templateEditorName.trim()
+    if (!name) {
+      setError('Enter a template name.')
+      validationErrorActiveRef.current = true
+      return
+    }
+    const v = validateNewMissionForm(legs)
+    if (!v.ok) {
+      validationErrorActiveRef.current = true
+      setError(v.message)
+      setFieldError(v.fieldError)
+      queueMicrotask(() => {
+        if (v.fieldError.kind === 'location') {
+          const i = v.fieldError.legIndices[0]
+          legPositionInputRefs.current[i]?.focus()
+          legPositionInputRefs.current[i]?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        } else {
+          document
+            .getElementById(`amr-mission-leg-continue-secs-${v.fieldError.legIndex}`)
+            ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          ;(
+            document.getElementById(
+              `amr-mission-leg-continue-secs-${v.fieldError.legIndex}`
+            ) as HTMLInputElement | null
+          )?.focus()
+        }
+      })
+      return
+    }
+    setSaving(true)
+    try {
+      const payload = missionFormToTemplatePayload(legs, persistent, selectedRobotIds, containerCode)
+      const editId = templateEditorId?.trim()
+      const overrideField = overrideSpecialLocations ? { override: true } : {}
+      if (editId) {
+        await updateAmrMissionTemplate(editId, { name, payload, ...overrideField })
+      } else {
+        await createAmrMissionTemplate({ name, payload, ...overrideField })
+      }
+      onTemplateEditorSaved?.()
+      onRequestClose?.()
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { error?: string } } }
+      validationErrorActiveRef.current = false
+      setError(ax?.response?.data?.error ?? 'Could not save template')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const templateEditorActionRow = (
+    <div className="flex w-full flex-col gap-3 gap-y-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {(variant === 'modal' || canAmrApiDebug) && (
+        {templateEditorId?.trim() && onRequestDeleteTemplate && canManage ? (
           <button
             type="button"
-            className="inline-flex min-h-[44px] items-center rounded-lg border border-dashed border-amber-500/45 bg-amber-500/[0.06] px-4 text-sm text-foreground/90 hover:bg-amber-500/10 dark:border-amber-500/35 dark:bg-amber-500/[0.08]"
-            onClick={() => setDebugModalOpen(true)}
+            disabled={deleteTemplateBusy || saving || templateLoadBusy}
+            className="inline-flex min-h-[44px] items-center rounded-lg border border-red-500/35 bg-red-500/[0.06] px-4 text-sm text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-500/15"
+            onClick={() => onRequestDeleteTemplate()}
           >
-            Debug…
+            {deleteTemplateBusy ? 'Deleting…' : 'Delete template'}
           </button>
-        )}
+        ) : null}
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {variant === 'modal' ? (
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center rounded-lg border border-border px-4 text-sm hover:bg-background"
-            onClick={() => {
-              navigate(amrPath('missions'))
-              onRequestClose?.()
-            }}
-          >
-            Cancel
-          </button>
-        ) : (
+      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+        <button
+          type="button"
+          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-border px-4 text-sm hover:bg-background sm:w-auto"
+          onClick={() => onRequestClose?.()}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={saving || !canManage || templateLoadBusy}
+          className="min-h-[44px] w-full rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 sm:w-auto"
+          onClick={() => void submitTemplateEditor()}
+        >
+          {saving ? 'Saving…' : templateEditorId?.trim() ? 'Save changes' : 'Save template'}
+        </button>
+      </div>
+    </div>
+  )
+
+  const missionActionRow = (
+    <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+        {variant !== 'modal' ? (
           <Link
             to={amrPath('missions')}
-            className="inline-flex min-h-[44px] items-center rounded-lg border border-border px-4 text-sm"
+            className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-border px-4 text-sm sm:w-auto"
           >
             Cancel
           </Link>
-        )}
+        ) : null}
         {variant === 'modal' ? (
           <button
             type="button"
             disabled={saving || !canManage}
-            className="inline-flex min-h-[44px] items-center rounded-lg border border-border px-4 text-sm hover:bg-background disabled:opacity-50"
+            className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 sm:w-auto"
             onClick={() => void submit(true)}
           >
             {saving ? 'Submitting…' : 'Create and show'}
@@ -870,24 +1291,92 @@ export function AmrMissionNewForm({
           ref={createMissionButtonRef}
           type="button"
           disabled={saving || !canManage}
-          className="min-h-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-foreground hover:bg-amber-500/15 disabled:opacity-50 dark:border-amber-500/35 sm:w-auto"
           onClick={() => void submit()}
         >
           {saving ? 'Submitting…' : 'Create mission'}
         </button>
-      </div>
     </div>
   )
 
   const missionFields = (
     <>
-      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-        <div>
-          <span className="text-sm text-foreground/80">Mission code</span>
-          <p className="mt-1 break-all font-mono text-base font-semibold tracking-tight text-foreground">
-            {generatedMissionCode}
-          </p>
+      {canAmrModule && variant === 'page' ? (
+        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+          <h2 className="text-sm font-medium">Templates</h2>
+          {templateErr ? <p className="text-sm text-red-600 dark:text-red-400">{templateErr}</p> : null}
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm sm:max-w-md">
+              <span className="text-foreground/80">Load template</span>
+              <select
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                disabled={templateLoadBusy}
+                value={templateSelectValue}
+                onChange={(e) => {
+                  const id = e.target.value
+                  setTemplateSelectValue('')
+                  if (id) void applyMissionTemplate(id)
+                }}
+              >
+                <option value="">
+                  {templateLoadBusy ? 'Loading…' : templateList.length ? 'Choose a template…' : 'None saved yet'}
+                </option>
+                {templateList.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.stopCount} stops)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex flex-wrap items-center gap-2 pb-0.5">
+              {canManage ? (
+                <button
+                  type="button"
+                  disabled={saveTemplateBusy}
+                  className="inline-flex min-h-[44px] items-center rounded-lg border border-border px-4 text-sm hover:bg-background disabled:opacity-50"
+                  onClick={() => openSaveTemplateModal()}
+                >
+                  Save as template…
+                </button>
+              ) : null}
+              <Link
+                to={amrPath('missions', 'templates')}
+                className="inline-flex min-h-[44px] items-center rounded-lg border border-border px-4 text-sm hover:bg-background"
+              >
+                Manage templates
+              </Link>
+            </div>
+          </div>
         </div>
+      ) : null}
+      <div className="space-y-4 rounded-xl border border-border bg-card p-4">
+        {variant === 'templateEditor' ? (
+          <>
+            <label className="block text-sm">
+              <span className="text-foreground/80">Template name</span>
+              <input
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-base md:text-sm"
+                value={templateEditorName}
+                onChange={(e) => setTemplateEditorName(e.target.value)}
+                placeholder="e.g. East dock loop"
+                disabled={templateLoadBusy}
+                autoComplete="off"
+                enterKeyHint="next"
+                autoFocus={!templateEditorId?.trim()}
+              />
+            </label>
+            <p className="text-xs text-foreground/60">
+              Shared with everyone who can open AMR. Names must be unique.
+            </p>
+          </>
+        ) : (
+          <div>
+            <span className="text-sm text-foreground/80">Mission code</span>
+            <p className="mt-1 break-all font-mono text-base font-semibold tracking-tight text-foreground">
+              {generatedMissionCode}
+            </p>
+          </div>
+        )}
         <label className="block text-sm">
           <span className="text-foreground/80">Container code (optional)</span>
           <div className="mt-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -924,16 +1413,30 @@ export function AmrMissionNewForm({
       <div className="space-y-3 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="min-w-0 text-sm font-medium">Mission stops</h2>
-          <button
-            type="button"
-            className="shrink-0 text-sm text-primary hover:underline"
-            onClick={addLeg}
-          >
-            Add Stop
-          </button>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {uniqueStandRefs.length > 0 ? (
+              <button
+                type="button"
+                className="shrink-0 text-sm text-primary hover:underline disabled:opacity-50"
+                disabled={standPresenceLoading}
+                onClick={() => void loadPresenceForRefs(uniqueStandRefs)}
+              >
+                {standPresenceLoading ? 'Updating…' : 'Refresh stand status'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="shrink-0 text-sm text-primary hover:underline"
+              onClick={addLeg}
+            >
+              Add Stop
+            </button>
+          </div>
         </div>
         <p className="text-xs text-foreground/60">
-          Drag the grip beside each stop to reorder. When opened from a container deep link, the first stop stays fixed.
+          {variant === 'templateEditor'
+            ? 'Drag the grip beside each stop to reorder.'
+            : 'Drag the grip beside each stop to reorder. When opened from a container deep link, the first stop stays fixed.'}
         </p>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleLegDragEnd}>
           <SortableContext items={legs.map((l) => l.id)} strategy={verticalListSortingStrategy}>
@@ -952,7 +1455,7 @@ export function AmrMissionNewForm({
                 <SortableLegCard key={leg.id} id={leg.id} disableDrag={dragLocked}>
                   {(grip) => (
                     <>
-            <div className="col-span-full flex flex-wrap items-center gap-2">
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
               <button
                 type="button"
                 className={`flex h-10 w-10 shrink-0 touch-none items-center justify-center rounded-lg border border-border bg-muted/40 text-foreground/55 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
@@ -994,7 +1497,7 @@ export function AmrMissionNewForm({
                 Remove
               </button>
             </div>
-            <div className="col-span-full min-w-0">
+            <div className="min-w-0 w-full">
               <label
                 htmlFor={`amr-mission-leg-pos-${idx}`}
                 className="block text-sm text-foreground/80"
@@ -1004,8 +1507,8 @@ export function AmrMissionNewForm({
                   <span className="ml-1.5 font-normal text-foreground/50">· locked (container position)</span>
                 ) : null}
               </label>
-              <div className="mt-1 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-x-4 lg:gap-y-2">
-                <div className="flex min-h-[40px] min-w-0 w-full items-stretch gap-2 lg:col-start-1 lg:row-start-1">
+              <div className="mt-1 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-x-4 md:gap-y-2">
+                <div className="flex min-h-[40px] min-w-0 w-full items-stretch gap-2 md:col-start-1 md:row-start-1">
                   <div
                     ref={(el) => {
                       legLocationFieldWrapRefs.current[idx] = el
@@ -1057,6 +1560,26 @@ export function AmrMissionNewForm({
                       }}
                       placeholder={startLocked ? '' : 'Scan or type External Ref…'}
                     />
+                    {leg.position.trim() ? (
+                      <span className="flex shrink-0 items-center gap-1 bg-muted/15 px-1.5 py-1 sm:px-2">
+                        <PalletPresenceGlyph
+                          kind={palletPresenceKindFromState({
+                            present: Object.prototype.hasOwnProperty.call(
+                              standPresenceMap,
+                              leg.position.trim()
+                            )
+                              ? standPresenceMap[leg.position.trim()]
+                              : null,
+                            loading: standPresenceLoading,
+                            error: standPresenceError,
+                            unconfigured: standPresenceUnconfig,
+                          })}
+                          showLabel
+                          labelClassName="hidden sm:inline"
+                          className="h-3.5 w-3.5"
+                        />
+                      </span>
+                    ) : null}
                     {!startLocked && leg.position.trim() ? (
                       <button
                         type="button"
@@ -1108,7 +1631,7 @@ export function AmrMissionNewForm({
                     <LocationPinIcon className="h-5 w-5" />
                   </button>
                 </div>
-                <div className="flex flex-col gap-2 lg:col-start-2 lg:row-start-1 lg:max-w-[min(100%,20rem)] lg:shrink-0">
+                <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:max-w-[min(100%,20rem)] md:shrink-0">
                   <div
                     className={`flex items-center gap-3 ${
                       putLocked ? 'text-foreground/70' : ''
@@ -1158,7 +1681,7 @@ export function AmrMissionNewForm({
                 {idx < legs.length - 1 && leg.continueMode === 'auto' ? (
                   <label
                     htmlFor={`amr-mission-leg-continue-secs-${idx}`}
-                    className="flex flex-wrap items-center gap-2 pl-1 text-sm text-foreground/85 lg:col-start-2 lg:row-start-2 lg:max-w-[min(100%,20rem)]"
+                    className="flex flex-wrap items-center gap-2 pl-1 text-sm text-foreground/85 md:col-start-2 md:row-start-2 md:max-w-[min(100%,20rem)]"
                   >
                     <span className="text-foreground/70">After</span>
                     <input
@@ -1186,6 +1709,26 @@ export function AmrMissionNewForm({
                   </label>
                 ) : null}
               </div>
+              {(() => {
+                const status = legRestrictionStatus(stands, leg.position, putDownOn)
+                if (!status.violated) return null
+                return (
+                  <div className="mt-2 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 sm:flex-row sm:items-center sm:gap-3 dark:text-amber-200">
+                    <span className="min-w-0 flex-1 leading-snug">{status.message}</span>
+                    {canOverrideSpecial ? (
+                      <label className="flex cursor-pointer select-none items-center gap-1.5 sm:ml-auto sm:shrink-0">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-border"
+                          checked={overrideSpecialLocations}
+                          onChange={(e) => setOverrideSpecialLocations(e.target.checked)}
+                        />
+                        <span>Override restriction</span>
+                      </label>
+                    ) : null}
+                  </div>
+                )
+              })()}
             </div>
                     </>
                   )}
@@ -1201,9 +1744,13 @@ export function AmrMissionNewForm({
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <h2 className="text-sm font-medium">Robots</h2>
             <p className="text-xs text-foreground/60">
-              {selectedRobotIds.length > 0
-                ? `${selectedRobotIds.length} robot(s) included on submitMission.`
-                : 'Optional — AMR settings defaults apply when none selected.'}
+              {variant === 'templateEditor'
+                ? selectedRobotIds.length > 0
+                  ? `${selectedRobotIds.length} robot(s) saved when missions are started from this template.`
+                  : 'Optional — AMR settings defaults apply when none selected.'
+                : selectedRobotIds.length > 0
+                  ? `${selectedRobotIds.length} robot(s) included on submitMission.`
+                  : 'Optional — AMR settings defaults apply when none selected.'}
             </p>
           </div>
           <button
@@ -1278,7 +1825,35 @@ export function AmrMissionNewForm({
 
   return (
     <>
-      {variant === 'modal' ? (
+      {variant === 'templateEditor' ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-6">
+            {!canManage ? (
+              <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground/80">
+                You do not have permission to edit mission templates. Close this dialog or contact an administrator.
+              </p>
+            ) : null}
+            {templateErr ? (
+              <p className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                {templateErr}
+              </p>
+            ) : null}
+            {canManage && error && !onMissionErrorChange ? (
+              <MissionErrorBanner
+                message={error}
+                onDismiss={() => {
+                  setError('')
+                  setFieldError(null)
+                }}
+              />
+            ) : null}
+            {canManage ? missionFields : null}
+          </div>
+          <div className="shrink-0 border-t border-border bg-card pt-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] -mx-4 px-4 sm:-mx-5 sm:px-5">
+            {templateEditorActionRow}
+          </div>
+        </div>
+      ) : variant === 'modal' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-y-auto space-y-6">
             {!canManage ? (
@@ -1302,10 +1877,34 @@ export function AmrMissionNewForm({
           </div>
         </div>
       ) : (
-        <div className="mx-auto max-w-3xl space-y-6 pb-24">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">New Mission</h1>
-            <p className="mt-1 text-sm text-foreground/70">
+        <div className="mx-auto w-full min-w-0 max-w-3xl space-y-6 px-0 pb-[max(6rem,env(safe-area-inset-bottom))]">
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-nowrap items-start justify-between gap-2">
+              <h1 className="min-w-0 flex-1 truncate pr-1 text-xl font-semibold tracking-tight">New Mission</h1>
+              <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+                {canAmrApiDebug ? (
+                  <button
+                    type="button"
+                    className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-dashed border-red-500/45 bg-red-500/[0.06] px-2.5 text-xs text-red-700 hover:bg-red-500/10 sm:min-h-[44px] sm:px-3 sm:text-sm dark:border-red-500/35 dark:bg-red-500/[0.08] dark:text-red-300 dark:hover:bg-red-500/15 md:px-4"
+                    onClick={() => setDebugModalOpen(true)}
+                  >
+                    Debug…
+                  </button>
+                ) : null}
+                {canManage && canAmrModule ? (
+                  <button
+                    type="button"
+                    disabled={saveTemplateBusy}
+                    className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 sm:min-h-[44px] sm:px-3 sm:text-sm md:px-4"
+                    onClick={() => openSaveTemplateModal()}
+                  >
+                    <span className="hidden sm:inline">Save template</span>
+                    <span className="inline sm:hidden">Save…</span>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <p className="text-sm text-foreground/70">
               Create uses <span className="font-medium text-foreground">containerIn</span> then{' '}
               <span className="font-medium text-foreground">submitMission</span> for the first stop (same order for two or
               more stops). Positions must match fleet external codes (stands). Use{' '}
@@ -1327,7 +1926,7 @@ export function AmrMissionNewForm({
         </div>
       )}
 
-      {(variant === 'modal' || canAmrApiDebug) && (
+      {(variant === 'modal' || variant === 'templateEditor' || canAmrApiDebug) && (
         <AmrMissionNewDebugModal
           open={debugModalOpen}
           onClose={() => setDebugModalOpen(false)}
@@ -1343,17 +1942,34 @@ export function AmrMissionNewForm({
       )}
 
       {pickerLegIdx !== null && !(pickerLegIdx === 0 && lockStartLocation) ? (
-        <AmrStandPickerModal
-          stackOrder={variant === 'modal' ? 'aboveDialogs' : 'base'}
-          stands={stands}
-          onClose={() => setPickerLegIdx(null)}
-          onSelect={(externalRef) => {
-            const idx = pickerLegIdx
-            if (idx === null) return
-            updateLeg(idx, { position: externalRef })
-            setPickerLegIdx(null)
-          }}
-        />
+        (() => {
+          const idx = pickerLegIdx
+          const total = legs.length
+          const pickerMode: 'pickup' | 'dropoff' | 'any' =
+            idx === 0
+              ? 'pickup'
+              : idx === total - 1
+              ? 'dropoff'
+              : legs[idx]?.putDown
+              ? 'dropoff'
+              : 'pickup'
+          return (
+            <AmrStandPickerModal
+              stackOrder={variant === 'modal' || variant === 'templateEditor' ? 'aboveDialogs' : 'base'}
+              stands={stands}
+              mode={pickerMode}
+              zoneCategories={zoneCategories}
+              canOverride={canOverrideSpecial}
+              onClose={() => setPickerLegIdx(null)}
+              onSelect={(externalRef, opts) => {
+                if (idx === null) return
+                if (opts.override) setOverrideSpecialLocations(true)
+                updateLeg(idx, { position: externalRef })
+                setPickerLegIdx(null)
+              }}
+            />
+          )
+        })()
       ) : null}
 
       <AmrRobotSelectModal
@@ -1366,9 +1982,64 @@ export function AmrMissionNewForm({
         error={robotFleetErr}
         onRefresh={() => void loadRobotFleet({ showSpinner: true })}
       />
+
+      {saveTemplateOpen && variant !== 'templateEditor' ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="save-template-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !saveTemplateBusy) setSaveTemplateOpen(false)
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="save-template-title" className="text-lg font-semibold text-foreground">
+              Save as template
+            </h2>
+            <p className="mt-1 text-sm text-foreground/70">
+              Shared with everyone who can open AMR. Template names must be unique.
+            </p>
+            <input
+              className="mt-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+              value={saveTemplateName}
+              onChange={(e) => setSaveTemplateName(e.target.value)}
+              placeholder="Template name"
+              autoFocus
+              disabled={saveTemplateBusy}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitSaveTemplate()
+              }}
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="min-h-[44px] rounded-lg border border-border px-4 text-sm hover:bg-muted disabled:opacity-50"
+                disabled={saveTemplateBusy}
+                onClick={() => setSaveTemplateOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="min-h-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                disabled={saveTemplateBusy || !saveTemplateName.trim()}
+                onClick={() => void submitSaveTemplate()}
+              >
+                {saveTemplateBusy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   )
-}
+})
+
+AmrMissionNewForm.displayName = 'AmrMissionNewForm'
 
 /** Full-page route — prefer opening {@link AmrMissionNewForm} in the modal from layout. */
 export function AmrMissionNew() {

@@ -1,6 +1,19 @@
 import { useMemo, useState } from 'react'
-import { amrFleetProxy } from '@/api/amr'
+import { amrFleetProxy, postStandPresence } from '@/api/amr'
 import { useAuthStore } from '@/store/authStore'
+
+function parseStandIds(text: string): string[] {
+  const parts = text.split(/[\s,]+/)
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const p of parts) {
+    const t = p.trim()
+    if (!t || seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out
+}
 
 const OPS = [
   'submitMission',
@@ -106,6 +119,10 @@ export function AmrApiPlayground() {
   const [out, setOut] = useState('')
   const [ms, setMs] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
+  const [standIdsInput, setStandIdsInput] = useState('S1-AMR-01\nPD-AMR-01')
+  const [standPresenceOut, setStandPresenceOut] = useState('')
+  const [standPresenceMs, setStandPresenceMs] = useState<number | null>(null)
+  const [standPresenceLoading, setStandPresenceLoading] = useState(false)
 
   const example = useMemo(() => EXAMPLES[op] ?? '{}', [op])
 
@@ -140,6 +157,33 @@ export function AmrApiPlayground() {
       setMs(Math.round(performance.now() - t0))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const queryStandPresence = async () => {
+    setStandPresenceLoading(true)
+    setStandPresenceOut('')
+    const t0 = performance.now()
+    try {
+      const ids = parseStandIds(standIdsInput)
+      const presence = await postStandPresence(ids)
+      setStandPresenceMs(Math.round(performance.now() - t0))
+      setStandPresenceOut(JSON.stringify({ standIds: ids, presence }, null, 2))
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: unknown; status?: number } }
+      setStandPresenceOut(
+        JSON.stringify(
+          {
+            error: ax?.response?.data ?? String(e),
+            status: ax?.response?.status,
+          },
+          null,
+          2
+        )
+      )
+      setStandPresenceMs(Math.round(performance.now() - t0))
+    } finally {
+      setStandPresenceLoading(false)
     }
   }
 
@@ -196,6 +240,43 @@ export function AmrApiPlayground() {
           {out}
         </pre>
       )}
+
+      <div className="border-t border-border pt-6">
+        <h2 className="text-lg font-semibold tracking-tight">Stand presence</h2>
+        <p className="mt-1 text-sm text-foreground/70">
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">POST /amr/dc/stands/presence</code> — batch pallet
+          presence from Hyperion for stand <span className="font-mono">external_ref</span> values (same as mission /
+          picker).
+        </p>
+        <label className="mt-3 block text-sm">
+          Stand refs (comma, space, or newline separated)
+          <textarea
+            className="mt-1 min-h-[100px] w-full rounded-xl border border-border bg-background p-3 font-mono text-xs"
+            value={standIdsInput}
+            onChange={(e) => setStandIdsInput(e.target.value)}
+            placeholder="S1-AMR-01&#10;PD-AMR-01"
+            spellCheck={false}
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={standPresenceLoading}
+            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            onClick={() => void queryStandPresence()}
+          >
+            {standPresenceLoading ? 'Querying…' : 'Query presence'}
+          </button>
+          {standPresenceMs != null && (
+            <span className="text-xs text-foreground/60">{standPresenceMs} ms</span>
+          )}
+        </div>
+        {standPresenceOut ? (
+          <pre className="mt-3 max-h-[360px] overflow-auto rounded-xl border border-border bg-muted/30 p-3 text-xs">
+            {standPresenceOut}
+          </pre>
+        ) : null}
+      </div>
     </div>
   )
 }

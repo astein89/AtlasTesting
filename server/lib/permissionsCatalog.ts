@@ -63,7 +63,17 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     label: 'AMR: create missions, container in/out, cancel / feedback',
     group: 'AMR',
   },
+  {
+    id: 'amr.missions.force_release',
+    label: 'AMR: force release / continue when stand reports a pallet (Hyperion)',
+    group: 'AMR',
+  },
   { id: 'amr.stands.manage', label: 'AMR: manage stands / positions & CSV import', group: 'AMR' },
+  {
+    id: 'amr.stands.override-special',
+    label: 'AMR: override special-location restrictions (no-lift / no-lower)',
+    group: 'AMR',
+  },
   { id: 'amr.settings', label: 'AMR: fleet connection & module defaults', group: 'AMR' },
   { id: 'amr.tools.dev', label: 'AMR: API playground & integration tools', group: 'AMR' },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },

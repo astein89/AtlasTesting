@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { getAmrFleetApiLog, getAmrMissionLog } from '@/api/amr'
 import { MissionJobStatusBadge } from '@/components/amr/MissionJobStatusBadge'
 import {
@@ -32,17 +33,33 @@ function prettyJson(value: unknown): string {
   }
 }
 
+/**
+ * Whitespace-separated terms; a row matches if **any** term appears in the row blob.
+ * Deep links pass `jobCode sessionId` — OR keeps mission rows that only have the job, and fleet rows that only mention the session in JSON.
+ */
+function searchQueryTokens(q: string): string[] {
+  return q
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
 function missionRowMatchesSearch(e: Record<string, unknown>, q: string): boolean {
-  if (!q.trim()) return true
-  const n = q.trim().toLowerCase()
-  const blob = [e.recorded_at, e.job_code, e.job_status, e.raw_json].map((x) => String(x ?? '')).join('\u0001').toLowerCase()
-  return blob.includes(n)
+  const tokens = searchQueryTokens(q)
+  if (tokens.length === 0) return true
+  const blob = [e.mission_record_id, e.recorded_at, e.job_code, e.job_status, e.raw_json]
+    .map((x) => String(x ?? ''))
+    .join('\u0001')
+    .toLowerCase()
+  return tokens.some((t) => blob.includes(t))
 }
 
 function fleetRowMatchesSearch(e: Record<string, unknown>, q: string): boolean {
-  if (!q.trim()) return true
-  const n = q.trim().toLowerCase()
+  const tokens = searchQueryTokens(q)
+  if (tokens.length === 0) return true
   const blob = [
+    e.mission_record_id,
     e.recorded_at,
     e.source,
     e.job_code,
@@ -55,7 +72,7 @@ function fleetRowMatchesSearch(e: Record<string, unknown>, q: string): boolean {
     .map((x) => String(x ?? ''))
     .join('\u0001')
     .toLowerCase()
-  return blob.includes(n)
+  return tokens.some((t) => blob.includes(t))
 }
 
 const FLEET_SOURCES = [
@@ -122,6 +139,16 @@ type LogDetailModal =
   | { kind: 'fleet'; row: Record<string, unknown> }
 
 export function AmrLogs() {
+  const [searchParams] = useSearchParams()
+
+  /** From mission detail link — scope logs to one mission record (fleet API calls tagged with that id). */
+  const missionRecordIdFilter = useMemo(() => {
+    const raw =
+      searchParams.get('missionRecordId') ?? searchParams.get('recordId') ?? searchParams.get('mr')
+    const s = typeof raw === 'string' ? raw.trim() : ''
+    return s.length > 0 ? s : null
+  }, [searchParams])
+
   const [missionEntries, setMissionEntries] = useState<Record<string, unknown>[]>([])
   const [fleetEntries, setFleetEntries] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
@@ -148,6 +175,16 @@ export function AmrLogs() {
   const [fleetPageSize, setFleetPageSize] = useState(25)
 
   const [detailModal, setDetailModal] = useState<LogDetailModal>(null)
+
+  /** e.g. mission detail: `?missionRecordId=…&q=…` — search seeds mission table; fleet is scoped by id only */
+  useEffect(() => {
+    const raw = searchParams.get('q') ?? searchParams.get('job') ?? searchParams.get('jobCode')
+    const q = typeof raw === 'string' ? raw.trim() : ''
+    const hasMr = Boolean(missionRecordIdFilter)
+    if (q) setMissionSearch(q)
+    if (hasMr) setFleetSearch('')
+    else if (q) setFleetSearch(q)
+  }, [searchParams, missionRecordIdFilter])
 
   useEffect(() => {
     if (!detailModal) return
@@ -199,6 +236,9 @@ export function AmrLogs() {
 
   const filteredMission = useMemo(() => {
     let rows = missionEntries
+    if (missionRecordIdFilter) {
+      rows = rows.filter((e) => String(e.mission_record_id ?? '') === missionRecordIdFilter)
+    }
     if (missionStatusFilter !== '') {
       const code = Number(missionStatusFilter)
       rows = rows.filter((e) => Number(e.job_status) === code)
@@ -207,10 +247,13 @@ export function AmrLogs() {
       rows = rows.filter((e) => missionRowMatchesSearch(e, missionSearch))
     }
     return rows
-  }, [missionEntries, missionSearch, missionStatusFilter])
+  }, [missionEntries, missionRecordIdFilter, missionSearch, missionStatusFilter])
 
   const filteredFleet = useMemo(() => {
     let rows = fleetEntries
+    if (missionRecordIdFilter) {
+      rows = rows.filter((e) => String(e.mission_record_id ?? '') === missionRecordIdFilter)
+    }
     if (fleetSourceFilter !== '') {
       rows = rows.filter((e) => String(e.source ?? '') === fleetSourceFilter)
     }
@@ -224,7 +267,7 @@ export function AmrLogs() {
       rows = rows.filter((e) => fleetRowMatchesSearch(e, fleetSearch))
     }
     return rows
-  }, [fleetEntries, fleetSearch, fleetSourceFilter, fleetOperationFilter, fleetHttpFilter])
+  }, [fleetEntries, fleetSearch, fleetSourceFilter, fleetOperationFilter, fleetHttpFilter, missionRecordIdFilter])
 
   const sortedMission = useMemo(() => {
     const rows = [...filteredMission]
@@ -251,11 +294,11 @@ export function AmrLogs() {
 
   useEffect(() => {
     setMissionPage(1)
-  }, [missionSearch, missionStatusFilter])
+  }, [missionSearch, missionStatusFilter, missionRecordIdFilter])
 
   useEffect(() => {
     setFleetPage(1)
-  }, [fleetSearch, fleetSourceFilter, fleetOperationFilter, fleetHttpFilter])
+  }, [fleetSearch, fleetSourceFilter, fleetOperationFilter, fleetHttpFilter, missionRecordIdFilter])
 
   const missionPageSafe = Math.min(missionPage, missionTotalPages)
   const fleetPageSafe = Math.min(fleetPage, fleetTotalPages)
@@ -434,6 +477,13 @@ export function AmrLogs() {
               Every outbound fleet POST recorded by the server (proxy, rack-move, mission worker). Click a row for
               request/response JSON.
             </p>
+            {missionRecordIdFilter ? (
+              <p className="text-xs text-foreground/75">
+                Filtered to calls logged for mission record{' '}
+                <span className="break-all font-mono text-[11px] text-foreground">{missionRecordIdFilter}</span>{' '}
+                only (other fleet traffic is hidden).
+              </p>
+            ) : null}
             <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-end">
               <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-medium text-foreground/70">
                 Search
@@ -441,7 +491,11 @@ export function AmrLogs() {
                   type="search"
                   value={fleetSearch}
                   onChange={(e) => setFleetSearch(e.target.value)}
-                  placeholder="Source, job, operation, HTTP, JSON…"
+                  placeholder={
+                    missionRecordIdFilter
+                      ? 'Narrow within this mission’s calls…'
+                      : 'Source, job, operation, HTTP, JSON…'
+                  }
                   className="min-h-[40px] rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-foreground/40"
                   autoComplete="off"
                 />

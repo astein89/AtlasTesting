@@ -40,6 +40,7 @@ const TABLE_ORDER = [
   'home_links',
   'user_roles',
   'amr_stands',
+  'amr_mission_templates',
   'amr_multistop_sessions',
   'amr_mission_records',
   'amr_mission_status_log',

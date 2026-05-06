@@ -21,9 +21,14 @@ import { v4 as uuidv4 } from 'uuid'
 import {
   continueAmrMultistopSession,
   getAmrMultistopSession,
+  getAmrSettings,
   getAmrStands,
   patchAmrMultistopSession,
+  postStandPresence,
+  type ZoneCategory,
 } from '@/api/amr'
+import { getApiErrorMessage, parseMultistopContinueStandOccupied } from '@/api/client'
+import { ConfirmModal } from '@/components/ui/ConfirmModal'
 import { MissionJobStatusBadge } from '@/components/amr/MissionJobStatusBadge'
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch'
 import {
@@ -31,8 +36,14 @@ import {
   LocationPinIcon,
   type AmrStandPickerRow,
 } from '@/components/amr/AmrStandPickerModal'
+import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
 import { amrPath } from '@/lib/appPaths'
 import { friendlyMultistopSessionStatus } from '@/utils/amrMultistopDisplay'
+import {
+  multistopContinueOccupiedDestinationRef,
+  multistopStandOccupiedContinueMessage,
+  type MultistopReleasePlanDest,
+} from '@/utils/amrPalletPresenceSanity'
 import { formatRemainingMmSs, remainingMsUntilIso } from '@/utils/amrContinueCountdown'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
@@ -266,6 +277,26 @@ function filterStandsForSuggest(stands: AmrStandPickerRow[], query: string): Amr
   return sorted.filter((s) => s.external_ref.toLowerCase().includes(t)).slice(0, 80)
 }
 
+function legRestrictionStatus(
+  stands: AmrStandPickerRow[],
+  position: string,
+  putDownOn: boolean
+): { violated: boolean; message: string } {
+  const t = position.trim()
+  if (!t) return { violated: false, message: '' }
+  const m =
+    stands.find((s) => s.external_ref === t) ??
+    stands.find((s) => s.external_ref.trim().toLowerCase() === t.toLowerCase())
+  if (!m) return { violated: false, message: '' }
+  if (!putDownOn && Number(m.block_pickup ?? 0) > 0) {
+    return { violated: true, message: 'This location does not allow pallet pickup (no lift).' }
+  }
+  if (putDownOn && Number(m.block_dropoff ?? 0) > 0) {
+    return { violated: true, message: 'This location does not allow pallet dropoff (no lower).' }
+  }
+  return { violated: false, message: '' }
+}
+
 /** Start/end nodes for plan segment index `si` (0-based). */
 function segmentLegEndpoints(
   si: number,
@@ -474,6 +505,7 @@ export interface AmrMissionDetailModalProps {
 
 export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: AmrMissionDetailModalProps) {
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
+  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
   const [msRefresh, setMsRefresh] = useState(0)
   const [msData, setMsData] = useState<{
     session: Record<string, unknown>
@@ -481,6 +513,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   } | null>(null)
   const [msLoading, setMsLoading] = useState(false)
   const [msErr, setMsErr] = useState<string | null>(null)
+  const [continueBlockedStandRef, setContinueBlockedStandRef] = useState<string | null>(null)
+  const [blockedDestPresence, setBlockedDestPresence] = useState<boolean | null>(null)
+  const [blockedDestPresenceLoading, setBlockedDestPresenceLoading] = useState(false)
+  const [blockedDestPresenceError, setBlockedDestPresenceError] = useState(false)
+  const [blockedDestPresenceUnconfig, setBlockedDestPresenceUnconfig] = useState(false)
+  const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
   const [continueBusy, setContinueBusy] = useState(false)
   const [patchBusy, setPatchBusy] = useState(false)
   const [draftDestinations, setDraftDestinations] = useState<DraftDest[] | null>(null)
@@ -490,6 +528,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [planEditErr, setPlanEditErr] = useState<string | null>(null)
 
   const [standRows, setStandRows] = useState<AmrStandPickerRow[]>([])
+  const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
+  const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
+  const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
   type RouteStopModalState = null | { mode: 'add' } | { mode: 'edit'; rowId: string }
   const [routeStopModal, setRouteStopModal] = useState<RouteStopModalState>(null)
   const [addStopPosition, setAddStopPosition] = useState('')
@@ -562,9 +603,14 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           zone: r.zone != null ? String(r.zone) : '',
           location_label: String(r.location_label ?? ''),
           orientation: String(r.orientation ?? '0'),
+          block_pickup: Number(r.block_pickup ?? 0),
+          block_dropoff: Number(r.block_dropoff ?? 0),
         }))
       )
     )
+    void getAmrSettings().then((s) => {
+      setZoneCategories(Array.isArray(s.zoneCategories) ? s.zoneCategories : [])
+    })
   }, [])
 
   useEffect(() => {
@@ -580,6 +626,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       prevFetchedMultistopSessionIdRef.current = null
       setMsData(null)
       setMsErr(null)
+      setContinueBlockedStandRef(null)
       setDraftDestinations(null)
       setDraftPickupContinue(null)
       setSavedPlanSnapshot('')
@@ -591,6 +638,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       setMsLoading(true)
     }
     setMsErr(null)
+    setContinueBlockedStandRef(null)
     let cancelled = false
     void getAmrMultistopSession(sessionId)
       .then((d) => {
@@ -731,6 +779,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           body.pickupContinue = { continueMode: 'manual' }
         }
       }
+      if (overrideSpecialLocations) body.override = true
       await patchAmrMultistopSession(sessionId, body)
       setSavedPlanSnapshot(planEditSnapshot(rows, draftPickupContinue))
       return true
@@ -741,7 +790,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     } finally {
       setPatchBusy(false)
     }
-  }, [sessionId, nextSegmentIndex, draftPickupContinue])
+  }, [sessionId, nextSegmentIndex, draftPickupContinue, overrideSpecialLocations])
 
   const handleTailDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -788,6 +837,17 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         setAddStopErr('Auto Release needs 0–86400 seconds.')
         return
       }
+    }
+
+    const effectivePutDown = modal.mode === 'edit' && isFinal ? true : routeStopPutDown
+    const restriction = legRestrictionStatus(standRows, pos, effectivePutDown)
+    if (restriction.violated && !overrideSpecialLocations) {
+      setAddStopErr(
+        canOverrideSpecial
+          ? `${restriction.message} Tick "Override restriction" to proceed.`
+          : restriction.message
+      )
+      return
     }
 
     const palletDrop = routeStopPutDown
@@ -850,6 +910,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     persistPlanFromDraftRows,
     draftDestinations,
     routeStopPutDown,
+    overrideSpecialLocations,
+    canOverrideSpecial,
   ])
 
   const addStopSuggestedStands = useMemo(() => {
@@ -893,6 +955,52 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     () => parsePickupContinueFromPlanJson(msData?.session?.plan_json),
     [msData?.session?.plan_json]
   )
+
+  const missionLogsTo = useMemo(() => {
+    if (!record) return amrPath('logs')
+    const params = new URLSearchParams()
+    const rid = String(record.id ?? '').trim()
+    if (rid) params.set('missionRecordId', rid)
+    const jc =
+      String(record.job_code ?? '').trim() || String(record.mission_code ?? '').trim()
+    const sid = String(record.multistop_session_id ?? '').trim()
+    const parts = [jc, sid].filter((p) => p.length > 0)
+    const q = parts.join(' ').trim()
+    if (q) params.set('q', q)
+    const qs = params.toString()
+    return qs ? `${amrPath('logs')}?${qs}` : amrPath('logs')
+  }, [record])
+
+  const loadBlockedDestinationPresence = useCallback(async () => {
+    const ref = continueBlockedStandRef?.trim()
+    if (!ref) return
+    setBlockedDestPresenceLoading(true)
+    setBlockedDestPresenceError(false)
+    setBlockedDestPresenceUnconfig(false)
+    try {
+      const p = await postStandPresence([ref])
+      const v = p[ref]
+      setBlockedDestPresence(typeof v === 'boolean' ? v : null)
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      if (status === 503) setBlockedDestPresenceUnconfig(true)
+      else setBlockedDestPresenceError(true)
+      setBlockedDestPresence(null)
+    } finally {
+      setBlockedDestPresenceLoading(false)
+    }
+  }, [continueBlockedStandRef])
+
+  useEffect(() => {
+    if (!continueBlockedStandRef) {
+      setBlockedDestPresence(null)
+      setBlockedDestPresenceLoading(false)
+      setBlockedDestPresenceError(false)
+      setBlockedDestPresenceUnconfig(false)
+      return
+    }
+    void loadBlockedDestinationPresence()
+  }, [continueBlockedStandRef, loadBlockedDestinationPresence])
 
   if (!record) return null
 
@@ -956,18 +1064,57 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     if (!sessionId || !draftDestinations) return
     setContinueBusy(true)
     setMsErr(null)
+    setContinueBlockedStandRef(null)
     setPlanEditErr(null)
     try {
       if (hasPlanChanges) {
         const ok = await persistPlanToServer()
         if (!ok) return
       }
+      if ((await getAmrSettings()).missionCreateStandPresenceSanityCheck !== false) {
+        const planFromDraft: MultistopReleasePlanDest[] = normalizeDraftPutDownRows(draftDestinations).map((r) => ({
+          position: r.position.trim(),
+          putDown: r.putDown === true,
+        }))
+        const ref = multistopContinueOccupiedDestinationRef(planFromDraft, nextSegmentIndex)
+        if (ref) {
+          const presence = await postStandPresence([ref])
+          if (presence[ref] === true) {
+            setMsErr(multistopStandOccupiedContinueMessage(ref))
+            setContinueBlockedStandRef(ref)
+            return
+          }
+        }
+      }
       await continueAmrMultistopSession(sessionId)
+      setContinueBlockedStandRef(null)
       setMsRefresh((n) => n + 1)
       onSessionUpdated?.()
     } catch (e: unknown) {
-      const ax = e as { response?: { data?: { error?: string } } }
-      setMsErr(ax?.response?.data?.error ?? 'Continue failed')
+      setMsErr(getApiErrorMessage(e, 'Continue failed'))
+      setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
+    } finally {
+      setContinueBusy(false)
+    }
+  }
+
+  const onConfirmForceRelease = async () => {
+    if (!sessionId || !continueBlockedStandRef) return
+    setForceReleaseConfirmOpen(false)
+    setContinueBusy(true)
+    setMsErr(null)
+    try {
+      if (hasPlanChanges) {
+        const ok = await persistPlanToServer()
+        if (!ok) return
+      }
+      await continueAmrMultistopSession(sessionId, { forceRelease: true })
+      setContinueBlockedStandRef(null)
+      setMsRefresh((n) => n + 1)
+      onSessionUpdated?.()
+    } catch (e: unknown) {
+      setMsErr(getApiErrorMessage(e, 'Force release failed'))
+      setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
     } finally {
       setContinueBusy(false)
     }
@@ -994,6 +1141,28 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        <ConfirmModal
+          open={forceReleaseConfirmOpen}
+          title="Force release"
+          variant="amber"
+          message={
+            continueBlockedStandRef ? (
+              <span>
+                Hyperion still reports a pallet at stand{' '}
+                <span className="font-mono">{continueBlockedStandRef}</span>. Force only if the stand is actually
+                clear or you accept the risk of a fleet conflict.
+              </span>
+            ) : (
+              'Force dispatch without a stand-empty check? Only continue if the stand is clear or you accept the risk.'
+            )
+          }
+          confirmLabel={continueBusy ? 'Releasing…' : 'Force release'}
+          cancelLabel="Cancel"
+          onCancel={() => {
+            if (!continueBusy) setForceReleaseConfirmOpen(false)
+          }}
+          onConfirm={() => void onConfirmForceRelease()}
+        />
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
           <div className="min-w-0 flex-1">
             <p id="mission-detail-title" className="text-xs font-medium uppercase tracking-wide text-foreground/55">
@@ -1064,7 +1233,65 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 {chainMultistopRoute ? 'Multi-stop route' : 'Route'}
               </h3>
               {msLoading ? <p className="text-sm text-foreground/60">Loading session…</p> : null}
-              {msErr ? <p className="text-sm text-red-600">{msErr}</p> : null}
+              {msErr ? (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-medium leading-snug text-red-600 dark:border-red-500/35 dark:bg-red-950/40 dark:text-red-400"
+                >
+                  <p>{msErr}</p>
+                  {continueBlockedStandRef ? (
+                    <div className="mt-3 space-y-3 border-t border-red-500/25 pt-3 dark:border-red-500/20">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="text-xs text-foreground/75">
+                            Current stand status{' '}
+                            <span className="font-mono text-foreground">{continueBlockedStandRef}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-background/80 px-2 py-1">
+                            <PalletPresenceGlyph
+                              kind={palletPresenceKindFromState({
+                                present: blockedDestPresence,
+                                loading: blockedDestPresenceLoading,
+                                error: blockedDestPresenceError,
+                                unconfigured: blockedDestPresenceUnconfig,
+                              })}
+                              showLabel
+                              className="h-4 w-4"
+                            />
+                          </span>
+                          <button
+                            type="button"
+                            disabled={blockedDestPresenceLoading || continueBusy}
+                            className="text-xs font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
+                            onClick={() => void loadBlockedDestinationPresence()}
+                          >
+                            {blockedDestPresenceLoading ? 'Refreshing…' : 'Refresh'}
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={continueBusy || patchBusy}
+                        className="min-h-[40px] w-full rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 sm:w-auto"
+                        onClick={() => void onContinue()}
+                      >
+                        Retry
+                      </button>
+                      {canForceRelease ? (
+                        <button
+                          type="button"
+                          disabled={continueBusy || patchBusy}
+                          className="min-h-[40px] w-full rounded-md border border-red-600/50 bg-background px-3 text-sm font-medium text-red-700 hover:bg-red-500/15 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/50 sm:w-auto"
+                          onClick={() => setForceReleaseConfirmOpen(true)}
+                        >
+                          Force release anyway
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {!msLoading && msData ? (
                 <>
                   {pickupPos ? (
@@ -1353,7 +1580,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
 
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3 sm:px-5">
           <Link
-            to={amrPath('logs')}
+            to={missionLogsTo}
             className="inline-flex min-h-[44px] items-center rounded-lg border border-border px-4 text-sm text-foreground hover:bg-background"
             onClick={onClose}
           >
@@ -1372,8 +1599,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         <AmrStandPickerModal
           stands={standRows}
           stackOrder="aboveDialogs"
+          mode={routeStopPutDown ? 'dropoff' : 'pickup'}
+          zoneCategories={zoneCategories}
+          canOverride={canOverrideSpecial}
           onClose={() => setAddStopPickerOpen(false)}
-          onSelect={(externalRef) => {
+          onSelect={(externalRef, opts) => {
+            if (opts.override) setOverrideSpecialLocations(true)
             setAddStopPosition(externalRef)
             setAddStopPickerOpen(false)
           }}
@@ -1610,6 +1841,30 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                   ) : null}
                 </div>
               </div>
+              {(() => {
+                const status = legRestrictionStatus(
+                  standRows,
+                  addStopPosition,
+                  showRouteModalPutDownToggle ? routeStopPutDown : true
+                )
+                if (!status.violated) return null
+                return (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 dark:text-amber-200">
+                    <span className="leading-snug">{status.message}</span>
+                    {canOverrideSpecial ? (
+                      <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-border"
+                          checked={overrideSpecialLocations}
+                          onChange={(e) => setOverrideSpecialLocations(e.target.checked)}
+                        />
+                        <span>Override restriction</span>
+                      </label>
+                    ) : null}
+                  </div>
+                )
+              })()}
                 </div>
               </div>
             </div>

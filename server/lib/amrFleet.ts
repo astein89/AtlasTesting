@@ -79,7 +79,8 @@ function truncateJsonBlob(obj: unknown, maxChars = 52000): string {
 
 
 
-async function persistFleetApiLog(
+/** Append one row to `amr_fleet_api_log` (also used for Hyperion proxy calls). */
+export async function persistFleetApiLog(
 
   ctx: AmrFleetCallLogContext,
 

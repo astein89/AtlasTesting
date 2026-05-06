@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { AmrFleetSettings } from '@/api/amr'
+import type { AmrFleetSettings, ZoneCategory } from '@/api/amr'
 import { amrFleetProxy, getAmrMissionRecords, getAmrSettings, getAmrStands } from '@/api/amr'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { useAuthStore } from '@/store/authStore'
@@ -432,6 +432,7 @@ function ContainerFleetFormModal({
   const [containerCode, setContainerCode] = useState('')
   const [position, setPosition] = useState('')
   const [stands, setStands] = useState<AmrStandPickerRow[]>([])
+  const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
   const [standPickerOpen, setStandPickerOpen] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -450,9 +451,14 @@ function ContainerFleetFormModal({
           zone: r.zone != null ? String(r.zone) : '',
           location_label: String(r.location_label ?? ''),
           orientation: String(r.orientation ?? '0'),
+          block_pickup: Number(r.block_pickup ?? 0),
+          block_dropoff: Number(r.block_dropoff ?? 0),
         }))
       )
     )
+    void getAmrSettings().then((s) => {
+      setZoneCategories(Array.isArray(s.zoneCategories) ? s.zoneCategories : [])
+    })
   }, [open])
 
   if (!open) return null
@@ -526,7 +532,7 @@ function ContainerFleetFormModal({
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-foreground/70">Location (External Ref)</label>
-            <div className="flex items-end gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <select
                 className="min-h-[40px] min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 value={position}
@@ -584,6 +590,8 @@ function ContainerFleetFormModal({
         <AmrStandPickerModal
           stands={stands}
           stackOrder="aboveDialogs"
+          mode="any"
+          zoneCategories={zoneCategories}
           onClose={() => setStandPickerOpen(false)}
           onSelect={(externalRef) => {
             setPosition(externalRef)

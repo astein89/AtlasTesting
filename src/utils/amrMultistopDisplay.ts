@@ -148,7 +148,8 @@ export function multistopSessionStatusFromGroup(g: GroupedMissionMultistop): str
 }
 
 export function isCompletedMultistopGroup(g: GroupedMissionMultistop): boolean {
-  return multistopSessionStatusFromGroup(g) === 'completed'
+  const st = multistopSessionStatusFromGroup(g)
+  return st === 'completed' || st === 'cancelled'
 }
 
 /** Pickup + one node per segment: `1 + segmentCount` physical stops on the route. */
@@ -229,6 +230,7 @@ export function friendlyMultistopSessionStatus(status: string): string {
     failed: 'Failed',
     active: 'In progress',
     completed: 'Completed',
+    cancelled: 'Cancelled',
     pending: 'Pending',
   }
   return m[status] ?? status.replace(/_/g, ' ')
@@ -246,6 +248,8 @@ export function multistopSessionWorkflowChipCode(workflow: string | null): numbe
       return 60
     case 'completed':
       return 30
+    case 'cancelled':
+      return 35
     case 'pending':
       return 10
     default:

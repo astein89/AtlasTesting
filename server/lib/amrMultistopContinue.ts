@@ -4,9 +4,12 @@ import type { AmrFleetConfig } from './amrConfig.js'
 import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from './amrFleet.js'
 import {
   buildSegmentMissionData,
+  multistopSegmentDropDestinationRef,
   parseMultistopPlan,
   robotIdFromFleetJob,
 } from './amrMultistop.js'
+import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
+import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
 
 export function multistopSegmentMissionCode(baseMissionCode: string, segmentIndex: number): string {
   return `${baseMissionCode.trim()}-${segmentIndex + 1}`
@@ -85,7 +88,7 @@ export type ExecuteMultistopContinueResult =
       next_segment_index: number
       fleetSubmit: unknown
     }
-  | { ok: false; status: number; error: string; json?: unknown }
+  | { ok: false; status: number; error: string; json?: unknown; standOccupiedRef?: string }
 
 export async function executeMultistopContinue(params: {
   db: AsyncDbWrapper
@@ -93,8 +96,10 @@ export async function executeMultistopContinue(params: {
   sessionId: string
   userId: string | null
   source: MultistopContinueSource
+  /** When set (manual continue only), skip Hyperion stand-empty verification. */
+  skipStandPresenceCheck?: boolean
 }): Promise<ExecuteMultistopContinueResult> {
-  const { db, cfg, sessionId, userId, source } = params
+  const { db, cfg, sessionId, userId, source, skipStandPresenceCheck } = params
   const row = (await db.prepare('SELECT * FROM amr_multistop_sessions WHERE id = ?').get(sessionId)) as
     | Record<string, unknown>
     | undefined
@@ -113,6 +118,39 @@ export async function executeMultistopContinue(params: {
   if (!plan) {
     return { ok: false, status: 500, error: 'Invalid session plan' }
   }
+
+  if (cfg.missionCreateStandPresenceSanityCheck && !skipStandPresenceCheck) {
+    const destRef = multistopSegmentDropDestinationRef(plan, next_segment_index)
+    if (destRef) {
+      const hcfg = await getAmrHyperionConfig(db)
+      if (!hyperionConfigured(hcfg)) {
+        return {
+          ok: false,
+          status: 503,
+          error:
+            'Hyperion API is not configured. Cannot verify destination stand is empty before continue.',
+        }
+      }
+      const pr = await fetchStandPresenceFromHyperion(hcfg, [destRef], {
+        db,
+        source: 'multistop-continue-presence',
+        userId: userId ?? undefined,
+      })
+      if (!pr.ok) {
+        const st = typeof pr.status === 'number' && pr.status >= 400 && pr.status < 600 ? pr.status : 502
+        return { ok: false, status: st, error: pr.message }
+      }
+      if (pr.presence[destRef] === true) {
+        return {
+          ok: false,
+          status: 409,
+          error: `Pallet present on stand ${destRef}. Unable to dispatch.`,
+          standOccupiedRef: destRef,
+        }
+      }
+    }
+  }
+
   const pickup_position = String(row.pickup_position ?? '')
   let unlockRobotId = ''
   if (next_segment_index > 0) {

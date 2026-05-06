@@ -20,6 +20,9 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const inWiki = location.pathname.startsWith('/wiki')
   const inFiles = location.pathname.startsWith('/files')
   const inAmr = location.pathname.startsWith('/amr')
+  const pathNorm = location.pathname.replace(/\/$/, '') || '/'
+  const missionsRoot = amrPath('missions')
+  const inMissionsSection = pathNorm === missionsRoot || pathNorm.startsWith(`${missionsRoot}/`)
   const wikiOrFilesWide = inWiki || (inFiles && hasPermission('module.files'))
 
   return (
@@ -162,9 +165,9 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             <NavLink
               to={amrPath('missions')}
               onClick={onClose}
-              className={({ isActive }) =>
+              className={() =>
                 `${baseLink} ${
-                  isActive
+                  inMissionsSection
                     ? 'bg-primary text-primary-foreground'
                     : 'text-foreground hover:bg-background'
                 }`
@@ -172,6 +175,21 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             >
               Missions
             </NavLink>
+            {inMissionsSection ? (
+              <NavLink
+                to={amrPath('missions', 'templates')}
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `${baseLink} ml-2 border-l border-border/70 pl-4 ${
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-foreground hover:bg-background'
+                  }`
+                }
+              >
+                Templates
+              </NavLink>
+            ) : null}
             <NavLink
               to={amrPath('robots')}
               onClick={onClose}

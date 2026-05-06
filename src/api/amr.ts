@@ -1,4 +1,34 @@
 import { api } from './client'
+import type { AmrMissionTemplatePayloadV1 } from '@/utils/amrMissionTemplate'
+
+/** Maps a category name to an ordered list of zone names. Stored on AMR fleet config. */
+export type ZoneCategory = {
+  name: string
+  zones: string[]
+}
+
+/** Picker context used to filter stands whose `block_pickup` / `block_dropoff` would forbid the chosen step. */
+export type AmrStandPickerMode = 'pickup' | 'dropoff' | 'any'
+
+/** Row shape returned by `GET /dc/stands` (kept loose for forward-compat with extra fields). */
+export type AmrStandRow = {
+  id: string
+  zone: string
+  location_label: string
+  external_ref: string
+  dwg_ref: string | null
+  orientation: string
+  x: number
+  y: number
+  enabled: number
+  /** 0 = allowed; 1 = "no lift" (cannot pickup at this stand). */
+  block_pickup: number
+  /** 0 = allowed; 1 = "no lower" (cannot dropoff at this stand). */
+  block_dropoff: number
+  created_at: string | null
+  updated_at: string | null
+  [extra: string]: unknown
+}
 
 export type AmrFleetSettings = {
   serverIp: string
@@ -18,6 +48,16 @@ export type AmrFleetSettings = {
   pollMsContainers: number
   /** Missions page default for hiding fleet-complete rows when no browser-local choice exists. */
   hideFleetCompleteAfterMinutesDefault?: number | null
+  /**
+   * When true (default if omitted), New mission / template create calls Hyperion and may prompt if stop 1 is empty while another stop has a pallet.
+   */
+  missionCreateStandPresenceSanityCheck?: boolean
+  /** Hyperion API origin (e.g. http://host:1881). Used for stand presence and future Hyperion proxies. */
+  hyperionBaseUrl?: string
+  hyperionUsername?: string
+  hyperionPasswordConfigured?: boolean
+  /** Ordered zone categories used to group the stand picker zone list. */
+  zoneCategories?: ZoneCategory[]
 }
 
 /** App mission records — match server mission worker cadence (`pollMsMissionWorker`, else `pollMsMissions`). */
@@ -35,9 +75,19 @@ export async function getAmrSettings() {
   return data
 }
 
-export async function putAmrSettings(body: Partial<AmrFleetSettings> & { authKey?: string }) {
+export async function putAmrSettings(
+  body: Partial<AmrFleetSettings> & { authKey?: string; hyperionPassword?: string }
+) {
   const { data } = await api.put<AmrFleetSettings>('/amr/dc/settings', body)
   return data
+}
+
+/** Batch stand presence from Hyperion via DC proxy. Pass explicit refs (may be empty → empty map). */
+export async function postStandPresence(standIds: string[]) {
+  const { data } = await api.post<{ presence: Record<string, boolean> }>('/amr/dc/stands/presence', {
+    standIds,
+  })
+  return data.presence
 }
 
 export async function testAmrFleetConnection() {
@@ -146,10 +196,97 @@ export async function patchAmrMultistopSession(sessionId: string, body: Record<s
   return data
 }
 
-export async function continueAmrMultistopSession(sessionId: string) {
+export async function continueAmrMultistopSession(
+  sessionId: string,
+  opts?: { forceRelease?: boolean }
+) {
+  const body: Record<string, boolean> = {}
+  if (opts?.forceRelease) body.forceRelease = true
   const { data } = await api.post<unknown>(
     `/amr/dc/missions/multistop/${encodeURIComponent(sessionId)}/continue`,
-    {}
+    body
+  )
+  return data
+}
+
+/** Abandon multistop before first fleet submitMission (deferred segment 0): fleet containerOut + session cancelled. */
+export async function cancelAmrMultistopSession(sessionId: string) {
+  const { data } = await api.delete<{ ok: boolean; sessionId: string; status: string }>(
+    `/amr/dc/missions/multistop/${encodeURIComponent(sessionId)}`
+  )
+  return data
+}
+
+export type AmrMissionTemplateListItem = {
+  id: string
+  name: string
+  stopCount: number
+  /** Up to 3 lines: `externalRef · Pickup|Drop`, or two such lines plus "+ N more" when there are more than 3 stops. */
+  stopLines: string[]
+  /** Robot IDs saved on the template for fleet targeting (empty if none). */
+  robotIds: string[]
+  createdAt: string | null
+  updatedAt: string | null
+  createdByUsername: string | null
+}
+
+export async function listAmrMissionTemplates(options?: { signal?: AbortSignal }) {
+  const { data } = await api.get<{ templates: AmrMissionTemplateListItem[] }>('/amr/dc/mission-templates', {
+    signal: options?.signal,
+  })
+  return data.templates
+}
+
+export type AmrMissionTemplateDetail = {
+  id: string
+  name: string
+  payload: AmrMissionTemplatePayloadV1
+  createdAt: string | null
+  updatedAt: string | null
+  createdBy: string | null
+  createdByUsername: string | null
+}
+
+export async function getAmrMissionTemplate(id: string, options?: { signal?: AbortSignal }) {
+  const { data } = await api.get<{ template: AmrMissionTemplateDetail }>(
+    `/amr/dc/mission-templates/${encodeURIComponent(id)}`,
+    { signal: options?.signal }
+  )
+  return data.template
+}
+
+export async function createAmrMissionTemplate(body: {
+  name: string
+  payload: AmrMissionTemplatePayloadV1
+  /** When true, allow legs that violate stand block flags (requires `amr.stands.override-special`). */
+  override?: boolean
+}) {
+  const { data } = await api.post<{
+    id: string
+    name: string
+    payload: AmrMissionTemplatePayloadV1
+    createdAt: string
+    updatedAt: string
+  }>('/amr/dc/mission-templates', body)
+  return data
+}
+
+export async function updateAmrMissionTemplate(
+  id: string,
+  body: Partial<{ name: string; payload: AmrMissionTemplatePayloadV1 }> & { override?: boolean }
+) {
+  const { data } = await api.put<{
+    id: string
+    name: string
+    payload: AmrMissionTemplatePayloadV1
+    updatedAt: string
+  }>(`/amr/dc/mission-templates/${encodeURIComponent(id)}`, body)
+  return data
+}
+
+export async function deleteAmrMissionTemplate(id: string) {
+  const { data } = await api.delete<{ ok: boolean }>(
+    `/amr/dc/mission-templates/${encodeURIComponent(id)}`
   )
   return data
 }

@@ -14,8 +14,17 @@ import {
   getAmrFleetConfig,
   saveAmrFleetConfig,
   publicAmrFleetConfig,
+  normalizeZoneCategories,
   type AmrFleetConfig,
 } from '../lib/amrConfig.js'
+import {
+  getAmrHyperionConfig,
+  saveAmrHyperionConfig,
+  publicAmrHyperionConfig,
+  hyperionConfigured,
+  type AmrHyperionConfig,
+} from '../lib/hyperionConfig.js'
+import { fetchStandPresenceFromHyperion } from '../lib/amrStandPresence.js'
 import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from '../lib/amrFleet.js'
 import {
   buildSegmentMissionData,
@@ -33,6 +42,15 @@ import {
   resolveMultistopBaseMissionCode,
 } from '../lib/amrMultistopContinue.js'
 import { rescheduleAmrMissionWorker } from '../lib/amrMissionWorker.js'
+import {
+  validateMissionTemplatePayload,
+  templateListCardFieldsFromPayloadJson,
+  type AmrMissionTemplatePayloadV1,
+} from '../lib/amrMissionTemplate.js'
+
+function jsonMissionTemplatePayload(p: AmrMissionTemplatePayloadV1): string {
+  return JSON.stringify(p)
+}
 
 const router = Router()
 
@@ -64,6 +82,19 @@ function normalizeDwgRef(v: unknown): string | null {
   return s === '' ? null : s
 }
 
+/** Loose boolean coercion: accepts boolean, 0/1 number, or `'true' | 'false' | '1' | '0' | 'yes' | 'no'` strings. */
+function coerceBoolFlag(v: unknown, fallback: 0 | 1): 0 | 1 {
+  if (v === undefined) return fallback
+  if (typeof v === 'boolean') return v ? 1 : 0
+  if (typeof v === 'number') return v ? 1 : 0
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (s === 'true' || s === '1' || s === 'yes') return 1
+    if (s === 'false' || s === '0' || s === 'no' || s === '') return 0
+  }
+  return fallback
+}
+
 async function standIdWithExternalRef(externalRef: string, excludeId?: string): Promise<string | undefined> {
   const row = excludeId
     ? ((await db.prepare('SELECT id FROM amr_stands WHERE external_ref = ? AND id != ?').get(externalRef, excludeId)) as
@@ -83,13 +114,67 @@ async function standIdWithDwgRef(dwg: string | null, excludeId?: string): Promis
   return row?.id
 }
 
+type StandLegToValidate = { position: string; putDown: boolean }
+
+/**
+ * Validate that no leg targets a stand whose `block_pickup` (no lift) / `block_dropoff` (no lower) flag forbids the
+ * step's lift/drop direction. When `override` is true and the caller has `amr.stands.override-special`, violations are
+ * allowed through.
+ */
+async function validateStandBlocksForLegs(
+  legs: StandLegToValidate[],
+  override: boolean,
+  hasOverridePerm: boolean
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const refs: string[] = []
+  const seen = new Set<string>()
+  for (const leg of legs) {
+    const p = leg.position.trim()
+    if (!p || seen.has(p)) continue
+    seen.add(p)
+    refs.push(p)
+  }
+  if (refs.length === 0) return { ok: true }
+  const placeholders = refs.map(() => '?').join(', ')
+  const rows = (await db
+    .prepare(
+      `SELECT external_ref, block_pickup, block_dropoff FROM amr_stands WHERE external_ref IN (${placeholders})`
+    )
+    .all(...refs)) as Array<{ external_ref: string; block_pickup: number; block_dropoff: number }>
+  const byRef = new Map(rows.map((r) => [r.external_ref, r]))
+  const violations: string[] = []
+  for (const leg of legs) {
+    const p = leg.position.trim()
+    if (!p) continue
+    const stand = byRef.get(p)
+    if (!stand) continue
+    if (!leg.putDown && Number(stand.block_pickup) === 1) {
+      violations.push(`Location "${p}" does not allow pallet pickup (no lift).`)
+    }
+    if (leg.putDown && Number(stand.block_dropoff) === 1) {
+      violations.push(`Location "${p}" does not allow pallet dropoff (no lower).`)
+    }
+  }
+  if (violations.length === 0) return { ok: true }
+  if (override) {
+    if (hasOverridePerm) return { ok: true }
+    return {
+      ok: false,
+      status: 403,
+      error: `Special-location override permission required: ${violations.join(' ')}`,
+    }
+  }
+  return { ok: false, status: 400, error: violations.join(' ') }
+}
+
 router.get(
   '/dc/settings',
   authMiddleware,
   requirePermission('module.amr'),
   asyncRoute(async (_req, res) => {
-    const cfg = await getAmrFleetConfig(db)
-    res.json(publicAmrFleetConfig(cfg))
+    const fleet = publicAmrFleetConfig(await getAmrFleetConfig(db))
+    const hyperion = publicAmrHyperionConfig(await getAmrHyperionConfig(db))
+    res.json({ ...fleet, ...hyperion })
   })
 )
 
@@ -120,11 +205,29 @@ router.put(
       if (h === null) patch.hideFleetCompleteAfterMinutesDefault = null
       else if (typeof h === 'number' && h > 0 && Number.isFinite(h)) patch.hideFleetCompleteAfterMinutesDefault = h
     }
+    if (typeof body.missionCreateStandPresenceSanityCheck === 'boolean')
+      patch.missionCreateStandPresenceSanityCheck = body.missionCreateStandPresenceSanityCheck
+    if ('zoneCategories' in body) {
+      patch.zoneCategories = normalizeZoneCategories(body.zoneCategories)
+    }
     if (typeof body.authKey === 'string') patch.authKey = body.authKey
 
     const next = await saveAmrFleetConfig(db, patch)
     rescheduleAmrMissionWorker()
-    res.json(publicAmrFleetConfig(next))
+
+    const hPatch: Partial<AmrHyperionConfig> & { password?: string } = {}
+    if (typeof body.hyperionBaseUrl === 'string') hPatch.baseUrl = body.hyperionBaseUrl
+    if (typeof body.hyperionUsername === 'string') hPatch.username = body.hyperionUsername
+    if (typeof body.hyperionPassword === 'string' && body.hyperionPassword.length > 0) {
+      hPatch.password = body.hyperionPassword
+    }
+    if (Object.keys(hPatch).length > 0) {
+      await saveAmrHyperionConfig(db, hPatch)
+    }
+
+    const fleetOut = publicAmrFleetConfig(next)
+    const hyperionOut = publicAmrHyperionConfig(await getAmrHyperionConfig(db))
+    res.json({ ...fleetOut, ...hyperionOut })
   })
 )
 
@@ -182,6 +285,42 @@ router.post(
   })
 )
 
+router.post(
+  '/dc/stands/presence',
+  authMiddleware,
+  requirePermission('module.amr'),
+  asyncRoute(async (req, res) => {
+    const body = req.body as { standIds?: unknown }
+    const raw = body?.standIds
+    let standIds: string[] | undefined
+    if (Array.isArray(raw)) {
+      standIds = raw.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean)
+      if (standIds.length === 0) {
+        res.json({ presence: {} as Record<string, boolean> })
+        return
+      }
+    }
+    const hcfg = await getAmrHyperionConfig(db)
+    if (!hyperionConfigured(hcfg)) {
+      res.status(503).json({
+        error: 'Hyperion API is not configured. Set base URL, username, and password under AMR settings.',
+      })
+      return
+    }
+    const result = await fetchStandPresenceFromHyperion(hcfg, standIds, {
+      db,
+      source: 'hyperion-stand-presence',
+      userId: req.user!.id,
+    })
+    if (!result.ok) {
+      const code = result.status && result.status >= 400 && result.status < 600 ? result.status : 502
+      res.status(code).json({ error: result.message })
+      return
+    }
+    res.json({ presence: result.presence })
+  })
+)
+
 router.get(
   '/dc/stands',
   authMiddleware,
@@ -215,6 +354,8 @@ router.post(
     const x = typeof b.x === 'number' ? b.x : 0
     const y = typeof b.y === 'number' ? b.y : 0
     const enabled = b.enabled === false ? 0 : 1
+    const block_pickup = coerceBoolFlag(b.block_pickup, 0)
+    const block_dropoff = coerceBoolFlag(b.block_dropoff, 0)
     const ts = nowTs()
 
     if (await standIdWithExternalRef(external_ref)) {
@@ -232,10 +373,24 @@ router.post(
 
     await db
       .prepare(
-        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, ts, ts)
+      .run(
+        id,
+        zone,
+        location_label,
+        external_ref,
+        dwg_ref,
+        orientation,
+        x,
+        y,
+        enabled,
+        block_pickup,
+        block_dropoff,
+        ts,
+        ts
+      )
     const row = (await db.prepare('SELECT * FROM amr_stands WHERE id = ?').get(id)) as Record<
       string,
       unknown
@@ -277,6 +432,14 @@ router.patch(
     const x = typeof b.x === 'number' ? b.x : Number(existing.x ?? 0)
     const y = typeof b.y === 'number' ? b.y : Number(existing.y ?? 0)
     const enabled = b.enabled === false ? 0 : b.enabled === true ? 1 : Number(existing.enabled ?? 1)
+    const block_pickup =
+      'block_pickup' in b
+        ? coerceBoolFlag(b.block_pickup, 0)
+        : (Number(existing.block_pickup ?? 0) ? 1 : 0)
+    const block_dropoff =
+      'block_dropoff' in b
+        ? coerceBoolFlag(b.block_dropoff, 0)
+        : (Number(existing.block_dropoff ?? 0) ? 1 : 0)
 
     const conflictLoc = await standIdWithExternalRef(external_ref, id)
     if (conflictLoc) {
@@ -294,9 +457,22 @@ router.patch(
 
     await db
       .prepare(
-        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, updated_at = ? WHERE id = ?`
+        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, updated_at = ? WHERE id = ?`
       )
-      .run(zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, nowTs(), id)
+      .run(
+        zone,
+        location_label,
+        external_ref,
+        dwg_ref,
+        orientation,
+        x,
+        y,
+        enabled,
+        block_pickup,
+        block_dropoff,
+        nowTs(),
+        id
+      )
     const row = (await db.prepare('SELECT * FROM amr_stands WHERE id = ?').get(id)) as Record<string, unknown>
     res.json(row)
   })
@@ -388,6 +564,24 @@ router.post(
       const y = parseFloat(row.y ?? '0') || 0
       const enabled =
         String(row.enabled ?? row.Enabled ?? 'true').toLowerCase() === 'false' ? 0 : 1
+      const blockPickupRaw =
+        row.block_pickup ??
+        row['Block Pickup'] ??
+        row.no_pickup ??
+        row['No Pickup'] ??
+        row.no_lift ??
+        row.NoLift ??
+        row['No Lift']
+      const blockDropoffRaw =
+        row.block_dropoff ??
+        row['Block Dropoff'] ??
+        row.no_dropoff ??
+        row['No Dropoff'] ??
+        row.no_lower ??
+        row.NoLower ??
+        row['No Lower']
+      const block_pickup = coerceBoolFlag(blockPickupRaw, 0)
+      const block_dropoff = coerceBoolFlag(blockDropoffRaw, 0)
 
       if (dwgNorm) {
         const winnerDwgLine = firstCsvLineForDwg.get(dwgNorm)
@@ -416,9 +610,21 @@ router.post(
           }
           await db
             .prepare(
-              `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, updated_at = ? WHERE id = ?`
+              `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, updated_at = ? WHERE id = ?`
             )
-            .run(zone, location_label, dwgNorm, orientation, x, y, enabled, ts, existing.id)
+            .run(
+              zone,
+              location_label,
+              dwgNorm,
+              orientation,
+              x,
+              y,
+              enabled,
+              block_pickup,
+              block_dropoff,
+              ts,
+              existing.id
+            )
         } else {
           if (dwgNorm && (await standIdWithDwgRef(dwgNorm))) {
             failures.push({
@@ -431,10 +637,24 @@ router.post(
           const id = uuidv4()
           await db
             .prepare(
-              `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             )
-            .run(id, zone, location_label, external_ref, dwgNorm, orientation, x, y, enabled, ts, ts)
+            .run(
+              id,
+              zone,
+              location_label,
+              external_ref,
+              dwgNorm,
+              orientation,
+              x,
+              y,
+              enabled,
+              block_pickup,
+              block_dropoff,
+              ts,
+              ts
+            )
         }
         n += 1
       } catch (e) {
@@ -628,6 +848,18 @@ router.post(
       return
     }
 
+    const legsToValidate: StandLegToValidate[] = sortedForSubmit.map((s) => ({
+      position: typeof (s as { position?: unknown }).position === 'string' ? String((s as { position: string }).position) : '',
+      putDown: Boolean((s as { putDown?: unknown }).putDown),
+    }))
+    const overrideRequested = b.override === true || b.override === 'true'
+    const hasOverridePerm = roleHasPermission(req.user?.permissions ?? [], 'amr.stands.override-special')
+    const blockCheck = await validateStandBlocksForLegs(legsToValidate, overrideRequested, hasOverridePerm)
+    if (!blockCheck.ok) {
+      res.status(blockCheck.status).json({ error: blockCheck.error })
+      return
+    }
+
     let missionCode =
       typeof b.missionCode === 'string' && b.missionCode.trim() ? b.missionCode.trim() : genDCA('RM')
     let containerCode =
@@ -769,6 +1001,90 @@ router.get(
   })
 )
 
+router.delete(
+  '/dc/missions/multistop/:sessionId',
+  authMiddleware,
+  requirePermission('amr.missions.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const sessionId = typeof req.params.sessionId === 'string' ? req.params.sessionId.trim() : ''
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId required' })
+      return
+    }
+    const session = (await db.prepare('SELECT * FROM amr_multistop_sessions WHERE id = ?').get(sessionId)) as
+      | Record<string, unknown>
+      | undefined
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' })
+      return
+    }
+    if (String(session.status ?? '') !== 'awaiting_continue') {
+      res.status(409).json({
+        error: 'Only a session waiting to continue can be cancelled before the first submitMission',
+      })
+      return
+    }
+    const nextIdx = Number(session.next_segment_index)
+    if (!Number.isFinite(nextIdx) || nextIdx !== 0) {
+      res.status(409).json({ error: 'Cancel is only allowed before the first fleet segment has started' })
+      return
+    }
+    const cntRow = (await db
+      .prepare('SELECT COUNT(*) AS c FROM amr_mission_records WHERE multistop_session_id = ?')
+      .get(sessionId)) as { c?: number | string } | undefined
+    const recCount = Number(cntRow?.c ?? 0)
+    if (!Number.isFinite(recCount) || recCount > 0) {
+      res.status(409).json({ error: 'Cannot cancel: mission records already exist for this session' })
+      return
+    }
+
+    const cfg = await getAmrFleetConfig(db)
+    const containerCode = typeof session.container_code === 'string' ? session.container_code.trim() : ''
+    const position = typeof session.pickup_position === 'string' ? session.pickup_position.trim() : ''
+    if (!containerCode || !position) {
+      res.status(500).json({ error: 'Session is missing container or pickup position' })
+      return
+    }
+    const enterOrientationRaw = session.enter_orientation
+    const enterOrientation =
+      enterOrientationRaw != null && String(enterOrientationRaw).trim()
+        ? String(enterOrientationRaw).trim()
+        : '0'
+
+    const outReq = {
+      orgId: cfg.orgId,
+      requestId: genDCA('CO'),
+      containerType: cfg.containerType,
+      containerModelCode: cfg.containerModelCode,
+      containerCode,
+      position,
+      enterOrientation,
+      isDelete: true,
+    }
+    const out = await forwardAmrFleetRequest(cfg, 'containerOut', outReq, {
+      db,
+      source: 'multistop-cancel',
+      missionRecordId: null,
+      userId: req.user!.id,
+    })
+    if (!out.ok || !fleetJsonIndicatesSuccess(out.json)) {
+      res.status(502).json({
+        error: 'Fleet containerOut failed; session was not cancelled.',
+        fleetStatus: out.status,
+        fleet: out.json,
+      })
+      return
+    }
+
+    const ts = nowTs()
+    await db
+      .prepare(`UPDATE amr_multistop_sessions SET status = 'cancelled', updated_at = ? WHERE id = ?`)
+      .run(ts, sessionId)
+    rescheduleAmrMissionWorker()
+    res.json({ ok: true, sessionId, status: 'cancelled' })
+  })
+)
+
 router.patch(
   '/dc/missions/multistop/:sessionId',
   authMiddleware,
@@ -842,6 +1158,26 @@ router.patch(
     } else if (oldPlan?.pickupContinue) {
       newPlan.pickupContinue = oldPlan.pickupContinue
     }
+
+    const editLegsToValidate: StandLegToValidate[] = newPlan.destinations.map((d, i) => ({
+      position: d.position,
+      putDown: i === newPlan.destinations.length - 1 ? true : Boolean(d.putDown),
+    }))
+    const editOverrideRequested = body.override === true || body.override === 'true'
+    const editHasOverridePerm = roleHasPermission(
+      req.user?.permissions ?? [],
+      'amr.stands.override-special'
+    )
+    const editBlockCheck = await validateStandBlocksForLegs(
+      editLegsToValidate,
+      editOverrideRequested,
+      editHasOverridePerm
+    )
+    if (!editBlockCheck.ok) {
+      res.status(editBlockCheck.status).json({ error: editBlockCheck.error })
+      return
+    }
+
     const total_segments = newPlan.destinations.length
     const ts = nowTs()
     const continueDeadline = continueNotBeforeForAwaitingSession(newPlan, nextIdx, Date.now())
@@ -865,16 +1201,32 @@ router.post(
       return
     }
     const cfg = await getAmrFleetConfig(db)
+    const body = (req.body ?? {}) as Record<string, unknown>
+    const forceRelease = body.forceRelease === true || body.forceRelease === 'true'
+    if (
+      forceRelease &&
+      !roleHasPermission(req.user?.permissions ?? [], 'amr.missions.force_release')
+    ) {
+      res.status(403).json({ error: 'Force release permission required.' })
+      return
+    }
     const result = await executeMultistopContinue({
       db,
       cfg,
       sessionId,
       userId: req.user!.id,
       source: 'multistop-continue',
+      skipStandPresenceCheck: forceRelease,
     })
     if (!result.ok) {
       if (result.status === 404) res.status(404).json({ error: result.error })
-      else if (result.status === 409) res.status(409).json({ error: result.error })
+      else if (result.status === 409) {
+        const ref = typeof result.standOccupiedRef === 'string' ? result.standOccupiedRef.trim() : ''
+        res.status(409).json({
+          error: result.error,
+          ...(ref ? { code: 'STAND_OCCUPIED' as const, standOccupiedRef: ref } : {}),
+        })
+      }
       else if (result.status === 400)
         res.status(400).json({ error: result.error, fleetSubmitMission: result.json })
       else res.status(result.status).json(result.json ?? { error: result.error })
@@ -929,6 +1281,26 @@ router.post(
       }
       plan.pickupContinue = pc.value
     }
+
+    const multistopLegsToValidate: StandLegToValidate[] = [
+      { position: pickupRaw, putDown: false },
+      ...plan.destinations.map((d, i) => ({
+        position: d.position,
+        putDown: i === plan.destinations.length - 1 ? true : Boolean(d.putDown),
+      })),
+    ]
+    const overrideRequested = b.override === true || b.override === 'true'
+    const hasOverridePerm = roleHasPermission(req.user?.permissions ?? [], 'amr.stands.override-special')
+    const blockCheck = await validateStandBlocksForLegs(
+      multistopLegsToValidate,
+      overrideRequested,
+      hasOverridePerm
+    )
+    if (!blockCheck.ok) {
+      res.status(blockCheck.status).json({ error: blockCheck.error })
+      return
+    }
+
     const baseMissionCode =
       typeof b.missionCode === 'string' && b.missionCode.trim() ? b.missionCode.trim() : genDCA('RM')
     const missionCode = multistopSegmentMissionCode(baseMissionCode, 0)
@@ -1107,6 +1479,257 @@ router.post(
       fleetSubmit: sm.json,
       fleetContainerIn: ci.json,
     })
+  })
+)
+
+router.get(
+  '/dc/mission-templates',
+  authMiddleware,
+  requirePermission('module.amr'),
+  asyncRoute(async (_req, res) => {
+    const rows = (await db
+      .prepare(
+        `SELECT t.id, t.name, t.payload_json, t.created_at, t.updated_at, u.username AS created_by_username
+         FROM amr_mission_templates t
+         LEFT JOIN users u ON u.id = t.created_by
+         ORDER BY LOWER(t.name)`
+      )
+      .all()) as Record<string, unknown>[]
+    const templates = rows.map((r) => {
+      const payloadJson = String(r.payload_json ?? '')
+      const card = templateListCardFieldsFromPayloadJson(payloadJson)
+      return {
+        id: String(r.id ?? ''),
+        name: String(r.name ?? ''),
+        stopCount: card.stopCount,
+        stopLines: card.stopLines,
+        robotIds: card.robotIds,
+        createdAt: r.created_at != null ? String(r.created_at) : null,
+        updatedAt: r.updated_at != null ? String(r.updated_at) : null,
+        createdByUsername: r.created_by_username != null ? String(r.created_by_username) : null,
+      }
+    })
+    res.json({ templates })
+  })
+)
+
+router.get(
+  '/dc/mission-templates/:id',
+  authMiddleware,
+  requirePermission('module.amr'),
+  asyncRoute(async (req, res) => {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+    if (!id) {
+      res.status(400).json({ error: 'template id required' })
+      return
+    }
+    const row = (await db
+      .prepare(
+        `SELECT t.id, t.name, t.payload_json, t.created_at, t.updated_at, t.created_by, u.username AS created_by_username
+         FROM amr_mission_templates t
+         LEFT JOIN users u ON u.id = t.created_by
+         WHERE t.id = ?`
+      )
+      .get(id)) as Record<string, unknown> | undefined
+    if (!row) {
+      res.status(404).json({ error: 'Template not found' })
+      return
+    }
+    let payload: unknown
+    try {
+      payload = JSON.parse(String(row.payload_json ?? '{}'))
+    } catch {
+      res.status(500).json({ error: 'Stored template payload is invalid JSON' })
+      return
+    }
+    const v = validateMissionTemplatePayload(payload)
+    if (!v.ok) {
+      res.status(500).json({ error: `Stored template invalid: ${v.error}` })
+      return
+    }
+    res.json({
+      template: {
+        id: String(row.id ?? ''),
+        name: String(row.name ?? ''),
+        payload: v.payload,
+        createdAt: row.created_at != null ? String(row.created_at) : null,
+        updatedAt: row.updated_at != null ? String(row.updated_at) : null,
+        createdBy: row.created_by != null ? String(row.created_by) : null,
+        createdByUsername: row.created_by_username != null ? String(row.created_by_username) : null,
+      },
+    })
+  })
+)
+
+router.post(
+  '/dc/mission-templates',
+  authMiddleware,
+  requirePermission('amr.missions.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const b = req.body as Record<string, unknown>
+    const nameRaw = typeof b.name === 'string' ? b.name.trim() : ''
+    if (!nameRaw) {
+      res.status(400).json({ error: 'name required' })
+      return
+    }
+    const v = validateMissionTemplatePayload(b.payload)
+    if (!v.ok) {
+      res.status(400).json({ error: v.error })
+      return
+    }
+    {
+      const tmplLegs: StandLegToValidate[] = v.payload.legs.map((leg, i) => ({
+        position: leg.position,
+        putDown: i === 0 ? false : i === v.payload.legs.length - 1 ? true : Boolean(leg.putDown),
+      }))
+      const overrideRequested = b.override === true || b.override === 'true'
+      const hasOverridePerm = roleHasPermission(
+        req.user?.permissions ?? [],
+        'amr.stands.override-special'
+      )
+      const blockCheck = await validateStandBlocksForLegs(tmplLegs, overrideRequested, hasOverridePerm)
+      if (!blockCheck.ok) {
+        res.status(blockCheck.status).json({ error: blockCheck.error })
+        return
+      }
+    }
+    const dupe = (await db.prepare('SELECT id FROM amr_mission_templates WHERE LOWER(name) = LOWER(?)').get(nameRaw)) as
+      | { id: string }
+      | undefined
+    if (dupe) {
+      res.status(409).json({ error: 'A template with this name already exists' })
+      return
+    }
+    const id = uuidv4()
+    const ts = nowTs()
+    const payloadJson = jsonMissionTemplatePayload(v.payload)
+    try {
+      await db
+        .prepare(
+          `INSERT INTO amr_mission_templates (id, name, payload_json, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(id, nameRaw, payloadJson, req.user!.id, ts, ts)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/UNIQUE|unique/i.test(msg)) {
+        res.status(409).json({ error: 'A template with this name already exists' })
+        return
+      }
+      throw e
+    }
+    res.status(201).json({
+      id,
+      name: nameRaw,
+      payload: v.payload,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  })
+)
+
+router.put(
+  '/dc/mission-templates/:id',
+  authMiddleware,
+  requirePermission('amr.missions.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+    if (!id) {
+      res.status(400).json({ error: 'template id required' })
+      return
+    }
+    const existing = (await db.prepare('SELECT id, name, payload_json FROM amr_mission_templates WHERE id = ?').get(id)) as
+      | { id: string; name: string; payload_json: string }
+      | undefined
+    if (!existing) {
+      res.status(404).json({ error: 'Template not found' })
+      return
+    }
+    const b = req.body as Record<string, unknown>
+    let nextName = existing.name
+    if (b.name !== undefined) {
+      if (typeof b.name !== 'string' || !b.name.trim()) {
+        res.status(400).json({ error: 'name must be a non-empty string' })
+        return
+      }
+      nextName = b.name.trim()
+    }
+    let nextPayload: AmrMissionTemplatePayloadV1
+    if (b.payload !== undefined) {
+      const v = validateMissionTemplatePayload(b.payload)
+      if (!v.ok) {
+        res.status(400).json({ error: v.error })
+        return
+      }
+      nextPayload = v.payload
+    } else {
+      const parsed = JSON.parse(existing.payload_json)
+      const v = validateMissionTemplatePayload(parsed)
+      if (!v.ok) {
+        res.status(500).json({ error: `Stored template invalid: ${v.error}` })
+        return
+      }
+      nextPayload = v.payload
+    }
+    if (nextName !== existing.name) {
+      const dupe = (await db
+        .prepare('SELECT id FROM amr_mission_templates WHERE LOWER(name) = LOWER(?) AND id != ?')
+        .get(nextName, id)) as { id: string } | undefined
+      if (dupe) {
+        res.status(409).json({ error: 'A template with this name already exists' })
+        return
+      }
+    }
+    if (b.payload !== undefined) {
+      const tmplLegs: StandLegToValidate[] = nextPayload.legs.map((leg, i) => ({
+        position: leg.position,
+        putDown: i === 0 ? false : i === nextPayload.legs.length - 1 ? true : Boolean(leg.putDown),
+      }))
+      const overrideRequested = b.override === true || b.override === 'true'
+      const hasOverridePerm = roleHasPermission(
+        req.user?.permissions ?? [],
+        'amr.stands.override-special'
+      )
+      const blockCheck = await validateStandBlocksForLegs(tmplLegs, overrideRequested, hasOverridePerm)
+      if (!blockCheck.ok) {
+        res.status(blockCheck.status).json({ error: blockCheck.error })
+        return
+      }
+    }
+    const ts = nowTs()
+    const payloadJson = JSON.stringify(nextPayload)
+    try {
+      await db
+        .prepare(`UPDATE amr_mission_templates SET name = ?, payload_json = ?, updated_at = ? WHERE id = ?`)
+        .run(nextName, payloadJson, ts, id)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/UNIQUE|unique/i.test(msg)) {
+        res.status(409).json({ error: 'A template with this name already exists' })
+        return
+      }
+      throw e
+    }
+    res.json({ id, name: nextName, payload: nextPayload, updatedAt: ts })
+  })
+)
+
+router.delete(
+  '/dc/mission-templates/:id',
+  authMiddleware,
+  requirePermission('amr.missions.manage'),
+  asyncRoute(async (req, res) => {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+    if (!id) {
+      res.status(400).json({ error: 'template id required' })
+      return
+    }
+    const r = await db.prepare('DELETE FROM amr_mission_templates WHERE id = ?').run(id)
+    if (!r.changes) {
+      res.status(404).json({ error: 'Template not found' })
+      return
+    }
+    res.json({ ok: true })
   })
 )
 

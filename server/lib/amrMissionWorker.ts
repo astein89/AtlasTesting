@@ -241,7 +241,15 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           source: 'multistop-auto-continue',
         })
         if (!result.ok) {
-          if (result.status === 409) continue
+          if (result.status === 409) {
+            // Occupied destination (or business rule): stop auto timer; operator must Continue manually after clearing.
+            await db
+              .prepare(
+                `UPDATE amr_multistop_sessions SET continue_not_before = NULL, updated_at = ? WHERE id = ? AND status = 'awaiting_continue'`
+              )
+              .run(nowIso, sid)
+            continue
+          }
           console.warn(
             `[amr-mission-worker] multistop auto-continue failed for session ${sid}: ${result.error}`,
             result.status

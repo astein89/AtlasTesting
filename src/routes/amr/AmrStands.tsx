@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { createAmrStand, deleteAmrStand, getAmrStands, updateAmrStand } from '@/api/amr'
 import { ImportAmrStandsModal } from '@/components/amr/ImportAmrStandsModal'
+import { AmrZoneCategoriesModal } from '@/components/amr/AmrZoneCategoriesModal'
 import { ColumnFilterDropdown } from '@/components/data/ColumnFilterDropdown'
 import { PopupSelect } from '@/components/ui/PopupSelect'
 import { useSortableHeader } from '@/hooks/useSortableHeader'
@@ -14,12 +15,23 @@ const STAND_BULK_FIELDS = [
   { value: 'x', label: 'X (m)' },
   { value: 'y', label: 'Y (m)' },
   { value: 'enabled', label: 'Enabled' },
+  { value: 'block_pickup', label: 'Block pickup (no lift)' },
+  { value: 'block_dropoff', label: 'Block dropoff (no lower)' },
 ] as const
 
 type StandBulkFieldKey = (typeof STAND_BULK_FIELDS)[number]['value']
 
-const STAND_TABLE_KEYS = ['external_ref', 'zone', 'orientation', 'xy', 'enabled'] as const
+const STAND_TABLE_KEYS = ['external_ref', 'zone', 'orientation', 'xy', 'enabled', 'restrictions'] as const
 type StandTableKey = (typeof STAND_TABLE_KEYS)[number]
+
+function restrictionsLabel(row: Record<string, unknown>): string {
+  const bp = Number(row.block_pickup) === 1
+  const bd = Number(row.block_dropoff) === 1
+  if (bp && bd) return 'No lift, No lower'
+  if (bp) return 'No lift'
+  if (bd) return 'No lower'
+  return ''
+}
 
 function standFilterValue(row: Record<string, unknown>, key: StandTableKey): string {
   switch (key) {
@@ -33,6 +45,8 @@ function standFilterValue(row: Record<string, unknown>, key: StandTableKey): str
       return `${String(row.x ?? 0)}, ${String(row.y ?? 0)}`
     case 'enabled':
       return Number(row.enabled) === 1 ? 'Yes' : 'No'
+    case 'restrictions':
+      return restrictionsLabel(row) || 'None'
     default:
       return ''
   }
@@ -45,6 +59,7 @@ function standSearchHaystack(row: Record<string, unknown>): string {
     standFilterValue(row, 'orientation'),
     standFilterValue(row, 'xy'),
     standFilterValue(row, 'enabled'),
+    standFilterValue(row, 'restrictions'),
   ]
     .join('\u0001')
     .toLowerCase()
@@ -78,6 +93,11 @@ function compareStandRows(
     const be = Number(b.enabled) === 1 ? 1 : 0
     return sign * (ae - be)
   }
+  if (key === 'restrictions') {
+    const ar = (Number(a.block_pickup) === 1 ? 1 : 0) + (Number(a.block_dropoff) === 1 ? 2 : 0)
+    const br = (Number(b.block_pickup) === 1 ? 1 : 0) + (Number(b.block_dropoff) === 1 ? 2 : 0)
+    return sign * (ar - br)
+  }
   const va = standFilterValue(a, key)
   const vb = standFilterValue(b, key)
   return sign * va.localeCompare(vb, undefined, { sensitivity: 'base', numeric: true })
@@ -91,6 +111,8 @@ type StandFormState = {
   x: number
   y: number
   enabled: boolean
+  block_pickup: boolean
+  block_dropoff: boolean
 }
 
 const defaultStandForm = (): StandFormState => ({
@@ -101,6 +123,8 @@ const defaultStandForm = (): StandFormState => ({
   x: 0,
   y: 0,
   enabled: true,
+  block_pickup: false,
+  block_dropoff: false,
 })
 
 function rowToForm(row: Record<string, unknown>): StandFormState {
@@ -112,6 +136,8 @@ function rowToForm(row: Record<string, unknown>): StandFormState {
     x: Number(row.x ?? 0),
     y: Number(row.y ?? 0),
     enabled: Number(row.enabled) === 1,
+    block_pickup: Number(row.block_pickup) === 1,
+    block_dropoff: Number(row.block_dropoff) === 1,
   }
 }
 
@@ -190,6 +216,27 @@ function StandFormFields({
         />
         Enabled
       </label>
+      <fieldset className="col-span-full grid gap-2 border-t border-border pt-3 text-sm">
+        <legend className="px-1 text-xs font-medium uppercase tracking-wide text-foreground/60">
+          Special location restrictions
+        </legend>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.block_pickup}
+            onChange={(e) => setForm((f) => ({ ...f, block_pickup: e.target.checked }))}
+          />
+          Block pallet pickup (no lift)
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.block_dropoff}
+            onChange={(e) => setForm((f) => ({ ...f, block_dropoff: e.target.checked }))}
+          />
+          Block pallet dropoff (no lower)
+        </label>
+      </fieldset>
     </div>
   )
 }
@@ -200,6 +247,7 @@ export function AmrStands() {
   const [loading, setLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [categoriesOpen, setCategoriesOpen] = useState(false)
   const [form, setForm] = useState(defaultStandForm)
   const [editStand, setEditStand] = useState<Record<string, unknown> | null>(null)
   const [editForm, setEditForm] = useState(defaultStandForm)
@@ -310,6 +358,8 @@ export function AmrStands() {
         x: form.x,
         y: form.y,
         enabled: form.enabled,
+        block_pickup: form.block_pickup,
+        block_dropoff: form.block_dropoff,
       })
       closeAddModal()
       load()
@@ -332,6 +382,8 @@ export function AmrStands() {
         x: editForm.x,
         y: editForm.y,
         enabled: editForm.enabled,
+        block_pickup: editForm.block_pickup,
+        block_dropoff: editForm.block_dropoff,
       })
       closeEditModal()
       load()
@@ -426,6 +478,12 @@ export function AmrStands() {
         case 'enabled':
           setBulkEditEnabled(Number(row.enabled) === 1)
           break
+        case 'block_pickup':
+          setBulkEditEnabled(Number(row.block_pickup) === 1)
+          break
+        case 'block_dropoff':
+          setBulkEditEnabled(Number(row.block_dropoff) === 1)
+          break
         default:
           break
       }
@@ -448,6 +506,10 @@ export function AmrStands() {
         return { y: bulkEditNum }
       case 'enabled':
         return { enabled: bulkEditEnabled }
+      case 'block_pickup':
+        return { block_pickup: bulkEditEnabled }
+      case 'block_dropoff':
+        return { block_dropoff: bulkEditEnabled }
       default:
         return null
     }
@@ -491,7 +553,7 @@ export function AmrStands() {
     setBulkEditOpen(true)
   }, [seedBulkEditFromFirstSelected])
 
-  const tableColSpan = canManage ? 7 : 5
+  const tableColSpan = canManage ? 8 : 6
 
   const filterIcon = (
     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -516,6 +578,14 @@ export function AmrStands() {
         </div>
         {canManage ? (
           <div className="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
+              title="Group zones into ordered categories shown in the stand picker"
+              onClick={() => setCategoriesOpen(true)}
+            >
+              Categories
+            </button>
             <button
               type="button"
               className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
@@ -695,6 +765,22 @@ export function AmrStands() {
         <ImportAmrStandsModal onClose={() => setImportOpen(false)} onImported={() => load()} />
       ) : null}
 
+      {canManage && categoriesOpen ? (
+        <AmrZoneCategoriesModal
+          allZones={Array.from(
+            new Set(
+              rows
+                .map((r) => String(r.zone ?? '').trim())
+                .filter((z): z is string => z !== '')
+            )
+          ).sort((a, b) => a.localeCompare(b))}
+          onClose={() => setCategoriesOpen(false)}
+          onSaved={() => {
+            setCategoriesOpen(false)
+          }}
+        />
+      ) : null}
+
       {canManage && bulkEditOpen ? (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
@@ -758,6 +844,28 @@ export function AmrStands() {
                   onChange={(e) => setBulkEditEnabled(e.target.checked)}
                 />
                 Enabled
+              </label>
+            ) : null}
+            {bulkEditField === 'block_pickup' ? (
+              <label className="mb-4 flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={bulkEditEnabled}
+                  onChange={(e) => setBulkEditEnabled(e.target.checked)}
+                />
+                Block pallet pickup (no lift)
+              </label>
+            ) : null}
+            {bulkEditField === 'block_dropoff' ? (
+              <label className="mb-4 flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={bulkEditEnabled}
+                  onChange={(e) => setBulkEditEnabled(e.target.checked)}
+                />
+                Block pallet dropoff (no lower)
               </label>
             ) : null}
             {bulkEditField === 'x' || bulkEditField === 'y' ? (
@@ -1058,6 +1166,49 @@ export function AmrStands() {
                   />
                 )}
               </th>
+              <th
+                ref={(el) => {
+                  filterAnchorRefs.current.restrictions = el
+                }}
+                className="relative min-w-0 cursor-pointer select-none px-3 py-2 font-medium text-foreground hover:bg-muted/60"
+                {...getSortHandlers('restrictions')}
+                title="Tap to sort"
+              >
+                <span className="flex min-w-0 items-center gap-1">
+                  <span className="min-w-0 truncate">Restrictions</span>
+                  {getSortIndex('restrictions') >= 0 && (
+                    <span className="shrink-0 text-foreground/60">
+                      {getSortIndex('restrictions') + 1}
+                      {getSortDir('restrictions') === 'asc' ? '↓' : '↑'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenFilterColumn((c) => (c === 'restrictions' ? null : 'restrictions'))
+                    }}
+                    className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                      columnFilters.restrictions?.size ? 'text-primary' : 'text-foreground/50'
+                    }`}
+                    title="Filter column"
+                  >
+                    {filterIcon}
+                  </button>
+                </span>
+                {openFilterColumn === 'restrictions' && (
+                  <ColumnFilterDropdown
+                    columnKey="restrictions"
+                    columnLabel="Restrictions"
+                    values={getColumnValues('restrictions')}
+                    selected={columnFilters.restrictions ?? new Set()}
+                    onChange={(s) => setColumnFilters((p) => ({ ...p, restrictions: s }))}
+                    onClose={() => setOpenFilterColumn(null)}
+                    tableAnchorRefs={filterAnchorRefs}
+                    tableAnchorKey="restrictions"
+                  />
+                )}
+              </th>
               {canManage ? (
                 <th className="px-3 py-2 font-medium text-foreground">Actions</th>
               ) : null}
@@ -1147,6 +1298,33 @@ function StandRow({
         {String(row.x ?? 0)}, {String(row.y ?? 0)}
       </td>
       <td className="px-3 py-2">{enabled ? 'Yes' : 'No'}</td>
+      <td className="px-3 py-2">
+        {(() => {
+          const bp = Number(row.block_pickup) === 1
+          const bd = Number(row.block_dropoff) === 1
+          if (!bp && !bd) return <span className="text-foreground/40">—</span>
+          return (
+            <span className="flex flex-wrap gap-1">
+              {bp ? (
+                <span
+                  className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
+                  title="Pallet pickup blocked"
+                >
+                  No lift
+                </span>
+              ) : null}
+              {bd ? (
+                <span
+                  className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
+                  title="Pallet dropoff blocked"
+                >
+                  No lower
+                </span>
+              ) : null}
+            </span>
+          )
+        })()}
+      </td>
       {canManage ? (
         <td className="px-3 py-2">
           <button

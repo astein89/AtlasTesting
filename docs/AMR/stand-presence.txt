@@ -1,0 +1,35 @@
+stand-presence
+
+POST:
+
+Basic authenication *Hyperion API Credentials*
+	Username
+	Password
+
+http://10.73.220.197:1881/stand-presence
+
+{
+"standIds": ["PF-AMR-01", "PF-AMR-02"]
+}
+
+
+JSON OPTIONS: 
+	- standIds: 
+		- blank return all stands 
+		- JSON list of stand strings
+			- returns only stands requested
+
+RESPONSE:
+
+{
+"PF-AMR-01": false, "PF-AMR-02": true
+}
+
+true = pallet present
+false = no pallet
+
+HEADERS:
+
+
+CONSOLE:
+
