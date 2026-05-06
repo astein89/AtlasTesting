@@ -14,11 +14,11 @@ export const MISSION_JOB_STATUS_NAMES: Record<number, string> = {
 }
 
 /**
- * Fleet codes the mission worker treats as terminal (`TERMINAL_JOB_STATUS` in `amrMissionWorker.ts`).
+ * Fleet codes after which the mission worker closes the mission row (`CLOSE_MISSION_ROW_STATUS` in `amrMissionWorker.ts`).
  * Missions whose latest `last_status` is one of these are not “active” for list purposes.
- * Note: status **50 (Warning)** still advances an in-progress multistop session to `awaiting_continue` so Continue works.
+ * **50 / 60** update `last_status` but keep the row open until the fleet reports **30 / 31 / 35**.
  */
-export const TERMINAL_MISSION_JOB_STATUS_CODES = new Set<number>([30, 31, 35, 50, 60])
+export const TERMINAL_MISSION_JOB_STATUS_CODES = new Set<number>([30, 31, 35])
 
 /** True if the mission is still eligible for the active fleet-status list (no code yet, or not terminal). */
 export function missionLastStatusIsActive(lastStatus: unknown): boolean {

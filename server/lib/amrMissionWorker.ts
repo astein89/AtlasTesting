@@ -6,18 +6,53 @@ import { executeMultistopContinue } from './amrMultistopContinue.js'
 import { computeContinueDeadlineIso, parseMultistopPlan, robotIdFromFleetJob } from './amrMultistop.js'
 import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from './amrFleet.js'
 
-/** Job status codes from KUKA docs — terminal states stop worker polling. */
-const TERMINAL_JOB_STATUS = new Set([30, 31, 35, 50, 60])
-/** Fleet-reported success — only these set `finalized` (business “complete”). Warning/cancel/error close tracking without that flag. */
+/** Fleet job statuses that close this mission row (`worker_closed = 1`) and stop jobQuery polling for it. */
+const CLOSE_MISSION_ROW_STATUS = new Set([30, 31, 35])
+/** Fleet-reported success — only these set `finalized` (business “complete”). Cancelled closes without that flag. */
 const FINALIZED_SUCCESS_STATUS = new Set([30, 35])
 /** Successful completion states — both trigger optional containerOut when not persistent (same as fleet “done”). */
 const CONTAINER_OUT_TRIGGER_STATUS = new Set([30, 35])
 /**
- * Fleet states that close the segment’s mission row (`worker_closed`) but still move the multistop session to
- * `awaiting_continue` / `completed` like a successful leg. **50 Warning** often still allows the route to proceed;
- * without this, we marked the session `failed` and Continue returned 409.
+ * Leg-complete fleet statuses that move the multistop session to `awaiting_continue` / `completed` like success.
+ * **30 / 35** also close the mission row (see `CLOSE_MISSION_ROW_STATUS`). **50 Warning** advances the session while the
+ * segment row stays open until the fleet reports **30 / 31 / 35**.
  */
 const MULTISTOP_SESSION_ADVANCE_STATUS = new Set([...FINALIZED_SUCCESS_STATUS, 50])
+
+async function applyMultistopLegFleetOutcome(
+  db: AsyncDbWrapper,
+  msId: string,
+  stepIdx: number,
+  job: Record<string, unknown>,
+  tsIso: string,
+  status: number
+): Promise<void> {
+  const sessRow = (await db.prepare('SELECT total_segments FROM amr_multistop_sessions WHERE id = ?').get(msId)) as
+    | { total_segments?: number }
+    | undefined
+  const totalSeg = Number(sessRow?.total_segments)
+  if (!Number.isFinite(totalSeg)) return
+
+  const advanceSession = MULTISTOP_SESSION_ADVANCE_STATUS.has(status)
+  const rid = robotIdFromFleetJob(job)
+  if (advanceSession && stepIdx < totalSeg - 1) {
+    const planRow = (await db.prepare('SELECT plan_json FROM amr_multistop_sessions WHERE id = ?').get(msId)) as
+      | { plan_json?: string }
+      | undefined
+    const plan = parseMultistopPlan(JSON.parse(String(planRow?.plan_json || '{}')))
+    const continueNotBefore =
+      plan != null ? computeContinueDeadlineIso(plan, stepIdx, Date.parse(tsIso)) : null
+    await db
+      .prepare(
+        `UPDATE amr_multistop_sessions SET status = ?, locked_robot_id = ?, continue_not_before = ?, updated_at = ? WHERE id = ?`
+      )
+      .run('awaiting_continue', rid || null, continueNotBefore, tsIso, msId)
+  } else if (advanceSession && stepIdx === totalSeg - 1) {
+    await db.prepare(`UPDATE amr_multistop_sessions SET status = ?, updated_at = ? WHERE id = ?`).run('completed', tsIso, msId)
+  } else if (!advanceSession) {
+    await db.prepare(`UPDATE amr_multistop_sessions SET status = ?, updated_at = ? WHERE id = ?`).run('failed', tsIso, msId)
+  }
+}
 
 /** Must match `mergeConfig` floor for `pollMsMissionWorker` in {@link amrConfig.ts}. */
 const MIN_POLL_MS_MISSION_WORKER = 1000
@@ -184,7 +219,7 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           }
         }
 
-        if (TERMINAL_JOB_STATUS.has(status)) {
+        if (CLOSE_MISSION_ROW_STATUS.has(status)) {
           const ts = new Date().toISOString()
           const finalized = FINALIZED_SUCCESS_STATUS.has(status) ? 1 : 0
           await db
@@ -194,35 +229,22 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
             .run(finalized, ts, row.id)
 
           if (msId && Number.isFinite(stepIdx) && job) {
-            const sessRow = (await db.prepare('SELECT total_segments FROM amr_multistop_sessions WHERE id = ?').get(msId)) as
-              | { total_segments?: number }
-              | undefined
-            const totalSeg = Number(sessRow?.total_segments)
-            if (Number.isFinite(totalSeg)) {
-              const advanceSession = MULTISTOP_SESSION_ADVANCE_STATUS.has(status)
-              const rid = robotIdFromFleetJob(job)
-              if (advanceSession && stepIdx < totalSeg - 1) {
-                const planRow = (await db.prepare('SELECT plan_json FROM amr_multistop_sessions WHERE id = ?').get(msId)) as
-                  | { plan_json?: string }
-                  | undefined
-                const plan = parseMultistopPlan(JSON.parse(String(planRow?.plan_json || '{}')))
-                const continueNotBefore =
-                  plan != null ? computeContinueDeadlineIso(plan, stepIdx, Date.parse(ts)) : null
-                await db
-                  .prepare(
-                    `UPDATE amr_multistop_sessions SET status = ?, locked_robot_id = ?, continue_not_before = ?, updated_at = ? WHERE id = ?`
-                  )
-                  .run('awaiting_continue', rid || null, continueNotBefore, ts, msId)
-              } else if (advanceSession && stepIdx === totalSeg - 1) {
-                await db
-                  .prepare(`UPDATE amr_multistop_sessions SET status = ?, updated_at = ? WHERE id = ?`)
-                  .run('completed', ts, msId)
-              } else if (!advanceSession) {
-                await db
-                  .prepare(`UPDATE amr_multistop_sessions SET status = ?, updated_at = ? WHERE id = ?`)
-                  .run('failed', ts, msId)
-              }
-            }
+            await applyMultistopLegFleetOutcome(db, msId, stepIdx, job, ts, status)
+          }
+        } else if (
+          status === 50 &&
+          msId &&
+          Number.isFinite(stepIdx) &&
+          job &&
+          MULTISTOP_SESSION_ADVANCE_STATUS.has(50)
+        ) {
+          /** Warning (50): advance multistop like success but do not close the mission row (only 30/31/35 do). */
+          const sessRow = (await db.prepare('SELECT status FROM amr_multistop_sessions WHERE id = ?').get(msId)) as
+            | { status?: string }
+            | undefined
+          if (String(sessRow?.status ?? '') === 'active') {
+            const ts = new Date().toISOString()
+            await applyMultistopLegFleetOutcome(db, msId, stepIdx, job, ts, 50)
           }
         }
       }

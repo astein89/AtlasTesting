@@ -47,7 +47,8 @@ let standPresenceCatalog = []
 /** @type {Map<string, boolean>} pallet present */
 const standPresenceByRef = new Map()
 
-const TERMINAL_JOB_STATUS = new Set([30, 31, 35, 50, 60])
+/** Match production: only these close the in-app mission row (worker_closed). */
+const TERMINAL_JOB_STATUS = new Set([30, 31, 35])
 
 const DEFAULT_SIM_SETTINGS = {
   // Mission lifecycle (each delay is a random integer ms in [min, max] when used)

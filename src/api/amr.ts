@@ -95,6 +95,17 @@ export async function testAmrFleetConnection() {
   return data
 }
 
+export type AmrHyperionTestResult = {
+  ok: true
+  message: string
+  presenceEntryCount: number
+}
+
+export async function testAmrHyperionConnection() {
+  const { data } = await api.post<AmrHyperionTestResult>('/amr/dc/hyperion/test')
+  return data
+}
+
 export async function amrFleetProxy(operation: string, payload: unknown) {
   const { data } = await api.post<unknown>('/amr/dc/fleet', { operation, payload })
   return data

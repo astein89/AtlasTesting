@@ -246,6 +246,39 @@ router.post(
   })
 )
 
+/** POST /stand-presence with an empty body — verifies origin, Basic auth, and that Hyperion returns JSON. */
+router.post(
+  '/dc/hyperion/test',
+  authMiddleware,
+  requireAnyPermission('amr.settings', 'module.amr'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const hcfg = await getAmrHyperionConfig(db)
+    if (!hyperionConfigured(hcfg)) {
+      res.status(400).json({
+        error:
+          'Hyperion is not fully configured. Save server, port, HTTPS, username, and password under Hyperion connection first.',
+      })
+      return
+    }
+    const result = await fetchStandPresenceFromHyperion(hcfg, [], {
+      db,
+      source: 'hyperion-test',
+      userId: req.user!.id,
+    })
+    if (!result.ok) {
+      const code =
+        result.status && result.status >= 400 && result.status < 600 ? result.status : 502
+      res.status(code).json({ error: result.message })
+      return
+    }
+    res.json({
+      ok: true,
+      message: 'Hyperion responded successfully (POST /stand-presence).',
+      presenceEntryCount: Object.keys(result.presence).length,
+    })
+  })
+)
+
 router.post(
   '/dc/fleet',
   authMiddleware,
