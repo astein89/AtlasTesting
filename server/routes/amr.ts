@@ -289,7 +289,7 @@ router.post(
   '/dc/stands/presence',
   authMiddleware,
   requirePermission('module.amr'),
-  asyncRoute(async (req, res) => {
+  asyncRoute(async (req: AuthRequest, res) => {
     const body = req.body as { standIds?: unknown }
     const raw = body?.standIds
     let standIds: string[] | undefined
@@ -848,10 +848,14 @@ router.post(
       return
     }
 
-    const legsToValidate: StandLegToValidate[] = sortedForSubmit.map((s) => ({
-      position: typeof (s as { position?: unknown }).position === 'string' ? String((s as { position: string }).position) : '',
-      putDown: Boolean((s as { putDown?: unknown }).putDown),
-    }))
+    const legsToValidate: StandLegToValidate[] = sortedForSubmit.map((step) => {
+      const s = step as Record<string, unknown>
+      const pos = s.position
+      return {
+        position: typeof pos === 'string' ? pos : '',
+        putDown: Boolean(s.putDown),
+      }
+    })
     const overrideRequested = b.override === true || b.override === 'true'
     const hasOverridePerm = roleHasPermission(req.user?.permissions ?? [], 'amr.stands.override-special')
     const blockCheck = await validateStandBlocksForLegs(legsToValidate, overrideRequested, hasOverridePerm)
