@@ -5,6 +5,8 @@
 export type AmrMissionTemplateLeg = {
   position: string
   putDown: boolean
+  /** First NODE_POINT of the segment leaving this stop: drop (true) vs no drop (false). Omitted on last stop. */
+  segmentStartPutDown?: boolean
   continueMode?: 'manual' | 'auto'
   autoContinueSeconds?: number
 }
@@ -59,9 +61,12 @@ export function validateMissionTemplatePayload(raw: unknown):
       }
       autoContinueSeconds = Math.floor(s)
     }
+    const segmentStartPutDown =
+      !isLast && (L.segmentStartPutDown === true || L.segmentStartPutDown === 'true')
     legs.push({
       position,
       putDown,
+      ...(segmentStartPutDown ? { segmentStartPutDown: true } : {}),
       continueMode: cm,
       ...(cm === 'auto' ? { autoContinueSeconds } : {}),
     })

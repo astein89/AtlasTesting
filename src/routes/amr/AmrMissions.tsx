@@ -25,7 +25,7 @@ import { useAbortableEffect } from '@/hooks/useAbortableEffect'
 import { isAbortLikeError } from '@/api/client'
 import {
   APP_MISSION_DISPLAY_MAX_AGE_HOURS,
-  filterAppMissionsRecent,
+  filterAppMissionsRecentOrLive,
   HIDE_FLEET_COMPLETE_AFTER_MINUTE_OPTIONS,
   labelHideFleetCompleteOption,
 } from '@/utils/amrAppMissions'
@@ -326,7 +326,7 @@ export function AmrMissions() {
   useEffect(() => {
     if (!multistopSummaryParam || !appHydrated) return
     const sid = multistopSummaryParam.trim()
-    const recent = filterAppMissionsRecent(rows)
+    const recent = filterAppMissionsRecentOrLive(rows)
     const expanded = expandMultistopSessionsForRecentWindow(rows, recent)
     const groups = groupMissionRecords(expanded)
     const ms = findMultistopGroupBySessionId(groups, sid)
@@ -356,8 +356,8 @@ export function AmrMissions() {
 
   const fleetJobsAll = useMemo(() => fleetJobsFromResponse(fleetPayload), [fleetPayload])
 
-  /** Recent-by-created_at window; full `rows` still used for fleet job-code dedup. */
-  const rowsRecent = useMemo(() => filterAppMissionsRecent(rows), [rows])
+  /** Recent-by-created_at plus still-live missions (open worker / open multistop session); full `rows` for fleet dedup. */
+  const rowsRecent = useMemo(() => filterAppMissionsRecentOrLive(rows), [rows])
 
   const rowsRecentExpanded = useMemo(
     () => expandMultistopSessionsForRecentWindow(rows, rowsRecent),

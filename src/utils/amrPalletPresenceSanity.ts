@@ -65,14 +65,34 @@ export function multistopContinueOccupiedDestinationRef(
  * Create-time sanity: only check the first segment destination (stop 2).
  * If that destination is a drop (`putDown=true`), it should be empty before create.
  */
+/** Stands with `bypass_pallet_check` (from `amr_stands`) — empty-stand checks are skipped for these external refs. */
+export function standRefsBypassingPalletCheck(
+  stands: Array<{ external_ref?: unknown; bypass_pallet_check?: unknown }>
+): Set<string> {
+  const out = new Set<string>()
+  for (const s of stands) {
+    const ref = typeof s.external_ref === 'string' ? s.external_ref.trim() : ''
+    if (!ref) continue
+    if (Number(s.bypass_pallet_check) === 1) out.add(ref)
+  }
+  return out
+}
+
+export function refBypassesPalletCheck(ref: string | null | undefined, bypassRefs: Set<string>): boolean {
+  const r = ref?.trim()
+  return Boolean(r && bypassRefs.has(r))
+}
+
 export function shouldWarnFirstSegmentDropOccupied(
   legs: Array<{ position: string; putDown?: boolean }>,
-  presence: Record<string, boolean>
+  presence: Record<string, boolean>,
+  bypassRefs?: Set<string>
 ): { shouldWarn: boolean; destinationRef: string } {
   if (legs.length < 2) return { shouldWarn: false, destinationRef: '' }
   const firstDest = legs[1]
   if (firstDest.putDown !== true) return { shouldWarn: false, destinationRef: '' }
   const destinationRef = firstDest.position.trim()
   if (!destinationRef) return { shouldWarn: false, destinationRef: '' }
+  if (bypassRefs?.has(destinationRef)) return { shouldWarn: false, destinationRef }
   return { shouldWarn: presence[destinationRef] === true, destinationRef }
 }

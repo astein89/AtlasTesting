@@ -6,6 +6,7 @@ import {
   getAmrMultistopSession,
   getAmrMissionAttention,
   getAmrSettings,
+  getAmrStands,
   postStandPresence,
   terminateStuckAmrMultistopSession,
   type AmrMissionAttentionItem,
@@ -23,7 +24,9 @@ import {
   multistopContinueOccupiedDestinationRef,
   multistopStandOccupiedContinueMessage,
   parseMultistopReleasePlanDestinations,
+  refBypassesPalletCheck,
   sessionNextSegmentIndex,
+  standRefsBypassingPalletCheck,
 } from '@/utils/amrPalletPresenceSanity'
 
 /** Align with mission list polling so the bar clears soon after status changes (~5s max lag vs ~22s). */
@@ -54,6 +57,12 @@ export function AmrAttentionBanner() {
   const [terminateStuckConfirmOpen, setTerminateStuckConfirmOpen] = useState(false)
   const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
+  const [palletPresenceBypassRefs, setPalletPresenceBypassRefs] = useState(() => new Set<string>())
+
+  useEffect(() => {
+    if (!canAmr) return
+    void getAmrStands().then((rows) => setPalletPresenceBypassRefs(standRefsBypassingPalletCheck(rows)))
+  }, [canAmr])
 
   useEffect(() => {
     if (!canAmr) return
@@ -148,7 +157,7 @@ export function AmrAttentionBanner() {
         const plan = parseMultistopReleasePlanDestinations(planRaw)
         const ref =
           Number.isFinite(nextSeg) && plan ? multistopContinueOccupiedDestinationRef(plan, nextSeg) : null
-        if (ref) {
+        if (ref && !refBypassesPalletCheck(ref, palletPresenceBypassRefs)) {
           const presence = await postStandPresence([ref])
           if (presence[ref] === true) {
             setReleaseErr(multistopStandOccupiedContinueMessage(ref))

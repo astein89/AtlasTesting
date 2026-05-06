@@ -17,6 +17,7 @@ const STAND_BULK_FIELDS = [
   { value: 'enabled', label: 'Enabled' },
   { value: 'block_pickup', label: 'Block pickup (no lift)' },
   { value: 'block_dropoff', label: 'Block dropoff (no lower)' },
+  { value: 'bypass_pallet_check', label: 'Bypass pallet check' },
 ] as const
 
 type StandBulkFieldKey = (typeof STAND_BULK_FIELDS)[number]['value']
@@ -27,10 +28,13 @@ type StandTableKey = (typeof STAND_TABLE_KEYS)[number]
 function restrictionsLabel(row: Record<string, unknown>): string {
   const bp = Number(row.block_pickup) === 1
   const bd = Number(row.block_dropoff) === 1
-  if (bp && bd) return 'No lift, No lower'
-  if (bp) return 'No lift'
-  if (bd) return 'No lower'
-  return ''
+  const bypass = Number(row.bypass_pallet_check) === 1
+  const parts: string[] = []
+  if (bp && bd) parts.push('No lift, No lower')
+  else if (bp) parts.push('No lift')
+  else if (bd) parts.push('No lower')
+  if (bypass) parts.push('Bypass pallet check')
+  return parts.join('; ')
 }
 
 function standFilterValue(row: Record<string, unknown>, key: StandTableKey): string {
@@ -94,8 +98,14 @@ function compareStandRows(
     return sign * (ae - be)
   }
   if (key === 'restrictions') {
-    const ar = (Number(a.block_pickup) === 1 ? 1 : 0) + (Number(a.block_dropoff) === 1 ? 2 : 0)
-    const br = (Number(b.block_pickup) === 1 ? 1 : 0) + (Number(b.block_dropoff) === 1 ? 2 : 0)
+    const ar =
+      (Number(a.block_pickup) === 1 ? 1 : 0) +
+      (Number(a.block_dropoff) === 1 ? 2 : 0) +
+      (Number(a.bypass_pallet_check) === 1 ? 4 : 0)
+    const br =
+      (Number(b.block_pickup) === 1 ? 1 : 0) +
+      (Number(b.block_dropoff) === 1 ? 2 : 0) +
+      (Number(b.bypass_pallet_check) === 1 ? 4 : 0)
     return sign * (ar - br)
   }
   const va = standFilterValue(a, key)
@@ -113,6 +123,7 @@ type StandFormState = {
   enabled: boolean
   block_pickup: boolean
   block_dropoff: boolean
+  bypass_pallet_check: boolean
 }
 
 const defaultStandForm = (): StandFormState => ({
@@ -125,6 +136,7 @@ const defaultStandForm = (): StandFormState => ({
   enabled: true,
   block_pickup: false,
   block_dropoff: false,
+  bypass_pallet_check: false,
 })
 
 function rowToForm(row: Record<string, unknown>): StandFormState {
@@ -138,6 +150,7 @@ function rowToForm(row: Record<string, unknown>): StandFormState {
     enabled: Number(row.enabled) === 1,
     block_pickup: Number(row.block_pickup) === 1,
     block_dropoff: Number(row.block_dropoff) === 1,
+    bypass_pallet_check: Number(row.bypass_pallet_check) === 1,
   }
 }
 
@@ -235,6 +248,14 @@ function StandFormFields({
             onChange={(e) => setForm((f) => ({ ...f, block_dropoff: e.target.checked }))}
           />
           Block pallet dropoff (no lower)
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.bypass_pallet_check}
+            onChange={(e) => setForm((f) => ({ ...f, bypass_pallet_check: e.target.checked }))}
+          />
+          Bypass pallet check (skip empty-stand verification)
         </label>
       </fieldset>
     </div>
@@ -360,6 +381,7 @@ export function AmrStands() {
         enabled: form.enabled,
         block_pickup: form.block_pickup,
         block_dropoff: form.block_dropoff,
+        bypass_pallet_check: form.bypass_pallet_check,
       })
       closeAddModal()
       load()
@@ -384,6 +406,7 @@ export function AmrStands() {
         enabled: editForm.enabled,
         block_pickup: editForm.block_pickup,
         block_dropoff: editForm.block_dropoff,
+        bypass_pallet_check: editForm.bypass_pallet_check,
       })
       closeEditModal()
       load()
@@ -484,6 +507,9 @@ export function AmrStands() {
         case 'block_dropoff':
           setBulkEditEnabled(Number(row.block_dropoff) === 1)
           break
+        case 'bypass_pallet_check':
+          setBulkEditEnabled(Number(row.bypass_pallet_check) === 1)
+          break
         default:
           break
       }
@@ -510,6 +536,8 @@ export function AmrStands() {
         return { block_pickup: bulkEditEnabled }
       case 'block_dropoff':
         return { block_dropoff: bulkEditEnabled }
+      case 'bypass_pallet_check':
+        return { bypass_pallet_check: bulkEditEnabled }
       default:
         return null
     }
@@ -866,6 +894,17 @@ export function AmrStands() {
                   onChange={(e) => setBulkEditEnabled(e.target.checked)}
                 />
                 Block pallet dropoff (no lower)
+              </label>
+            ) : null}
+            {bulkEditField === 'bypass_pallet_check' ? (
+              <label className="mb-4 flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={bulkEditEnabled}
+                  onChange={(e) => setBulkEditEnabled(e.target.checked)}
+                />
+                Bypass pallet check
               </label>
             ) : null}
             {bulkEditField === 'x' || bulkEditField === 'y' ? (
@@ -1302,7 +1341,8 @@ function StandRow({
         {(() => {
           const bp = Number(row.block_pickup) === 1
           const bd = Number(row.block_dropoff) === 1
-          if (!bp && !bd) return <span className="text-foreground/40">—</span>
+          const bypass = Number(row.bypass_pallet_check) === 1
+          if (!bp && !bd && !bypass) return <span className="text-foreground/40">—</span>
           return (
             <span className="flex flex-wrap gap-1">
               {bp ? (
@@ -1319,6 +1359,14 @@ function StandRow({
                   title="Pallet dropoff blocked"
                 >
                   No lower
+                </span>
+              ) : null}
+              {bypass ? (
+                <span
+                  className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300"
+                  title="Hyperion empty-stand checks skipped for this location"
+                >
+                  Bypass pallet check
                 </span>
               ) : null}
             </span>

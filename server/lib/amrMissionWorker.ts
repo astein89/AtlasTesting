@@ -10,8 +10,8 @@ import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from './amrFleet.js
 const CLOSE_MISSION_ROW_STATUS = new Set([30, 31, 35])
 /** Fleet-reported success — only these set `finalized` (business “complete”). Cancelled closes without that flag. */
 const FINALIZED_SUCCESS_STATUS = new Set([30, 35])
-/** Successful completion states — both trigger optional containerOut when not persistent (same as fleet “done”). */
-const CONTAINER_OUT_TRIGGER_STATUS = new Set([30, 35])
+/** Terminal states that trigger optional containerOut when not persistent (complete or fleet-cancelled). */
+const CONTAINER_OUT_TRIGGER_STATUS = new Set([30, 31, 35])
 /**
  * Leg-complete fleet statuses that move the multistop session to `awaiting_continue` / `completed` like success.
  * **30 / 35** also close the mission row (see `CLOSE_MISSION_ROW_STATUS`). **50 Warning** advances the session while the
@@ -179,7 +179,8 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
             | { total_segments?: number }
             | undefined
           const ts = Number(sess?.total_segments)
-          if (Number.isFinite(ts) && stepIdx < ts - 1) skipContainerOutMultistop = true
+          /** Intermediate legs skip containerOut on success so the pallet can advance; cancel (31) still peels fleet map. */
+          if (Number.isFinite(ts) && stepIdx < ts - 1 && status !== 31) skipContainerOutMultistop = true
         }
 
         if (

@@ -12,6 +12,8 @@ export type AmrStandPickerRow = {
   orientation: string
   /** Special-location flag: 1 = no pallet pickup at this stand (no lift). Optional for backward compat. */
   block_pickup?: number
+  /** When 1, pallet presence sanity checks do not block this stand. */
+  bypass_pallet_check?: number
   /** Special-location flag: 1 = no pallet dropoff at this stand (no lower). Optional for backward compat. */
   block_dropoff?: number
 }

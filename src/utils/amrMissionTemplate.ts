@@ -8,6 +8,7 @@ export type AmrMissionTemplatePayloadV1 = {
   legs: Array<{
     position: string
     putDown: boolean
+    segmentStartPutDown?: boolean
     continueMode?: 'manual' | 'auto'
     autoContinueSeconds?: number
   }>
@@ -20,6 +21,7 @@ export function missionFormToTemplatePayload(
   legs: Array<{
     position: string
     putDown: boolean
+    segmentStartPutDown?: boolean
     continueMode?: 'manual' | 'auto'
     autoContinueSeconds?: number
   }>,
@@ -34,6 +36,7 @@ export function missionFormToTemplatePayload(
       const base = {
         position: l.position.trim(),
         putDown: l.putDown,
+        ...(l.segmentStartPutDown === true ? { segmentStartPutDown: true } : {}),
         continueMode: cm as 'manual' | 'auto',
       }
       if (cm === 'auto') {
@@ -135,5 +138,7 @@ export function templatePayloadToMultistopBody(
   if (cc) out.containerCode = cc
   const robotIds = (payload.robotIds ?? []).filter((x) => typeof x === 'string' && x.trim())
   if (robotIds.length > 0) out.robotIds = robotIds
+  const seg = legs.slice(0, -1).map((l) => l.segmentStartPutDown === true)
+  if (seg.length > 0) out.segmentFirstNodePutDown = seg
   return out
 }

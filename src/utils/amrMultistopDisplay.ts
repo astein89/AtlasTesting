@@ -1,5 +1,4 @@
 import { filterHideStaleFleetCompleteMissions } from '@/utils/amrAppMissions'
-import { missionLastStatusIsActive } from '@/utils/amrMissionJobStatus'
 
 export type GroupedMissionSingle = {
   kind: 'single'
@@ -24,6 +23,14 @@ function stepIndex(r: Record<string, unknown>): number {
   return Number.isFinite(n) ? n : 0
 }
 
+/** Stable session key for grouping / joins (API may use snake_case or camelCase). */
+export function multistopSessionIdFromRow(r: Record<string, unknown>): string {
+  const raw = r.multistop_session_id ?? (r as { multistopSessionId?: unknown }).multistopSessionId
+  if (typeof raw === 'string') return raw.trim()
+  if (raw != null && typeof raw !== 'object') return String(raw).trim()
+  return ''
+}
+
 /**
  * After age-filtering mission rows, pull in every segment for any multistop session that still has
  * at least one segment in the window (so grouping does not drop middle legs).
@@ -34,14 +41,14 @@ export function expandMultistopSessionsForRecentWindow<T extends Record<string, 
 ): T[] {
   const sessionNeed = new Set<string>()
   for (const r of recentSubset) {
-    const sid = String(r.multistop_session_id ?? '').trim()
+    const sid = multistopSessionIdFromRow(r)
     if (sid) sessionNeed.add(sid)
   }
   if (sessionNeed.size === 0) return recentSubset
   const seen = new Set(recentSubset.map((r) => String(r.id)))
   const extra: T[] = []
   for (const r of allRecords) {
-    const sid = String(r.multistop_session_id ?? '').trim()
+    const sid = multistopSessionIdFromRow(r)
     if (!sid || !sessionNeed.has(sid)) continue
     const id = String(r.id)
     if (seen.has(id)) continue
@@ -58,7 +65,7 @@ export function headMissionRecordForSession(
 ): Record<string, unknown> | null {
   const sid = sessionId.trim()
   if (!sid) return null
-  const matching = records.filter((r) => String(r.multistop_session_id ?? '').trim() === sid)
+  const matching = records.filter((r) => multistopSessionIdFromRow(r) === sid)
   if (matching.length === 0) return null
   matching.sort((a, b) => stepIndex(a) - stepIndex(b))
   return matching.find((s) => stepIndex(s) === 0) ?? matching[0] ?? null
@@ -69,7 +76,7 @@ export function groupMissionRecords(records: Record<string, unknown>[]): Grouped
   const bySession = new Map<string, Record<string, unknown>[]>()
 
   for (const r of records) {
-    const sid = String(r.multistop_session_id ?? '').trim()
+    const sid = multistopSessionIdFromRow(r)
     if (!sid) {
       singles.push(r)
       continue
@@ -147,11 +154,6 @@ export function multistopSessionStatusFromGroup(g: GroupedMissionMultistop): str
   return s || null
 }
 
-export function isCompletedMultistopGroup(g: GroupedMissionMultistop): boolean {
-  const st = multistopSessionStatusFromGroup(g)
-  return st === 'completed' || st === 'cancelled'
-}
-
 /** Pickup + one node per segment: `1 + segmentCount` physical stops on the route. */
 export function physicalStopCountFromMultistopGroup(g: GroupedMissionMultistop): number {
   return 1 + Math.max(0, g.segmentCount)
@@ -173,15 +175,26 @@ export function multistopRouteKindBadgeLabel(g: GroupedMissionMultistop): string
   return `Route · ${n} ${w}`
 }
 
-/** Non-finalized, non-terminal fleet status — “active” for the top Active Missions table. */
-export function isActiveSingleMissionRecord(r: Record<string, unknown>): boolean {
-  if (Number(r.finalized) === 1) return false
-  return missionLastStatusIsActive(r.last_status)
+/**
+ * Fleet job statuses that close out the job for Mission History (matches worker `CLOSE_MISSION_ROW_STATUS`):
+ * **30** complete, **31** cancelled, **35** manual complete. All other reported statuses — including **50** Warning and
+ * **60** error — stay in **Active Missions** so operators can follow recovery and non-terminal states.
+ */
+const FLEET_JOB_STATUS_MISSION_HISTORY = new Set([30, 31, 35])
+
+/**
+ * `true` when the rolled-up fleet `last_status` should list the mission under Mission History.
+ * Unknown / null / non-finite → Active (same as in-progress).
+ */
+export function fleetJobStatusBelongsInMissionHistory(lastStatus: unknown): boolean {
+  const n = typeof lastStatus === 'number' && Number.isFinite(lastStatus) ? lastStatus : Number(lastStatus)
+  return Number.isFinite(n) && FLEET_JOB_STATUS_MISSION_HISTORY.has(n)
 }
 
 /**
- * Splits into in-flight vs history: multistop sessions that are not completed, plus single missions
- * that are not finalized and not terminal; all other groups go to `history` (main list with hide-stale).
+ * Splits **Active Missions** vs **Mission History** using the **latest fleet job status** on the row
+ * (`flattenGroupedMissionRow`), not session workflow alone — so Warning (**50**) never lands in history just because
+ * the multistop session row was marked completed while the fleet still reports 50.
  */
 export function partitionMissionGroupsForTables(groups: GroupedMissionRow[]): {
   active: GroupedMissionRow[]
@@ -190,13 +203,9 @@ export function partitionMissionGroupsForTables(groups: GroupedMissionRow[]): {
   const active: GroupedMissionRow[] = []
   const history: GroupedMissionRow[] = []
   for (const g of groups) {
-    if (g.kind === 'multistop') {
-      if (isCompletedMultistopGroup(g)) history.push(g)
-      else active.push(g)
-    } else {
-      if (isActiveSingleMissionRecord(g.record)) active.push(g)
-      else history.push(g)
-    }
+    const flat = flattenGroupedMissionRow(g)
+    if (fleetJobStatusBelongsInMissionHistory(flat.last_status)) history.push(g)
+    else active.push(g)
   }
   return { active, history }
 }
@@ -270,7 +279,7 @@ export function resolvedMissionDetailRecord(
   groups: GroupedMissionRow[]
 ): Record<string, unknown> | null {
   const id = String(detail.id ?? '')
-  const sid = String(detail.multistop_session_id ?? '').trim()
+  const sid = multistopSessionIdFromRow(detail)
   for (const g of groups) {
     if (g.kind === 'multistop') {
       if ((sid && g.sessionId === sid) || String(g.head.id) === id) {

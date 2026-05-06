@@ -8,6 +8,7 @@ import {
   parseMultistopPlan,
   robotIdFromFleetJob,
 } from './amrMultistop.js'
+import { externalRefsBypassingPalletCheck } from './amrStandBypass.js'
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
 import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
 
@@ -122,30 +123,33 @@ export async function executeMultistopContinue(params: {
   if (cfg.missionCreateStandPresenceSanityCheck && !skipStandPresenceCheck) {
     const destRef = multistopSegmentDropDestinationRef(plan, next_segment_index)
     if (destRef) {
-      const hcfg = await getAmrHyperionConfig(db)
-      if (!hyperionConfigured(hcfg)) {
-        return {
-          ok: false,
-          status: 503,
-          error:
-            'Hyperion API is not configured. Cannot verify destination stand is empty before continue.',
+      const bypassSet = await externalRefsBypassingPalletCheck(db, [destRef])
+      if (!bypassSet.has(destRef)) {
+        const hcfg = await getAmrHyperionConfig(db)
+        if (!hyperionConfigured(hcfg)) {
+          return {
+            ok: false,
+            status: 503,
+            error:
+              'Hyperion API is not configured. Cannot verify destination stand is empty before continue.',
+          }
         }
-      }
-      const pr = await fetchStandPresenceFromHyperion(hcfg, [destRef], {
-        db,
-        source: 'multistop-continue-presence',
-        userId: userId ?? undefined,
-      })
-      if (!pr.ok) {
-        const st = typeof pr.status === 'number' && pr.status >= 400 && pr.status < 600 ? pr.status : 502
-        return { ok: false, status: st, error: pr.message }
-      }
-      if (pr.presence[destRef] === true) {
-        return {
-          ok: false,
-          status: 409,
-          error: `Pallet present on stand ${destRef}. Unable to dispatch.`,
-          standOccupiedRef: destRef,
+        const pr = await fetchStandPresenceFromHyperion(hcfg, [destRef], {
+          db,
+          source: 'multistop-continue-presence',
+          userId: userId ?? undefined,
+        })
+        if (!pr.ok) {
+          const st = typeof pr.status === 'number' && pr.status >= 400 && pr.status < 600 ? pr.status : 502
+          return { ok: false, status: st, error: pr.message }
+        }
+        if (pr.presence[destRef] === true) {
+          return {
+            ok: false,
+            status: 409,
+            error: `Pallet present on stand ${destRef}. Unable to dispatch.`,
+            standOccupiedRef: destRef,
+          }
         }
       }
     }

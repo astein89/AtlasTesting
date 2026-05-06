@@ -5,6 +5,7 @@ import {
   continueAmrMultistopSession,
   getAmrMultistopSession,
   getAmrSettings,
+  getAmrStands,
   postStandPresence,
   terminateStuckAmrMultistopSession,
 } from '@/api/amr'
@@ -25,7 +26,9 @@ import {
   multistopContinueOccupiedDestinationRef,
   multistopStandOccupiedContinueMessage,
   parseMultistopReleasePlanDestinations,
+  refBypassesPalletCheck,
   sessionNextSegmentIndex,
+  standRefsBypassingPalletCheck,
 } from '@/utils/amrPalletPresenceSanity'
 
 type MissionRecordRow = Record<string, unknown>
@@ -251,6 +254,11 @@ export function AmrMultistopSummaryModal({
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
   /** Only show session loading when switching sessions; silent refetch when list polling bumps the head record. */
   const prevFetchedMultistopSessionIdRef = useRef<string | null>(null)
+  const [palletPresenceBypassRefs, setPalletPresenceBypassRefs] = useState(() => new Set<string>())
+
+  useEffect(() => {
+    void getAmrStands().then((rows) => setPalletPresenceBypassRefs(standRefsBypassingPalletCheck(rows)))
+  }, [])
 
   const sessionId = group ? group.sessionId.trim() : ''
   const rolledUp = useMemo(() => {
@@ -410,7 +418,7 @@ export function AmrMultistopSummaryModal({
         const plan = parseMultistopReleasePlanDestinations(planRaw)
         const ref =
           Number.isFinite(nextSeg) && plan ? multistopContinueOccupiedDestinationRef(plan, nextSeg) : null
-        if (ref) {
+        if (ref && !refBypassesPalletCheck(ref, palletPresenceBypassRefs)) {
           const presence = await postStandPresence([ref])
           if (presence[ref] === true) {
             setMsErr(multistopStandOccupiedContinueMessage(ref))

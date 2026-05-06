@@ -161,7 +161,8 @@ function buildSegmentMissionDataPreview(
     waitingMillis?: number
     putDown?: boolean
   }>,
-  segmentIndex: number
+  segmentIndex: number,
+  segmentFirstNodePutDown?: boolean[]
 ): Array<Record<string, unknown>> {
   const dests = destinations
   const total = dests.length
@@ -169,6 +170,10 @@ function buildSegmentMissionDataPreview(
   const startPos = segmentIndex === 0 ? pickupPosition.trim() : dests[segmentIndex - 1].position.trim()
   const end = dests[segmentIndex]
   const endPutDown = segmentIndex === total - 1 ? true : end.putDown === true
+  const startPutDown =
+    Array.isArray(segmentFirstNodePutDown) && segmentFirstNodePutDown.length === total
+      ? segmentFirstNodePutDown[segmentIndex] === true
+      : false
   return [
     {
       sequence: 1,
@@ -176,7 +181,7 @@ function buildSegmentMissionDataPreview(
       type: 'NODE_POINT',
       passStrategy: 'AUTO',
       waitingMillis: 0,
-      putDown: false,
+      putDown: startPutDown,
     },
     {
       sequence: 2,
@@ -203,11 +208,13 @@ export function buildMultistopFleetTimeline(
       waitingMillis?: number
       putDown?: boolean
     }>
+    /** Length === destinations.length; putDown on each segment's first NODE_POINT. */
+    segmentFirstNodePutDown?: boolean[]
     persistent: boolean
     robotIds?: string[]
   }
 ): MultistopFleetTimelineResult {
-  const { pickupPosition, destinations, persistent, robotIds } = args
+  const { pickupPosition, destinations, persistent, robotIds, segmentFirstNodePutDown } = args
   if (destinations.length < 2) {
     return { ok: false, error: 'Add Stop needs at least two destinations (three or more stops).' }
   }
@@ -236,7 +243,7 @@ export function buildMultistopFleetTimeline(
 
   const baseMissionCode = genDcaCode('RM')
   const missionCode0 = `${baseMissionCode}-1`
-  const md0 = buildSegmentMissionDataPreview(p, destinations, 0)
+  const md0 = buildSegmentMissionDataPreview(p, destinations, 0, segmentFirstNodePutDown)
   const submit0: Record<string, unknown> = {
     orgId: settings.orgId,
     requestId: missionCode0,
@@ -276,7 +283,7 @@ export function buildMultistopFleetTimeline(
 
   for (let seg = 1; seg < destinations.length; seg++) {
     const missionCode = `${baseMissionCode}-${seg + 1}`
-    const md = buildSegmentMissionDataPreview(p, destinations, seg)
+    const md = buildSegmentMissionDataPreview(p, destinations, seg, segmentFirstNodePutDown)
     const lockRobotAfterFinish = seg < destinations.length - 1 ? 'true' : 'false'
     const submit: Record<string, unknown> = {
       orgId: settings.orgId,

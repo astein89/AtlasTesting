@@ -12,6 +12,7 @@ export const STAND_IMPORT_FIELDS = [
   { key: 'enabled', label: 'Enabled' },
   { key: 'block_pickup', label: 'Block pickup (no lift)' },
   { key: 'block_dropoff', label: 'Block dropoff (no lower)' },
+  { key: 'bypass_pallet_check', label: 'Bypass pallet check' },
 ] as const
 
 export type StandImportFieldKey = (typeof STAND_IMPORT_FIELDS)[number]['key']
@@ -27,6 +28,7 @@ const CANONICAL_HEADERS: StandImportFieldKey[] = [
   'enabled',
   'block_pickup',
   'block_dropoff',
+  'bypass_pallet_check',
 ]
 
 function supplementStandMapping(headers: string[], base: Record<string, string>): Record<string, string> {
@@ -52,6 +54,7 @@ function supplementStandMapping(headers: string[], base: Record<string, string>)
   claim('enabled', ['enabled'])
   claim('block_pickup', ['blockpickup', 'nopickup', 'nolift'])
   claim('block_dropoff', ['blockdropoff', 'nodropoff', 'nolower'])
+  claim('bypass_pallet_check', ['bypasspalletcheck', 'bypasspallet', 'skippalletcheck'])
 
   return base
 }
@@ -86,7 +89,7 @@ export function buildStandImportCsv(
         else if (v === '') v = 'true'
         else if (lower === 'true' || lower === '1' || lower === 'yes') v = 'true'
         else v = 'true'
-      } else if (key === 'block_pickup' || key === 'block_dropoff') {
+      } else if (key === 'block_pickup' || key === 'block_dropoff' || key === 'bypass_pallet_check') {
         const lower = v.toLowerCase()
         if (lower === 'true' || lower === '1' || lower === 'yes') v = 'true'
         else v = 'false'

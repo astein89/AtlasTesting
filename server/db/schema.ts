@@ -265,6 +265,7 @@ export function initSchema(db: DbWrapper) {
   migrateAmrMissionTemplates(db)
   migrateAmrMissionRecordLockedRobot(db)
   migrateAmrStandsSpecialLocationFlags(db)
+  migrateAmrStandsBypassPalletCheck(db)
   migrateRolesGrantModuleAmr(db)
   migrateRolesAddAmrStandsOverrideSpecial(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
@@ -1170,6 +1171,7 @@ function migrateAmrTables(db: DbWrapper) {
         enabled INTEGER NOT NULL DEFAULT 1,
         block_pickup INTEGER NOT NULL DEFAULT 0,
         block_dropoff INTEGER NOT NULL DEFAULT 0,
+        bypass_pallet_check INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT
       )
@@ -1331,6 +1333,19 @@ function migrateAmrStandsSpecialLocationFlags(db: DbWrapper) {
     }
     if (!cols.includes('block_dropoff')) {
       db.run('ALTER TABLE amr_stands ADD COLUMN block_dropoff INTEGER NOT NULL DEFAULT 0')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** When set, Hyperion empty-stand checks are skipped for this location (mission create / multistop continue). */
+function migrateAmrStandsBypassPalletCheck(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_stands')
+    if (cols.length === 0) return
+    if (!cols.includes('bypass_pallet_check')) {
+      db.run('ALTER TABLE amr_stands ADD COLUMN bypass_pallet_check INTEGER NOT NULL DEFAULT 0')
     }
   } catch {
     // Ignore

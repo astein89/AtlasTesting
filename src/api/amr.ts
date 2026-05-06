@@ -25,6 +25,8 @@ export type AmrStandRow = {
   block_pickup: number
   /** 0 = allowed; 1 = "no lower" (cannot dropoff at this stand). */
   block_dropoff: number
+  /** 0 = normal; 1 = skip Hyperion empty-stand checks for this location (create / continue). */
+  bypass_pallet_check: number
   created_at: string | null
   updated_at: string | null
   [extra: string]: unknown
@@ -242,6 +244,12 @@ export async function terminateStuckAmrMultistopSession(sessionId: string) {
     sessionId: string
     status: string
     fleetCancels: TerminateStuckMultistopFleetCancel[]
+    fleetContainerOut?: {
+      ok: boolean
+      httpStatus: number
+      fleetSuccess?: boolean
+      position?: string
+    }
   }>(`/amr/dc/missions/multistop/${encodeURIComponent(sessionId)}/terminate-stuck`, {})
   return data
 }

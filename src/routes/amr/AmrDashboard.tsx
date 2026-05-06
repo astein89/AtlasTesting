@@ -15,7 +15,7 @@ import { MissionJobStatusBadge } from '@/components/amr/MissionJobStatusBadge'
 import { amrPath } from '@/lib/appPaths'
 import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
 import { useAbortableEffect } from '@/hooks/useAbortableEffect'
-import { APP_MISSION_DISPLAY_MAX_AGE_HOURS, filterAppMissionsRecent } from '@/utils/amrAppMissions'
+import { APP_MISSION_DISPLAY_MAX_AGE_HOURS, filterAppMissionsRecentOrLive } from '@/utils/amrAppMissions'
 import {
   expandMultistopSessionsForRecentWindow,
   filterGroupedMissionsHideStale,
@@ -152,7 +152,7 @@ export function AmrDashboard() {
   )
 
   const recentExpanded = useMemo(
-    () => expandMultistopSessionsForRecentWindow(records, filterAppMissionsRecent(records)),
+    () => expandMultistopSessionsForRecentWindow(records, filterAppMissionsRecentOrLive(records)),
     [records]
   )
 
@@ -484,16 +484,16 @@ export function AmrDashboard() {
               )}
               {recentTableGroups.length === 0 &&
                 records.length > 0 &&
-                filterAppMissionsRecent(records).length === 0 && (
+                filterAppMissionsRecentOrLive(records).length === 0 && (
                   <tr>
                     <td colSpan={5} className="py-6 text-center text-foreground/60">
-                      No app missions in the last {APP_MISSION_DISPLAY_MAX_AGE_HOURS} hours.
+                      No missions in the last {APP_MISSION_DISPLAY_MAX_AGE_HOURS} hours (and none still open).
                     </td>
                   </tr>
                 )}
               {recentTableGroups.length === 0 &&
                 records.length > 0 &&
-                filterAppMissionsRecent(records).length > 0 &&
+                filterAppMissionsRecentOrLive(records).length > 0 &&
                 activeMissionGroups.length > 0 && (
                   <tr>
                     <td colSpan={5} className="py-6 text-center text-foreground/60">

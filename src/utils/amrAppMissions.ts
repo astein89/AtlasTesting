@@ -23,6 +23,63 @@ export function filterAppMissionsRecent<T extends Record<string, unknown>>(
   })
 }
 
+function workerClosedMissionRecord<T extends Record<string, unknown>>(r: T): boolean {
+  const v = r.worker_closed ?? (r as { workerClosed?: unknown }).workerClosed
+  if (v === true) return true
+  if (v === false || v === null || v === undefined) return false
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase()
+    if (t === '1' || t === 'true') return true
+    if (t === '0' || t === 'false' || t === '') return false
+    const n = Number(v.trim())
+    return Number.isFinite(n) && n === 1
+  }
+  const n = Number(v)
+  return Number.isFinite(n) && n === 1
+}
+
+function multistopSessionIdOnRecord<T extends Record<string, unknown>>(r: T): string {
+  const raw = r.multistop_session_id ?? (r as { multistopSessionId?: unknown }).multistopSessionId
+  if (typeof raw === 'string') return raw.trim()
+  if (raw != null && typeof raw !== 'object') return String(raw).trim()
+  return ''
+}
+
+function multistopSessionTerminalOnRecord<T extends Record<string, unknown>>(r: T): boolean {
+  const raw =
+    r.multistop_session_status ?? (r as { multistopSessionStatus?: unknown }).multistopSessionStatus
+  const st = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  return st === 'completed' || st === 'cancelled'
+}
+
+/**
+ * Same as {@link filterAppMissionsRecent}, plus **still-live** rows whose `created_at` fell outside the window:
+ * single-move missions while `worker_closed` is still open, and multistop segment rows whose session is not
+ * `completed`/`cancelled`. Without this, long-running missions vanish from Active / grouping after 24h even though
+ * the fleet job is still in progress.
+ */
+export function filterAppMissionsRecentOrLive<T extends Record<string, unknown>>(
+  records: T[],
+  maxAgeHours: number = APP_MISSION_DISPLAY_MAX_AGE_HOURS
+): T[] {
+  const ms = maxAgeHours * MS_PER_HOUR
+  const cutoff = Date.now() - ms
+
+  const isRecentByCreatedAt = (r: T) => {
+    const raw = r.created_at
+    if (raw == null || raw === '') return false
+    const t = new Date(raw as string | Date).getTime()
+    return Number.isFinite(t) && t >= cutoff
+  }
+
+  return records.filter((r) => {
+    if (isRecentByCreatedAt(r)) return true
+    const sid = multistopSessionIdOnRecord(r)
+    if (sid) return !multistopSessionTerminalOnRecord(r)
+    return !workerClosedMissionRecord(r)
+  })
+}
+
 /** Fleet `last_status` values we treat as “finished” for the hide-after window (with `finalized`). */
 const FLEET_COMPLETE_LIKE_STATUS = new Set([30, 31, 35])
 

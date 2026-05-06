@@ -43,6 +43,8 @@ import { friendlyMultistopSessionStatus } from '@/utils/amrMultistopDisplay'
 import {
   multistopContinueOccupiedDestinationRef,
   multistopStandOccupiedContinueMessage,
+  refBypassesPalletCheck,
+  standRefsBypassingPalletCheck,
   type MultistopReleasePlanDest,
 } from '@/utils/amrPalletPresenceSanity'
 import { formatRemainingMmSs, remainingMsUntilIso } from '@/utils/amrContinueCountdown'
@@ -350,11 +352,16 @@ function validatePickupContinueDraft(pc: PickupContinueDraft | null): string | n
   return null
 }
 
-function planEditSnapshot(rows: DraftDest[] | null, pickup: PickupContinueDraft | null): string {
+function planEditSnapshot(
+  rows: DraftDest[] | null,
+  pickup: PickupContinueDraft | null,
+  segmentFirstNodePutDown: boolean[]
+): string {
   if (!rows) return ''
   return JSON.stringify({
     d: draftToPlan(rows),
     p: pickup ?? { continueMode: 'manual' as const },
+    s: segmentFirstNodePutDown,
   })
 }
 
@@ -527,10 +534,13 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [draftDestinations, setDraftDestinations] = useState<DraftDest[] | null>(null)
   /** Editable when session is waiting at segment 0 (before first destination leg); PATCH `pickupContinue`. */
   const [draftPickupContinue, setDraftPickupContinue] = useState<PickupContinueDraft | null>(null)
+  /** Parallel to segments / destination count: fleet putDown on each segment's first NODE_POINT. */
+  const [draftSegFirstPutDown, setDraftSegFirstPutDown] = useState<boolean[]>([])
   const [savedPlanSnapshot, setSavedPlanSnapshot] = useState('')
   const [planEditErr, setPlanEditErr] = useState<string | null>(null)
 
   const [standRows, setStandRows] = useState<AmrStandPickerRow[]>([])
+  const palletPresenceBypassRefs = useMemo(() => standRefsBypassingPalletCheck(standRows), [standRows])
   const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
   const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
   const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
@@ -608,6 +618,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           orientation: String(r.orientation ?? '0'),
           block_pickup: Number(r.block_pickup ?? 0),
           block_dropoff: Number(r.block_dropoff ?? 0),
+          bypass_pallet_check: Number(r.bypass_pallet_check ?? 0),
         }))
       )
     )
@@ -632,6 +643,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       setContinueBlockedStandRef(null)
       setDraftDestinations(null)
       setDraftPickupContinue(null)
+      setDraftSegFirstPutDown([])
       setSavedPlanSnapshot('')
       return
     }
@@ -651,12 +663,27 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         if (parsed) {
           const draft = normalizeDraftPutDownRows(planToDraft(parsed))
           const pc = parsePickupContinueFromPlanJson(d.session?.plan_json) ?? defaultPickupContinueDraft()
+          let segInit: boolean[] = []
+          try {
+            const rawPlan = JSON.parse(String(d.session?.plan_json ?? '{}')) as {
+              segmentFirstNodePutDown?: unknown
+            }
+            if (Array.isArray(rawPlan.segmentFirstNodePutDown)) {
+              segInit = rawPlan.segmentFirstNodePutDown.map((x) => x === true || x === 'true')
+            }
+          } catch {
+            /* ignore */
+          }
+          while (segInit.length < draft.length) segInit.push(false)
+          const segTrim = segInit.slice(0, draft.length)
           setDraftDestinations(draft)
           setDraftPickupContinue(pc)
-          setSavedPlanSnapshot(planEditSnapshot(draft, pc))
+          setDraftSegFirstPutDown(segTrim)
+          setSavedPlanSnapshot(planEditSnapshot(draft, pc, segTrim))
         } else {
           setDraftDestinations(null)
           setDraftPickupContinue(null)
+          setDraftSegFirstPutDown([])
           setSavedPlanSnapshot('')
         }
       })
@@ -697,10 +724,25 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     return Number(record?.multistop_segment_count ?? 0) > 1
   }, [draftDestinations, msData?.session?.total_segments, record?.multistop_segment_count])
 
+  useEffect(() => {
+    if (!draftDestinations) {
+      setDraftSegFirstPutDown([])
+      return
+    }
+    const n = draftDestinations.length
+    setDraftSegFirstPutDown((prev) => {
+      const next = prev.slice(0, n)
+      while (next.length < n) next.push(false)
+      return next
+    })
+  }, [draftDestinations])
+
   const hasPlanChanges = useMemo(() => {
     if (!draftDestinations) return false
-    return planEditSnapshot(draftDestinations, draftPickupContinue) !== savedPlanSnapshot
-  }, [draftDestinations, draftPickupContinue, savedPlanSnapshot])
+    return (
+      planEditSnapshot(draftDestinations, draftPickupContinue, draftSegFirstPutDown) !== savedPlanSnapshot
+    )
+  }, [draftDestinations, draftPickupContinue, draftSegFirstPutDown, savedPlanSnapshot])
 
   const removeDraftRow = useCallback(
     (id: string) => {
@@ -767,7 +809,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     setPlanEditErr(null)
     setPatchBusy(true)
     try {
-      const body: Record<string, unknown> = { destinations: plan }
+      const body: Record<string, unknown> = {
+        destinations: plan,
+        segmentFirstNodePutDown: draftSegFirstPutDown,
+      }
       if (nextSegmentIndex === 0 && draftPickupContinue) {
         const pc = draftPickupContinue
         if (pc.continueMode === 'auto') {
@@ -784,7 +829,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       }
       if (overrideSpecialLocations) body.override = true
       await patchAmrMultistopSession(sessionId, body)
-      setSavedPlanSnapshot(planEditSnapshot(rows, draftPickupContinue))
+      setSavedPlanSnapshot(planEditSnapshot(rows, draftPickupContinue, draftSegFirstPutDown))
       return true
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { error?: string } } }
@@ -793,7 +838,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     } finally {
       setPatchBusy(false)
     }
-  }, [sessionId, nextSegmentIndex, draftPickupContinue, overrideSpecialLocations])
+  }, [sessionId, nextSegmentIndex, draftPickupContinue, draftSegFirstPutDown, overrideSpecialLocations])
 
   const handleTailDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -1080,7 +1125,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           putDown: r.putDown === true,
         }))
         const ref = multistopContinueOccupiedDestinationRef(planFromDraft, nextSegmentIndex)
-        if (ref) {
+        if (ref && !refBypassesPalletCheck(ref, palletPresenceBypassRefs)) {
           const presence = await postStandPresence([ref])
           if (presence[ref] === true) {
             setMsErr(multistopStandOccupiedContinueMessage(ref))

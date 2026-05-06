@@ -30,6 +30,11 @@ export type MultistopPlan = {
   destinations: MultistopPlanDest[]
   /** When set, defers first segment using this; else legacy fallback uses `destinations[0]` continue fields. */
   pickupContinue?: MultistopPickupContinue
+  /**
+   * Per segment (length === destinations.length): fleet `putDown` on **first** NODE_POINT of that segment
+   * (pickup stand for segment 0; previous destination stand for segment i&gt;0). Default false when omitted.
+   */
+  segmentFirstNodePutDown?: boolean[]
 }
 
 function parseContinueFields(o: Record<string, unknown>): MultistopPickupContinue {
@@ -76,7 +81,15 @@ export function parseMultistopPlan(raw: unknown): MultistopPlan | null {
   if (pcRaw && typeof pcRaw === 'object') {
     pickupContinue = parseContinueFields(pcRaw as Record<string, unknown>)
   }
-  return pickupContinue ? { destinations, pickupContinue } : { destinations }
+  const segRaw = (raw as { segmentFirstNodePutDown?: unknown }).segmentFirstNodePutDown
+  let segmentFirstNodePutDown: boolean[] | undefined
+  if (Array.isArray(segRaw) && segRaw.length === destinations.length) {
+    segmentFirstNodePutDown = segRaw.map((x) => x === true || x === 'true')
+  }
+  const base: MultistopPlan = { destinations }
+  if (pickupContinue) base.pickupContinue = pickupContinue
+  if (segmentFirstNodePutDown) base.segmentFirstNodePutDown = segmentFirstNodePutDown
+  return base
 }
 
 export type NormalizeDestinationResult =
@@ -213,6 +226,52 @@ export function continueNotBeforeForAwaitingSession(plan: MultistopPlan, nextSeg
   return new Date(nowMs + delayMs).toISOString()
 }
 
+/** Build {@link MultistopPlan} from mission-template legs (pickup + destinations). */
+export function multistopPlanFromTemplateLegs(
+  legs: ReadonlyArray<{ position: string; putDown: boolean; segmentStartPutDown?: boolean }>
+): MultistopPlan | null {
+  if (legs.length < 2) return null
+  const pickup = legs[0].position.trim()
+  if (!pickup) return null
+  const nd = legs.length - 1
+  const destinations: MultistopPlanDest[] = []
+  for (let i = 0; i < nd; i++) {
+    const leg = legs[i + 1]
+    const position = leg.position.trim()
+    if (!position) return null
+    destinations.push({
+      position,
+      passStrategy: 'AUTO',
+      waitingMillis: 0,
+      continueMode: 'manual',
+      putDown: i === nd - 1 ? true : leg.putDown === true,
+    })
+  }
+  const segmentFirstNodePutDown = legs.slice(0, nd).map((l) => l.segmentStartPutDown === true)
+  return { destinations, segmentFirstNodePutDown }
+}
+
+/** Expand multistop plan to ordered (position, putDown) pairs for stand block validation — one pair per fleet NODE_POINT. */
+export function multistopPlanToStandLegPairs(
+  pickupRaw: string,
+  plan: MultistopPlan
+): Array<{ position: string; putDown: boolean }> {
+  const dests = plan.destinations
+  const n = dests.length
+  const seg = plan.segmentFirstNodePutDown
+  const pairs: Array<{ position: string; putDown: boolean }> = []
+  const pickup = pickupRaw.trim()
+  for (let i = 0; i < n; i++) {
+    const startPos = i === 0 ? pickup : dests[i - 1].position.trim()
+    const startPut =
+      Array.isArray(seg) && seg.length === n ? seg[i] === true : false
+    const endPut = i === n - 1 ? true : dests[i].putDown === true
+    pairs.push({ position: startPos, putDown: startPut })
+    pairs.push({ position: dests[i].position.trim(), putDown: endPut })
+  }
+  return pairs
+}
+
 /** Segment index 0-based: pickup → destinations[0]; then destinations[i-1] → destinations[i]. */
 export function buildSegmentMissionData(
   pickupPosition: string,
@@ -226,13 +285,16 @@ export function buildSegmentMissionData(
   const end = dests[segmentIndex]
   /** Final stop always drops; intermediate uses plan `putDown` (default pickup-only). */
   const endPutDown = segmentIndex === total - 1 ? true : end.putDown === true
+  const segStarts = plan.segmentFirstNodePutDown
+  const startPutDown =
+    Array.isArray(segStarts) && segStarts.length === total ? segStarts[segmentIndex] === true : false
   const startLeg = {
     sequence: 1,
     position: startPos,
     type: 'NODE_POINT',
     passStrategy: 'AUTO',
     waitingMillis: 0,
-    putDown: false,
+    putDown: startPutDown,
   }
   const endLeg = {
     sequence: 2,

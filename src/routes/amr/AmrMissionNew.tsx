@@ -65,7 +65,10 @@ import { getBasePath } from '@/lib/basePath'
 import { useAuthStore } from '@/store/authStore'
 import { missionFormToTemplatePayload } from '@/utils/amrMissionTemplate'
 import { previewRackMoveMissionCode } from '@/utils/amrDcaCode'
-import { shouldWarnFirstSegmentDropOccupied } from '@/utils/amrPalletPresenceSanity'
+import {
+  shouldWarnFirstSegmentDropOccupied,
+  standRefsBypassingPalletCheck,
+} from '@/utils/amrPalletPresenceSanity'
 import { buildMultistopFleetTimeline, buildRackMoveFleetForwardPreview } from '@/utils/amrRackMoveFleetPreview'
 import { isActiveRobotFleetStatus } from '@/utils/amrRobotStatus'
 
@@ -73,6 +76,11 @@ type Leg = {
   id: string
   position: string
   putDown: boolean
+  /**
+   * Fleet first waypoint of the segment **from** this stop: drop pallet (`true`) vs no drop (`false`).
+   * Ignored on the last stop (no outgoing segment).
+   */
+  segmentStartPutDown?: boolean
   /** After this stop (multi-stop only); ignored for final destination. */
   continueMode?: 'manual' | 'auto'
   autoContinueSeconds?: number
@@ -99,7 +107,7 @@ function newLeg(partial?: Partial<Omit<Leg, 'id'>>): Leg {
   }
 }
 
-/** First stop is never a drop; last stop is always a drop. Intermediate rows keep user putDown. */
+/** First stop is never an arrive-drop; last stop is always arrive-drop. Clear depart flags on final stop. */
 function normalizePutDown(prev: Leg[]): Leg[] {
   const n = prev.length
   if (n < 2) return prev
@@ -111,9 +119,16 @@ function normalizePutDown(prev: Leg[]): Leg[] {
       return { ...l, putDown: false }
     }
     if (i === n - 1) {
-      if (l.putDown === true) return l
-      changed = true
-      return { ...l, putDown: true }
+      let row = l
+      if (l.putDown !== true) {
+        changed = true
+        row = { ...row, putDown: true }
+      }
+      if (row.segmentStartPutDown) {
+        changed = true
+        row = { ...row, segmentStartPutDown: false }
+      }
+      return row
     }
     return l
   })
@@ -327,6 +342,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const [stands, setStands] = useState<AmrStandPickerRow[]>([])
   const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
   const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
+  /** After opening the map picker for stop 1, deep-link `?from=` no longer overwrites the field (override / change start). */
+  const [startLockReleased, setStartLockReleased] = useState(false)
   const [pickerLegIdx, setPickerLegIdx] = useState<number | null>(null)
   const [generatedMissionCode] = useState(() => previewRackMoveMissionCode())
   const [containerCode, setContainerCode] = useState('')
@@ -502,10 +519,13 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
           orientation: String(r.orientation ?? '0'),
           block_pickup: Number(r.block_pickup ?? 0),
           block_dropoff: Number(r.block_dropoff ?? 0),
+          bypass_pallet_check: Number(r.bypass_pallet_check ?? 0),
         }))
       )
     )
   }, [])
+
+  const palletPresenceBypassRefs = useMemo(() => standRefsBypassingPalletCheck(stands), [stands])
 
   useEffect(() => {
     robotFleetMountedRef.current = true
@@ -575,11 +595,15 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   }, [effectiveSearch])
 
   useEffect(() => {
+    setStartLockReleased(false)
+  }, [lockStartLocation])
+
+  useEffect(() => {
     const params = new URLSearchParams(effectiveSearch)
     const c = params.get('container')?.trim()
     const from = params.get('from')?.trim()
     if (c) setContainerCode(c)
-    if (from) {
+    if (from && !startLockReleased) {
       setLegs((prev) => {
         if (!prev.length) return prev
         const next = [...prev]
@@ -587,11 +611,11 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         return normalizePutDown(next)
       })
     }
-  }, [effectiveSearch])
+  }, [effectiveSearch, startLockReleased])
 
   /** Keep first stop aligned with `from` while that query param is present (locked start). */
   useEffect(() => {
-    if (!lockStartLocation) return
+    if (!lockStartLocation || startLockReleased) return
     setLegs((prev) => {
       if (!prev.length) return prev
       if (prev[0].position === lockStartLocation) return prev
@@ -599,7 +623,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       next[0] = { ...next[0], position: lockStartLocation }
       return normalizePutDown(next)
     })
-  }, [lockStartLocation])
+  }, [lockStartLocation, startLockReleased])
 
   const updateStandSuggestLayout = useCallback(() => {
     const idx = openSuggestLegIdx
@@ -607,7 +631,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       setSuggestLayout(null)
       return
     }
-    if (lockStartLocation && idx === 0) {
+    if (lockStartLocation && !startLockReleased && idx === 0) {
       setSuggestLayout(null)
       return
     }
@@ -642,7 +666,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         maxHeight: Math.min(maxListPx, Math.max(80, spaceAbove)),
       })
     }
-  }, [openSuggestLegIdx, lockStartLocation])
+  }, [openSuggestLegIdx, lockStartLocation, startLockReleased])
 
   useLayoutEffect(() => {
     updateStandSuggestLayout()
@@ -747,6 +771,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     if (containerCode.trim()) payload.containerCode = containerCode.trim()
     if (selectedRobotIds.length > 0) payload.robotIds = selectedRobotIds
     if (overrideSpecialLocations) payload.override = true
+    const segmentFirstNodePutDown = legs.slice(0, -1).map((l) => l.segmentStartPutDown === true)
+    if (segmentFirstNodePutDown.length > 0) payload.segmentFirstNodePutDown = segmentFirstNodePutDown
     return payload
   }
 
@@ -766,7 +792,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               type: 'NODE_POINT',
               passStrategy: 'AUTO',
               waitingMillis: 0,
-              putDown: false,
+              putDown: legs[0]?.segmentStartPutDown === true,
             },
             {
               sequence: 2,
@@ -809,7 +835,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
           type: 'NODE_POINT',
           passStrategy: 'AUTO',
           waitingMillis: 0,
-          putDown: false,
+          putDown: legs[0]?.segmentStartPutDown === true,
         },
         {
           sequence: 2,
@@ -846,9 +872,11 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       waitingMillis: 0,
       putDown: l.putDown,
     }))
+    const segmentFirstNodePutDown = legs.slice(0, -1).map((l) => l.segmentStartPutDown === true)
     return buildMultistopFleetTimeline(rackMoveDebugFleetSettings, {
       pickupPosition,
       destinations,
+      segmentFirstNodePutDown,
       persistent,
       robotIds: selectedRobotIds.length > 0 ? selectedRobotIds : undefined,
     })
@@ -900,7 +928,11 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       if (uniquePresenceRefs.length > 0) {
         try {
           const presenceBatch = await postStandPresence(uniquePresenceRefs)
-          const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(legs, presenceBatch)
+          const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(
+            legs,
+            presenceBatch,
+            palletPresenceBypassRefs
+          )
           if (shouldWarn) {
             const destTitle = destinationRef.trim()
             const ok = await showConfirm(
@@ -949,7 +981,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
 
   const updateLeg = (idx: number, patch: Partial<Leg>) => {
     setLegs((prev) => {
-      if (idx === 0 && lockStartLocation && 'position' in patch) return prev
+      if (idx === 0 && lockStartLocation && !startLockReleased && 'position' in patch) return prev
       const n = prev.length
       if ('putDown' in patch && n >= 2 && (idx === 0 || idx === n - 1)) return prev
       return normalizePutDown(prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)))
@@ -981,26 +1013,26 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         const oldIndex = prev.findIndex((l) => l.id === active.id)
         const newIndex = prev.findIndex((l) => l.id === over.id)
         if (oldIndex < 0 || newIndex < 0) return prev
-        if (lockStartLocation && (oldIndex === 0 || newIndex === 0)) return prev
+        if (lockStartLocation && !startLockReleased && (oldIndex === 0 || newIndex === 0)) return prev
         return normalizePutDown(arrayMove(prev, oldIndex, newIndex))
       })
     },
-    [lockStartLocation]
+    [lockStartLocation, startLockReleased]
   )
 
   const removeLeg = (idx: number) => {
     if (legs.length <= 2) return
-    if (lockStartLocation && idx === 0) return
+    if (lockStartLocation && !startLockReleased && idx === 0) return
     setLegs((prev) => {
       if (prev.length <= 2) return prev
-      if (lockStartLocation && idx === 0) return prev
+      if (lockStartLocation && !startLockReleased && idx === 0) return prev
       return normalizePutDown(prev.filter((_, i) => i !== idx))
     })
   }
 
   const focusFirstEditableLegInput = () => {
     for (let i = 0; i < legs.length; i++) {
-      if (i === 0 && lockStartLocation) continue
+      if (i === 0 && lockStartLocation && !startLockReleased) continue
       legPositionInputRefs.current[i]?.focus()
       return
     }
@@ -1009,7 +1041,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
 
   const focusNextLegPositionInput = (currentIdx: number) => {
     for (let i = currentIdx + 1; i < legs.length; i++) {
-      if (i === 0 && lockStartLocation) continue
+      if (i === 0 && lockStartLocation && !startLockReleased) continue
       legPositionInputRefs.current[i]?.focus()
       return
     }
@@ -1027,13 +1059,14 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
           newLeg({
             position: leg.position,
             putDown: leg.putDown,
+            ...(leg.segmentStartPutDown === true ? { segmentStartPutDown: true } : {}),
             continueMode: leg.continueMode ?? 'manual',
             autoContinueSeconds: leg.autoContinueSeconds ?? 0,
           })
         )
       )
       const locked = lockStartLocation.trim()
-      if (locked) {
+      if (locked && !startLockReleased) {
         const copy = [...mapped]
         if (copy[0]) copy[0] = { ...copy[0], position: locked }
         setLegs(normalizePutDown(copy))
@@ -1052,7 +1085,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     } finally {
       setTemplateLoadBusy(false)
     }
-  }, [lockStartLocation])
+  }, [lockStartLocation, startLockReleased])
 
   const templateIdFromSearch = useMemo(() => {
     const raw = effectiveSearch.trim()
@@ -1109,6 +1142,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
             newLeg({
               position: leg.position,
               putDown: leg.putDown,
+              ...(leg.segmentStartPutDown === true ? { segmentStartPutDown: true } : {}),
               continueMode: leg.continueMode ?? 'manual',
               autoContinueSeconds: leg.autoContinueSeconds ?? 0,
             })
@@ -1441,12 +1475,14 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleLegDragEnd}>
           <SortableContext items={legs.map((l) => l.id)} strategy={verticalListSortingStrategy}>
             {legs.map((leg, idx) => {
-              const startLocked = idx === 0 && Boolean(lockStartLocation)
-              const dragLocked = Boolean(lockStartLocation && idx === 0)
-              const canRemove = legs.length > 2 && !(lockStartLocation && idx === 0)
+              const startLocked = idx === 0 && Boolean(lockStartLocation) && !startLockReleased
+              const dragLocked = Boolean(lockStartLocation && !startLockReleased && idx === 0)
+              const canRemove = legs.length > 2 && !(lockStartLocation && !startLockReleased && idx === 0)
               const putDownOn =
                 idx === 0 ? false : idx === legs.length - 1 ? true : leg.putDown
-              const putLocked = idx === 0 || idx === legs.length - 1
+              const showDepartToggle = idx < legs.length - 1
+              const showArriveToggle = idx >= 1
+              const arriveLocked = idx === legs.length - 1
               const locationInvalid =
                 fieldError?.kind === 'location' && fieldError.legIndices.includes(idx)
               const autoSecondsInvalid =
@@ -1619,11 +1655,15 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                   </div>
                   <button
                     type="button"
-                    disabled={startLocked}
-                    className="flex h-10 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex h-10 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground/80 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label={`Choose location on map for stop ${idx + 1}`}
-                    title={startLocked ? 'Start location is fixed for this container move' : 'Choose location'}
+                    title={
+                      startLocked
+                        ? 'Choose location — unlocks start so you can pick a restricted stand with override'
+                        : 'Choose location'
+                    }
                     onClick={() => {
+                      if (idx === 0 && lockStartLocation && !startLockReleased) setStartLockReleased(true)
                       setOpenSuggestLegIdx(null)
                       setPickerLegIdx(idx)
                     }}
@@ -1632,30 +1672,45 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                   </button>
                 </div>
                 <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:max-w-[min(100%,20rem)] md:shrink-0">
-                  <div
-                    className={`flex items-center gap-3 ${
-                      putLocked ? 'text-foreground/70' : ''
-                    }`}
-                  >
-                    <ToggleSwitch
-                      checked={putDownOn}
-                      disabled={putLocked}
-                      onCheckedChange={(on) => updateLeg(idx, { putDown: on })}
-                      aria-label={putDownOn ? 'Drop Pallet' : 'Pickup Pallet'}
-                      title={
-                        putLocked
-                          ? idx === 0
-                            ? 'First stop is always pickup'
-                            : 'Final stop is always drop'
-                          : undefined
-                      }
-                      size="sm"
-                      className="shrink-0"
-                    />
-                    <span className="min-w-0 flex-1 text-sm">
-                      {putDownOn ? 'Drop Pallet' : 'Pickup Pallet'}
-                    </span>
-                  </div>
+                  {showDepartToggle ? (
+                    <div className="flex items-center gap-3">
+                      <ToggleSwitch
+                        checked={leg.segmentStartPutDown === true}
+                        onCheckedChange={(on) => updateLeg(idx, { segmentStartPutDown: on })}
+                        aria-label={
+                          leg.segmentStartPutDown === true
+                            ? 'Depart: drop pallet at first waypoint'
+                            : 'Depart: no drop at first waypoint'
+                        }
+                        title="Fleet segment start (first NODE_POINT leaving this stop)"
+                        size="sm"
+                        className="shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 text-sm text-foreground/90">
+                        {leg.segmentStartPutDown === true ? 'Depart: Drop' : 'Depart: No drop'}
+                      </span>
+                    </div>
+                  ) : null}
+                  {showArriveToggle ? (
+                    <div className={`flex items-center gap-3 ${arriveLocked ? 'text-foreground/70' : ''}`}>
+                      <ToggleSwitch
+                        checked={putDownOn}
+                        disabled={arriveLocked}
+                        onCheckedChange={(on) => updateLeg(idx, { putDown: on })}
+                        aria-label={putDownOn ? 'Arrive: drop pallet' : 'Arrive: pickup / no drop'}
+                        title={
+                          arriveLocked
+                            ? 'Final stop is always a drop'
+                            : 'Fleet segment end (second waypoint arriving at this stop)'
+                        }
+                        size="sm"
+                        className="shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 text-sm">
+                        {putDownOn ? 'Arrive: Drop' : 'Arrive: No drop'}
+                      </span>
+                    </div>
+                  ) : null}
                   {idx < legs.length - 1 ? (
                     <div className="flex items-center gap-3">
                       <ToggleSwitch
@@ -1710,21 +1765,53 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                 ) : null}
               </div>
               {(() => {
-                const status = legRestrictionStatus(stands, leg.position, putDownOn)
-                if (!status.violated) return null
+                const pos = leg.position.trim()
+                if (!pos) return null
+                const departDrop = showDepartToggle && leg.segmentStartPutDown === true
+                const stDepart =
+                  showDepartToggle ? legRestrictionStatus(stands, pos, departDrop) : { violated: false, message: '' }
+                const stArrive =
+                  showArriveToggle ? legRestrictionStatus(stands, pos, putDownOn) : { violated: false, message: '' }
+                if (!stDepart.violated && !stArrive.violated) return null
                 return (
-                  <div className="mt-2 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 sm:flex-row sm:items-center sm:gap-3 dark:text-amber-200">
-                    <span className="min-w-0 flex-1 leading-snug">{status.message}</span>
-                    {canOverrideSpecial ? (
-                      <label className="flex cursor-pointer select-none items-center gap-1.5 sm:ml-auto sm:shrink-0">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-border"
-                          checked={overrideSpecialLocations}
-                          onChange={(e) => setOverrideSpecialLocations(e.target.checked)}
-                        />
-                        <span>Override restriction</span>
-                      </label>
+                  <div className="mt-2 flex flex-col gap-2">
+                    {stDepart.violated ? (
+                      <div className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 sm:flex-row sm:items-center sm:gap-3 dark:text-amber-200">
+                        <span className="min-w-0 flex-1 leading-snug">
+                          <span className="font-medium">Depart: </span>
+                          {stDepart.message}
+                        </span>
+                        {canOverrideSpecial ? (
+                          <label className="flex cursor-pointer select-none items-center gap-1.5 sm:ml-auto sm:shrink-0">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-border"
+                              checked={overrideSpecialLocations}
+                              onChange={(e) => setOverrideSpecialLocations(e.target.checked)}
+                            />
+                            <span>Override restriction</span>
+                          </label>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {stArrive.violated ? (
+                      <div className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 sm:flex-row sm:items-center sm:gap-3 dark:text-amber-200">
+                        <span className="min-w-0 flex-1 leading-snug">
+                          <span className="font-medium">Arrive: </span>
+                          {stArrive.message}
+                        </span>
+                        {canOverrideSpecial ? (
+                          <label className="flex cursor-pointer select-none items-center gap-1.5 sm:ml-auto sm:shrink-0">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-border"
+                              checked={overrideSpecialLocations}
+                              onChange={(e) => setOverrideSpecialLocations(e.target.checked)}
+                            />
+                            <span>Override restriction</span>
+                          </label>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 )
@@ -1765,7 +1852,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
 
       {openSuggestLegIdx !== null &&
       suggestLayout &&
-      !(lockStartLocation && openSuggestLegIdx === 0) &&
+      !(lockStartLocation && !startLockReleased && openSuggestLegIdx === 0) &&
       (suggestedStands.length > 0 || stands.length > 0)
         ? createPortal(
             suggestedStands.length > 0 ? (
@@ -1941,18 +2028,24 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         />
       )}
 
-      {pickerLegIdx !== null && !(pickerLegIdx === 0 && lockStartLocation) ? (
+      {pickerLegIdx !== null ? (
         (() => {
           const idx = pickerLegIdx
           const total = legs.length
+          const pl = legs[idx]
+          const departDrop = idx < total - 1 && pl?.segmentStartPutDown === true
+          const arriveDrop =
+            idx === 0 ? false : idx === total - 1 ? true : pl?.putDown === true
           const pickerMode: 'pickup' | 'dropoff' | 'any' =
             idx === 0
               ? 'pickup'
               : idx === total - 1
-              ? 'dropoff'
-              : legs[idx]?.putDown
-              ? 'dropoff'
-              : 'pickup'
+                ? 'dropoff'
+                : departDrop === arriveDrop
+                  ? departDrop
+                    ? 'dropoff'
+                    : 'pickup'
+                  : 'any'
           return (
             <AmrStandPickerModal
               stackOrder={variant === 'modal' || variant === 'templateEditor' ? 'aboveDialogs' : 'base'}

@@ -278,11 +278,13 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
     enabled INTEGER NOT NULL DEFAULT 1,
     block_pickup INTEGER NOT NULL DEFAULT 0,
     block_dropoff INTEGER NOT NULL DEFAULT 0,
+    bypass_pallet_check INTEGER NOT NULL DEFAULT 0,
     created_at TEXT ${tsTextDefault},
     updated_at TEXT
   )`,
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_pickup INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_dropoff INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS bypass_pallet_check INTEGER NOT NULL DEFAULT 0`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_amr_stands_external ON amr_stands(external_ref)`,
   `CREATE TABLE IF NOT EXISTS amr_mission_records (
     id TEXT PRIMARY KEY,

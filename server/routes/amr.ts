@@ -30,6 +30,8 @@ import {
   buildSegmentMissionData,
   continueNotBeforeDeferredFirstSegment,
   continueNotBeforeForAwaitingSession,
+  multistopPlanFromTemplateLegs,
+  multistopPlanToStandLegPairs,
   normalizeDestinationInput,
   normalizePickupContinueInput,
   parseMultistopPlan,
@@ -389,6 +391,7 @@ router.post(
     const enabled = b.enabled === false ? 0 : 1
     const block_pickup = coerceBoolFlag(b.block_pickup, 0)
     const block_dropoff = coerceBoolFlag(b.block_dropoff, 0)
+    const bypass_pallet_check = coerceBoolFlag(b.bypass_pallet_check, 0)
     const ts = nowTs()
 
     if (await standIdWithExternalRef(external_ref)) {
@@ -406,8 +409,8 @@ router.post(
 
     await db
       .prepare(
-        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -421,6 +424,7 @@ router.post(
         enabled,
         block_pickup,
         block_dropoff,
+        bypass_pallet_check,
         ts,
         ts
       )
@@ -473,6 +477,10 @@ router.patch(
       'block_dropoff' in b
         ? coerceBoolFlag(b.block_dropoff, 0)
         : (Number(existing.block_dropoff ?? 0) ? 1 : 0)
+    const bypass_pallet_check =
+      'bypass_pallet_check' in b
+        ? coerceBoolFlag(b.bypass_pallet_check, 0)
+        : (Number(existing.bypass_pallet_check ?? 0) ? 1 : 0)
 
     const conflictLoc = await standIdWithExternalRef(external_ref, id)
     if (conflictLoc) {
@@ -490,7 +498,7 @@ router.patch(
 
     await db
       .prepare(
-        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, updated_at = ? WHERE id = ?`
+        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, updated_at = ? WHERE id = ?`
       )
       .run(
         zone,
@@ -503,6 +511,7 @@ router.patch(
         enabled,
         block_pickup,
         block_dropoff,
+        bypass_pallet_check,
         nowTs(),
         id
       )
@@ -613,8 +622,15 @@ router.post(
         row.no_lower ??
         row.NoLower ??
         row['No Lower']
+      const bypassPalletRaw =
+        row.bypass_pallet_check ??
+        row['Bypass pallet check'] ??
+        row.bypass_pallet ??
+        row.BypassPalletCheck ??
+        row['Bypass Pallet Check']
       const block_pickup = coerceBoolFlag(blockPickupRaw, 0)
       const block_dropoff = coerceBoolFlag(blockDropoffRaw, 0)
+      const bypass_pallet_check = coerceBoolFlag(bypassPalletRaw, 0)
 
       if (dwgNorm) {
         const winnerDwgLine = firstCsvLineForDwg.get(dwgNorm)
@@ -643,7 +659,7 @@ router.post(
           }
           await db
             .prepare(
-              `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, updated_at = ? WHERE id = ?`
+              `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, updated_at = ? WHERE id = ?`
             )
             .run(
               zone,
@@ -655,6 +671,7 @@ router.post(
               enabled,
               block_pickup,
               block_dropoff,
+              bypass_pallet_check,
               ts,
               existing.id
             )
@@ -670,8 +687,8 @@ router.post(
           const id = uuidv4()
           await db
             .prepare(
-              `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             )
             .run(
               id,
@@ -685,6 +702,7 @@ router.post(
               enabled,
               block_pickup,
               block_dropoff,
+              bypass_pallet_check,
               ts,
               ts
             )
@@ -1139,6 +1157,7 @@ router.patch(
           plan_json: string
           total_segments: number
           next_segment_index: number
+          pickup_position?: string | null
         }
       | undefined
     if (!row) {
@@ -1196,10 +1215,32 @@ router.patch(
       newPlan.pickupContinue = oldPlan.pickupContinue
     }
 
-    const editLegsToValidate: StandLegToValidate[] = newPlan.destinations.map((d, i) => ({
-      position: d.position,
-      putDown: i === newPlan.destinations.length - 1 ? true : Boolean(d.putDown),
-    }))
+    const segPatch = body.segmentFirstNodePutDown
+    const nd = newPlan.destinations.length
+    if (segPatch !== undefined && segPatch !== null) {
+      if (!Array.isArray(segPatch) || segPatch.length !== nd) {
+        res.status(400).json({
+          error:
+            'segmentFirstNodePutDown must be an array with the same length as destinations when provided',
+        })
+        return
+      }
+      newPlan.segmentFirstNodePutDown = segPatch.map((x) => x === true || x === 'true')
+    } else if (oldPlan?.segmentFirstNodePutDown && oldPlan.segmentFirstNodePutDown.length > 0) {
+      const o = oldPlan.segmentFirstNodePutDown
+      if (o.length === nd) {
+        newPlan.segmentFirstNodePutDown = o
+      } else {
+        newPlan.segmentFirstNodePutDown = [
+          ...o.slice(0, nd),
+          ...Array(Math.max(0, nd - o.length)).fill(false),
+        ]
+      }
+    }
+
+    const pickupPosPatch =
+      typeof row.pickup_position === 'string' ? row.pickup_position.trim() : ''
+    const editLegsToValidate = multistopPlanToStandLegPairs(pickupPosPatch, newPlan)
     const editOverrideRequested = body.override === true || body.override === 'true'
     const editHasOverridePerm = roleHasPermission(
       req.user?.permissions ?? [],
@@ -1281,7 +1322,8 @@ router.post(
 
 /**
  * Failed multistop sessions cannot Continue. Best-effort fleet `missionCancel` on each segment mission code (newest
- * leg first), then mark all session mission rows closed and session `cancelled` so the worker and UI stop tracking them.
+ * leg first), then best-effort `containerOut` so the pallet is removed from the fleet map if still registered, then mark
+ * mission rows closed and session `cancelled` so the worker and UI stop tracking them.
  */
 router.post(
   '/dc/missions/multistop/:sessionId/terminate-stuck',
@@ -1293,8 +1335,20 @@ router.post(
       res.status(400).json({ error: 'sessionId required' })
       return
     }
-    const session = (await db.prepare('SELECT id, status FROM amr_multistop_sessions WHERE id = ?').get(sessionId)) as
-      | { id: string; status: string }
+    const session = (await db
+      .prepare(
+        `SELECT id, status, pickup_position, container_code, persistent_container, enter_orientation
+         FROM amr_multistop_sessions WHERE id = ?`
+      )
+      .get(sessionId)) as
+      | {
+          id: string
+          status: string
+          pickup_position?: string | null
+          container_code?: string | null
+          persistent_container?: number | null
+          enter_orientation?: string | null
+        }
       | undefined
     if (!session) {
       res.status(404).json({ error: 'Session not found' })
@@ -1350,6 +1404,60 @@ router.post(
       })
     }
 
+    /** Best-effort: remove container from fleet map if still registered (same idea as mission worker on cancel). */
+    let fleetContainerOut:
+      | { ok: boolean; httpStatus: number; fleetSuccess?: boolean; position?: string }
+      | undefined
+    const persistentTerm = Number(session.persistent_container) === 1
+    const containerCodeTerm =
+      typeof session.container_code === 'string' ? session.container_code.trim() : ''
+    const pickupPosTerm =
+      typeof session.pickup_position === 'string' ? session.pickup_position.trim() : ''
+    const enterOrientationTerm =
+      session.enter_orientation != null && String(session.enter_orientation).trim()
+        ? String(session.enter_orientation).trim()
+        : '0'
+    const lastFpRow = (await db
+      .prepare(
+        `SELECT final_position FROM amr_mission_records
+         WHERE multistop_session_id = ?
+         ORDER BY COALESCE(multistop_step_index, 0) DESC, created_at DESC LIMIT 1`
+      )
+      .get(sessionId)) as { final_position?: string | null } | undefined
+    const fpTerm =
+      typeof lastFpRow?.final_position === 'string' ? lastFpRow.final_position.trim() : ''
+    const positionOut = fpTerm || pickupPosTerm
+    if (!persistentTerm && containerCodeTerm && positionOut) {
+      const outReq = {
+        orgId: cfg.orgId,
+        requestId: genDCA('CO'),
+        containerType: cfg.containerType,
+        containerModelCode: cfg.containerModelCode,
+        containerCode: containerCodeTerm,
+        position: positionOut,
+        enterOrientation: enterOrientationTerm,
+        isDelete: true,
+      }
+      const out = await forwardAmrFleetRequest(cfg, 'containerOut', outReq, {
+        db,
+        source: 'multistop-terminate-stuck',
+        missionRecordId: null,
+        userId: req.user!.id,
+      })
+      fleetContainerOut = {
+        ok: out.ok,
+        httpStatus: out.status,
+        fleetSuccess: out.ok ? fleetJsonIndicatesSuccess(out.json) : undefined,
+        position: positionOut,
+      }
+      if (!fleetContainerOut.ok || !fleetContainerOut.fleetSuccess) {
+        console.warn(
+          `[amr] terminate-stuck containerOut best-effort failed for session ${sessionId}: HTTP ${out.status}`,
+          out.json
+        )
+      }
+    }
+
     const ts = nowTs()
     await db
       .prepare(`UPDATE amr_mission_records SET worker_closed = 1, updated_at = ? WHERE multistop_session_id = ?`)
@@ -1365,6 +1473,7 @@ router.post(
       sessionId,
       status: 'cancelled',
       fleetCancels,
+      ...(fleetContainerOut ? { fleetContainerOut } : {}),
     })
   })
 )
@@ -1409,13 +1518,20 @@ router.post(
       plan.pickupContinue = pc.value
     }
 
-    const multistopLegsToValidate: StandLegToValidate[] = [
-      { position: pickupRaw, putDown: false },
-      ...plan.destinations.map((d, i) => ({
-        position: d.position,
-        putDown: i === plan.destinations.length - 1 ? true : Boolean(d.putDown),
-      })),
-    ]
+    const segIn = b.segmentFirstNodePutDown
+    if (segIn !== undefined && segIn !== null) {
+      if (!Array.isArray(segIn)) {
+        res.status(400).json({ error: 'segmentFirstNodePutDown must be an array when provided' })
+        return
+      }
+      if (segIn.length !== plan.destinations.length) {
+        res.status(400).json({ error: 'segmentFirstNodePutDown length must match destinations' })
+        return
+      }
+      plan.segmentFirstNodePutDown = segIn.map((x) => x === true || x === 'true')
+    }
+
+    const multistopLegsToValidate = multistopPlanToStandLegPairs(pickupRaw, plan)
     const overrideRequested = b.override === true || b.override === 'true'
     const hasOverridePerm = roleHasPermission(req.user?.permissions ?? [], 'amr.stands.override-special')
     const blockCheck = await validateStandBlocksForLegs(
@@ -1705,10 +1821,13 @@ router.post(
       return
     }
     {
-      const tmplLegs: StandLegToValidate[] = v.payload.legs.map((leg, i) => ({
-        position: leg.position,
-        putDown: i === 0 ? false : i === v.payload.legs.length - 1 ? true : Boolean(leg.putDown),
-      }))
+      const tmplPlan = multistopPlanFromTemplateLegs(v.payload.legs)
+      if (!tmplPlan) {
+        res.status(400).json({ error: 'Template legs invalid for stand validation' })
+        return
+      }
+      const pickupT = v.payload.legs[0]?.position?.trim() ?? ''
+      const tmplLegs = multistopPlanToStandLegPairs(pickupT, tmplPlan)
       const overrideRequested = b.override === true || b.override === 'true'
       const hasOverridePerm = roleHasPermission(
         req.user?.permissions ?? [],
@@ -1808,10 +1927,13 @@ router.put(
       }
     }
     if (b.payload !== undefined) {
-      const tmplLegs: StandLegToValidate[] = nextPayload.legs.map((leg, i) => ({
-        position: leg.position,
-        putDown: i === 0 ? false : i === nextPayload.legs.length - 1 ? true : Boolean(leg.putDown),
-      }))
+      const tmplPlan = multistopPlanFromTemplateLegs(nextPayload.legs)
+      if (!tmplPlan) {
+        res.status(400).json({ error: 'Template legs invalid for stand validation' })
+        return
+      }
+      const pickupT = nextPayload.legs[0]?.position?.trim() ?? ''
+      const tmplLegs = multistopPlanToStandLegPairs(pickupT, tmplPlan)
       const overrideRequested = b.override === true || b.override === 'true'
       const hasOverridePerm = roleHasPermission(
         req.user?.permissions ?? [],

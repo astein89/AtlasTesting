@@ -20,7 +20,10 @@ import { useAuthStore } from '@/store/authStore'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
 import { templatePayloadToMultistopBody, validateMissionTemplatePayloadForCreate } from '@/utils/amrMissionTemplate'
-import { shouldWarnFirstSegmentDropOccupied } from '@/utils/amrPalletPresenceSanity'
+import {
+  shouldWarnFirstSegmentDropOccupied,
+  standRefsBypassingPalletCheck,
+} from '@/utils/amrPalletPresenceSanity'
 
 function apiErrorMessage(e: unknown): string {
   const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -123,9 +126,11 @@ export function AmrMissionTemplates() {
           if (uniquePresenceRefs.length > 0) {
             try {
               const presenceBatch = await postStandPresence(uniquePresenceRefs)
+              const bypassRefs = standRefsBypassingPalletCheck(stands)
               const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(
                 legsForCheck,
-                presenceBatch
+                presenceBatch,
+                bypassRefs
               )
               if (shouldWarn) {
                 const destTitle = destinationRef.trim()
