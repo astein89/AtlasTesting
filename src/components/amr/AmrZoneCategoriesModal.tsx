@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
-  closestCenter,
+  closestCorners,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import {
   arrayMove,
@@ -42,6 +46,13 @@ type Bucket = {
   uncategorized: boolean
 }
 
+/** Prefer the bucket under the pointer so drops match intent; fall back for reorder collisions. */
+const zoneBucketCollisionDetection: CollisionDetection = (args) => {
+  const pointerHits = pointerWithin(args)
+  if (pointerHits.length > 0) return pointerHits
+  return closestCorners(args)
+}
+
 function dragGripIcon() {
   return (
     <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -71,7 +82,11 @@ function SortableCategoryCard({
   const style = { transform: CSS.Transform.toString(transform), transition }
   const orphanCount = zones.reduce((acc, z) => acc + (orphanZones.has(z) ? 1 : 0), 0)
   return (
-    <li ref={setNodeRef} style={style} className={isDragging ? 'opacity-60' : ''}>
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={isDragging ? 'relative z-[80] opacity-40 ring-1 ring-dashed ring-primary/40' : ''}
+    >
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-2 py-2">
           <button
@@ -108,6 +123,46 @@ function SortableCategoryCard({
   )
 }
 
+/** Static chip visuals — shared by list item and drag overlay so the cursor preview stays fully opaque. */
+function ZoneChipFace({
+  zone,
+  isOrphan,
+  showRemove,
+}: {
+  zone: string
+  isOrphan: boolean
+  showRemove?: boolean
+}) {
+  return (
+    <div
+      className={`pointer-events-none flex items-center gap-1 rounded-full border px-2 py-1 text-xs shadow-sm ${
+        isOrphan
+          ? 'border-amber-500/45 bg-amber-500/10 text-amber-800 dark:text-amber-200'
+          : 'border-border bg-background text-foreground'
+      }`}
+    >
+      <span className="pl-0.5 text-foreground/45" aria-hidden>
+        <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
+        </svg>
+      </span>
+      <span className="font-mono">{zone || '(blank)'}</span>
+      {isOrphan ? (
+        <span className="ml-0.5 text-[10px] uppercase tracking-wide" title="No stand currently uses this zone">
+          no stands
+        </span>
+      ) : null}
+      {showRemove ? (
+        <span className="ml-1 rounded p-0.5 text-foreground/55" aria-hidden>
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 function SortableZoneChip({
   zone,
   isOrphan,
@@ -122,9 +177,13 @@ function SortableZoneChip({
   })
   const style = { transform: CSS.Transform.toString(transform), transition }
   return (
-    <li ref={setNodeRef} style={style} className={isDragging ? 'opacity-60' : ''}>
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`relative ${isDragging ? 'z-[100] opacity-40 ring-1 ring-dashed ring-primary/35' : ''}`}
+    >
       <div
-        className={`flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
+        className={`relative flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
           isOrphan
             ? 'border-amber-500/45 bg-amber-500/10 text-amber-800 dark:text-amber-200'
             : 'border-border bg-background text-foreground'
@@ -184,8 +243,10 @@ function ZoneBucketArea({
     >
       <ul
         ref={setNodeRef}
-        className={`m-0 flex min-h-[2.5rem] list-none flex-wrap gap-1.5 rounded p-2 transition-colors ${
-          isOver ? 'bg-primary/10 ring-2 ring-primary/25' : ''
+        className={`m-0 flex min-h-[6rem] list-none flex-wrap content-start gap-2 rounded-lg border-2 border-dashed p-3 transition-colors sm:min-h-[7rem] ${
+          isOver
+            ? 'border-primary/55 bg-primary/15 shadow-inner ring-2 ring-primary/35'
+            : 'border-border/50 bg-muted/25 hover:border-border'
         }`}
       >
         {zones.length === 0 ? (
@@ -219,6 +280,9 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [pendingDeleteCatId, setPendingDeleteCatId] = useState<string | null>(null)
+  /** Drag overlay preview — source chip fades but stays outlined; cursor carries full-opacity clone. */
+  const [activeDragZone, setActiveDragZone] = useState<string | null>(null)
+  const [activeDragCategoryId, setActiveDragCategoryId] = useState<string | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -284,17 +348,6 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
   }, [categories, allZonesSet])
   const orphanCount = orphanZones.size
 
-  const findCategoryWithZone = useCallback(
-    (zone: string): { catIdx: number; zoneIdx: number } | null => {
-      for (let i = 0; i < categories.length; i++) {
-        const idx = categories[i].zones.indexOf(zone)
-        if (idx !== -1) return { catIdx: i, zoneIdx: idx }
-      }
-      return null
-    },
-    [categories]
-  )
-
   const moveZoneTo = useCallback(
     (zone: string, targetBucketId: string, insertBeforeZone: string | null) => {
       setCategories((prev) => {
@@ -319,50 +372,69 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
     []
   )
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const id = String(event.active.id)
+    if (id.startsWith(ZONE_PREFIX)) {
+      setActiveDragZone(id.slice(ZONE_PREFIX.length))
+      setActiveDragCategoryId(null)
+    } else if (id.startsWith(CATEGORY_PREFIX)) {
+      setActiveDragCategoryId(id.slice(CATEGORY_PREFIX.length))
+      setActiveDragZone(null)
+    } else {
+      setActiveDragZone(null)
+      setActiveDragCategoryId(null)
+    }
+  }, [])
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event
-      if (!over) return
-      const aId = String(active.id)
-      const oId = String(over.id)
-      if (aId === oId) return
+      try {
+        if (!over) return
+        const aId = String(active.id)
+        const oId = String(over.id)
+        if (aId === oId) return
 
-      if (aId.startsWith(CATEGORY_PREFIX)) {
-        if (!oId.startsWith(CATEGORY_PREFIX)) return
-        const aCatId = aId.slice(CATEGORY_PREFIX.length)
-        const oCatId = oId.slice(CATEGORY_PREFIX.length)
-        setCategories((prev) => {
-          const oldIndex = prev.findIndex((c) => c.id === aCatId)
-          const newIndex = prev.findIndex((c) => c.id === oCatId)
-          if (oldIndex < 0 || newIndex < 0) return prev
-          return arrayMove(prev, oldIndex, newIndex)
-        })
-        return
-      }
-
-      if (!aId.startsWith(ZONE_PREFIX)) return
-      const movedZone = aId.slice(ZONE_PREFIX.length)
-      let targetBucket: string
-      let insertBefore: string | null = null
-
-      if (oId.startsWith(BUCKET_DROP_PREFIX)) {
-        targetBucket = oId.slice(BUCKET_DROP_PREFIX.length)
-      } else if (oId.startsWith(ZONE_PREFIX)) {
-        const overZone = oId.slice(ZONE_PREFIX.length)
-        const inUncat = !categories.some((c) => c.zones.includes(overZone))
-        if (inUncat) {
-          targetBucket = UNCATEGORIZED_BUCKET_ID
-        } else {
-          const cat = categories.find((c) => c.zones.includes(overZone))
-          if (!cat) return
-          targetBucket = cat.id
-          insertBefore = overZone
+        if (aId.startsWith(CATEGORY_PREFIX)) {
+          if (!oId.startsWith(CATEGORY_PREFIX)) return
+          const aCatId = aId.slice(CATEGORY_PREFIX.length)
+          const oCatId = oId.slice(CATEGORY_PREFIX.length)
+          setCategories((prev) => {
+            const oldIndex = prev.findIndex((c) => c.id === aCatId)
+            const newIndex = prev.findIndex((c) => c.id === oCatId)
+            if (oldIndex < 0 || newIndex < 0) return prev
+            return arrayMove(prev, oldIndex, newIndex)
+          })
+          return
         }
-      } else {
-        return
-      }
 
-      moveZoneTo(movedZone, targetBucket, insertBefore)
+        if (!aId.startsWith(ZONE_PREFIX)) return
+        const movedZone = aId.slice(ZONE_PREFIX.length)
+        let targetBucket: string
+        let insertBefore: string | null = null
+
+        if (oId.startsWith(BUCKET_DROP_PREFIX)) {
+          targetBucket = oId.slice(BUCKET_DROP_PREFIX.length)
+        } else if (oId.startsWith(ZONE_PREFIX)) {
+          const overZone = oId.slice(ZONE_PREFIX.length)
+          const inUncat = !categories.some((c) => c.zones.includes(overZone))
+          if (inUncat) {
+            targetBucket = UNCATEGORIZED_BUCKET_ID
+          } else {
+            const cat = categories.find((c) => c.zones.includes(overZone))
+            if (!cat) return
+            targetBucket = cat.id
+            insertBefore = overZone
+          }
+        } else {
+          return
+        }
+
+        moveZoneTo(movedZone, targetBucket, insertBefore)
+      } finally {
+        setActiveDragZone(null)
+        setActiveDragCategoryId(null)
+      }
     },
     [categories, moveZoneTo]
   )
@@ -469,8 +541,8 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
               Manage zone categories
             </h2>
             <p className="text-xs text-foreground/60">
-              Group zones for the stand picker. Drag zones between categories to assign them, drag the handles to
-              reorder.
+              Group zones for the stand picker. Drag zones onto the dashed bucket — it grows when you hover. The chip
+              follows your pointer while dragging. Drag category handles to reorder categories.
             </p>
           </div>
           <button
@@ -489,7 +561,16 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
           {loading ? (
             <p className="text-sm text-foreground/60">Loading…</p>
           ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={zoneBucketCollisionDetection}
+              onDragStart={handleDragStart}
+              onDragCancel={() => {
+                setActiveDragZone(null)
+                setActiveDragCategoryId(null)
+              }}
+              onDragEnd={handleDragEnd}
+            >
               <SortableContext
                 items={categories.map((c) => `${CATEGORY_PREFIX}${c.id}`)}
                 strategy={verticalListSortingStrategy}
@@ -555,6 +636,21 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
                   </button>
                 </div>
               ) : null}
+
+              <DragOverlay dropAnimation={null} zIndex={200}>
+                {activeDragZone != null ? (
+                  <div className="cursor-grabbing drop-shadow-lg">
+                    <ZoneChipFace zone={activeDragZone} isOrphan={orphanZones.has(activeDragZone)} showRemove={false} />
+                  </div>
+                ) : activeDragCategoryId != null ? (
+                  <div className="cursor-grabbing rounded-lg border border-border bg-card px-4 py-3 shadow-xl">
+                    <p className="text-xs font-medium uppercase tracking-wide text-foreground/55">Category</p>
+                    <p className="mt-1 text-sm font-semibold text-foreground">
+                      {categories.find((c) => c.id === activeDragCategoryId)?.name?.trim() || '(unnamed)'}
+                    </p>
+                  </div>
+                ) : null}
+              </DragOverlay>
             </DndContext>
           )}
         </div>
