@@ -27,6 +27,8 @@ export type AmrStandRow = {
   block_dropoff: number
   /** 0 = normal; 1 = skip Hyperion empty-stand checks for this location (create / continue). */
   bypass_pallet_check: number
+  /** Max active queued/reserved dispatches for bypass-pallet-check stands (default 1). */
+  active_missions: number
   created_at: string | null
   updated_at: string | null
   [extra: string]: unknown
@@ -54,6 +56,8 @@ export type AmrFleetSettings = {
    * When true (default if omitted), New mission / template create calls Hyperion and may prompt if stop 1 is empty while another stop has a pallet.
    */
   missionCreateStandPresenceSanityCheck?: boolean
+  missionQueueingEnabled?: boolean
+  palletDropConfirmTimeoutMs?: number
   /** Hyperion API origin (e.g. http://host:1881). Used for stand presence and future Hyperion proxies. */
   hyperionBaseUrl?: string
   hyperionUsername?: string
@@ -171,6 +175,50 @@ export async function importAmrStandsCsv(csv: string) {
   return data
 }
 
+/** Synthetic zone key / mission sentinel prefix for stand groups (`__group:<uuid>`). */
+export const AMR_STAND_GROUP_PREFIX = '__group:'
+
+export type AmrStandGroupMember = {
+  standId: string
+  externalRef: string
+  position: number
+}
+
+export type AmrStandGroupRow = {
+  id: string
+  name: string
+  zone: string
+  enabled: number
+  sort_order: number
+  members: AmrStandGroupMember[]
+}
+
+export async function getAmrStandGroups() {
+  const { data } = await api.get<{ groups: AmrStandGroupRow[] }>('/amr/dc/stand-groups')
+  return data.groups
+}
+
+export async function createAmrStandGroup(body: {
+  name: string
+  memberStandIds?: string[]
+  sort_order?: number
+}) {
+  const { data } = await api.post<{ group: Record<string, unknown> }>('/amr/dc/stand-groups', body)
+  return data.group
+}
+
+export async function updateAmrStandGroup(
+  id: string,
+  body: Partial<{ name: string; enabled: boolean; sort_order: number; memberStandIds: string[] }>
+) {
+  const { data } = await api.patch<{ group: Record<string, unknown> }>(`/amr/dc/stand-groups/${encodeURIComponent(id)}`, body)
+  return data.group
+}
+
+export async function deleteAmrStandGroup(id: string) {
+  await api.delete(`/amr/dc/stand-groups/${encodeURIComponent(id)}`)
+}
+
 export async function getAmrMissionRecords(options?: { signal?: AbortSignal }) {
   const { data } = await api.get<{ records: Record<string, unknown>[] }>('/amr/dc/mission-records', {
     signal: options?.signal,
@@ -247,6 +295,22 @@ export async function continueAmrMultistopSession(
   const { data } = await api.post<unknown>(
     `/amr/dc/missions/multistop/${encodeURIComponent(sessionId)}/continue`,
     body
+  )
+  return data
+}
+
+export async function forceReleaseMission(missionRecordId: string) {
+  const { data } = await api.post<{ ok: boolean; missionRecordId: string; fleetSubmit: unknown }>(
+    `/amr/dc/missions/${encodeURIComponent(missionRecordId)}/force-release`,
+    {}
+  )
+  return data
+}
+
+export async function ackPresenceWarning(missionRecordId: string) {
+  const { data } = await api.post<{ ok: boolean; missionRecordId: string }>(
+    `/amr/dc/missions/${encodeURIComponent(missionRecordId)}/ack-presence-warning`,
+    {}
   )
   return data
 }

@@ -4,6 +4,8 @@
 
 export type AmrMissionTemplateLeg = {
   position: string
+  /** Stop 2+ only: stand-group pool (lazy-resolve); `position` may be empty until dispatch. */
+  groupId?: string
   putDown: boolean
   /** First NODE_POINT of the segment leaving this stop: drop (true) vs no drop (false). Omitted on last stop. */
   segmentStartPutDown?: boolean
@@ -43,8 +45,19 @@ export function validateMissionTemplatePayload(raw: unknown):
     }
     const L = row as Record<string, unknown>
     const position = typeof L.position === 'string' ? L.position.trim() : ''
-    if (!position) {
-      return { ok: false, error: `Stop ${i + 1} needs a location (External Ref)` }
+    const groupId = typeof L.groupId === 'string' ? L.groupId.trim() : ''
+    if (i === 0) {
+      if (groupId) {
+        return { ok: false, error: 'Stop 1 must be a single stand — stand groups apply from stop 2 onward' }
+      }
+      if (!position) {
+        return { ok: false, error: `Stop ${i + 1} needs a location (External Ref)` }
+      }
+    } else if (!position && !groupId) {
+      return {
+        ok: false,
+        error: `Stop ${i + 1} needs a location (External Ref) or stand group`,
+      }
     }
     const putDown = Boolean(L.putDown)
     const isLast = i === o.legs.length - 1
@@ -65,6 +78,7 @@ export function validateMissionTemplatePayload(raw: unknown):
       !isLast && (L.segmentStartPutDown === true || L.segmentStartPutDown === 'true')
     legs.push({
       position,
+      ...(groupId ? { groupId } : {}),
       putDown,
       ...(segmentStartPutDown ? { segmentStartPutDown: true } : {}),
       continueMode: cm,
@@ -113,7 +127,10 @@ export function stopCountFromPayloadJson(payloadJson: string): number {
 
 function formatTemplateStopCardLine(leg: AmrMissionTemplateLeg): string {
   const op = leg.putDown ? 'Drop' : 'Pickup'
-  return `${leg.position} · ${op}`
+  const loc =
+    leg.position.trim() ||
+    (leg.groupId?.trim() ? `[group:${leg.groupId.trim()}]` : '—')
+  return `${loc} · ${op}`
 }
 
 /** List API: one parse; up to 3 lines (`position · Pickup|Drop`), or first two plus "+ N more". */

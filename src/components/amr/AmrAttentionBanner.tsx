@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
+  ackPresenceWarning,
   cancelAmrMultistopSession,
   continueAmrMultistopSession,
   getAmrMultistopSession,
   getAmrMissionAttention,
+  getAmrMissionRecords,
   getAmrSettings,
   getAmrStands,
   postStandPresence,
@@ -60,6 +62,10 @@ export function AmrAttentionBanner() {
   const [palletPresenceBypassRefs, setPalletPresenceBypassRefs] = useState(() => new Set<string>())
   /** Hyperion must report empty (`false`) before Release is enabled — mirrors mission modals. */
   const [releaseDisabledUntilStandEmpty, setReleaseDisabledUntilStandEmpty] = useState(false)
+  const [presenceWarnings, setPresenceWarnings] = useState<
+    Array<{ id: string; jobCode: string; standRef: string }>
+  >([])
+  const [ackBusyId, setAckBusyId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!canAmr) return
@@ -70,13 +76,29 @@ export function AmrAttentionBanner() {
     if (!canAmr) return
     const ac = new AbortController()
     const tick = () => {
-      void getAmrMissionAttention({ signal: ac.signal })
-        .then((d) => {
+      void Promise.all([getAmrMissionAttention({ signal: ac.signal }), getAmrMissionRecords({ signal: ac.signal })])
+        .then(([d, records]) => {
           setAttention({ count: d.count, items: d.items })
+          const warns = (records ?? [])
+            .filter((r) => {
+              const v = (r as Record<string, unknown>).presence_warning_at
+              return typeof v === 'string' && v.trim().length > 0
+            })
+            .map((r) => {
+              const row = r as Record<string, unknown>
+              return {
+                id: String(row.id ?? '').trim(),
+                jobCode: String(row.job_code ?? row.mission_code ?? '').trim(),
+                standRef: String(row.presence_dest_ref ?? row.final_position ?? '').trim(),
+              }
+            })
+            .filter((x) => x.id)
+          setPresenceWarnings(warns)
         })
         .catch((e) => {
           if (isAbortLikeError(e)) return
           setAttention({ count: 0, items: [] })
+          setPresenceWarnings([])
         })
     }
     tick()
@@ -147,7 +169,7 @@ export function AmrAttentionBanner() {
       try {
         const settings = await getAmrSettings()
         if (cancelled) return
-        if (settings.missionCreateStandPresenceSanityCheck === false) {
+        if (settings.missionCreateStandPresenceSanityCheck === false || settings.missionQueueingEnabled !== false) {
           setReleaseDisabledUntilStandEmpty(false)
           return
         }
@@ -189,7 +211,35 @@ export function AmrAttentionBanner() {
     setReleaseOccupiedStandRef(null)
   }, [soleSessionId])
 
-  if (!canAmr || count === 0) return null
+  if (!canAmr || (count === 0 && presenceWarnings.length === 0)) return null
+
+  const onAcknowledgePresenceWarning = async (missionRecordId: string) => {
+    setAckBusyId(missionRecordId)
+    try {
+      await ackPresenceWarning(missionRecordId)
+      const [d, records] = await Promise.all([getAmrMissionAttention(), getAmrMissionRecords()])
+      setAttention({ count: d.count, items: d.items })
+      const warns = (records ?? [])
+        .filter((r) => {
+          const v = (r as Record<string, unknown>).presence_warning_at
+          return typeof v === 'string' && v.trim().length > 0
+        })
+        .map((r) => {
+          const row = r as Record<string, unknown>
+          return {
+            id: String(row.id ?? '').trim(),
+            jobCode: String(row.job_code ?? row.mission_code ?? '').trim(),
+            standRef: String(row.presence_dest_ref ?? row.final_position ?? '').trim(),
+          }
+        })
+        .filter((x) => x.id)
+      setPresenceWarnings(warns)
+    } catch (e: unknown) {
+      setReleaseErr(getApiErrorMessage(e, 'Could not acknowledge presence warning'))
+    } finally {
+      setAckBusyId(null)
+    }
+  }
 
   const missionsLink = soleSessionId
     ? `${amrPath('missions')}?multistopSummary=${encodeURIComponent(soleSessionId)}`
@@ -202,7 +252,7 @@ export function AmrAttentionBanner() {
     setReleaseOccupiedStandRef(null)
     try {
       const settings = await getAmrSettings()
-      if (settings.missionCreateStandPresenceSanityCheck !== false) {
+      if (settings.missionCreateStandPresenceSanityCheck !== false && settings.missionQueueingEnabled === false) {
         const ms = await getAmrMultistopSession(soleSessionId)
         const session = (ms.session ?? {}) as Record<string, unknown>
         const nextSeg = sessionNextSegmentIndex(session)
@@ -225,8 +275,15 @@ export function AmrAttentionBanner() {
       const d = await getAmrMissionAttention()
       setAttention({ count: d.count, items: d.items })
     } catch (e: unknown) {
-      setReleaseErr(getApiErrorMessage(e, 'Release failed'))
-      setReleaseOccupiedStandRef(parseMultistopContinueStandOccupied(e))
+      const d = (e as { response?: { data?: { queued?: boolean; standOccupiedRef?: string } } })?.response?.data
+      if (d?.queued) {
+        const ref = typeof d.standOccupiedRef === 'string' ? d.standOccupiedRef.trim() : ''
+        setReleaseErr(ref ? `Queued — waiting for destination ${ref} to clear.` : 'Queued — waiting for destination to clear.')
+        setReleaseOccupiedStandRef(null)
+      } else {
+        setReleaseErr(getApiErrorMessage(e, 'Release failed'))
+        setReleaseOccupiedStandRef(parseMultistopContinueStandOccupied(e))
+      }
     } finally {
       setReleaseBusy(false)
     }
@@ -417,6 +474,27 @@ export function AmrAttentionBanner() {
             {soleSessionId ? 'Open mission' : 'Open missions'}
           </Link>
         </div>
+        {presenceWarnings.length > 0 ? (
+          <div className="w-full rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-2 text-xs text-red-700 dark:text-red-300">
+            <p className="font-medium">
+              {presenceWarnings.length === 1
+                ? `Presence warning: ${presenceWarnings[0]?.jobCode || 'Mission'} did not detect pallet at ${
+                    presenceWarnings[0]?.standRef || 'destination'
+                  }.`
+                : `${presenceWarnings.length} missions have presence warnings and are holding stand reservations.`}
+            </p>
+            {canForceRelease && presenceWarnings[0] ? (
+              <button
+                type="button"
+                disabled={ackBusyId === presenceWarnings[0].id}
+                className="mt-2 rounded border border-red-600/45 bg-background px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+                onClick={() => void onAcknowledgePresenceWarning(presenceWarnings[0].id)}
+              >
+                {ackBusyId === presenceWarnings[0].id ? 'Clearing…' : 'Acknowledge and release hold'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   )

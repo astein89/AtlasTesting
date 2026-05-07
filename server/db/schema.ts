@@ -266,6 +266,9 @@ export function initSchema(db: DbWrapper) {
   migrateAmrMissionRecordLockedRobot(db)
   migrateAmrStandsSpecialLocationFlags(db)
   migrateAmrStandsBypassPalletCheck(db)
+  migrateAmrStandsActiveMissions(db)
+  migrateAmrMissionQueueing(db)
+  migrateAmrStandGroups(db)
   migrateAmrRobots(db)
   migrateRolesGrantModuleAmr(db)
   migrateRolesAddAmrStandsOverrideSpecial(db)
@@ -1367,6 +1370,140 @@ function migrateAmrStandsBypassPalletCheck(db: DbWrapper) {
     if (cols.length === 0) return
     if (!cols.includes('bypass_pallet_check')) {
       db.run('ALTER TABLE amr_stands ADD COLUMN bypass_pallet_check INTEGER NOT NULL DEFAULT 0')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Max active reservations allowed for bypass-pallet-check stands (defaults to 1). */
+function migrateAmrStandsActiveMissions(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_stands')
+    if (cols.length === 0) return
+    if (!cols.includes('active_missions')) {
+      db.run('ALTER TABLE amr_stands ADD COLUMN active_missions INTEGER NOT NULL DEFAULT 1')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Queue/reservation support for AMR mission dispatch gating. */
+function migrateAmrMissionQueueing(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_mission_records')
+    if (cols.length > 0) {
+      if (!cols.includes('queued')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN queued INTEGER NOT NULL DEFAULT 0')
+      }
+      if (!cols.includes('queued_destination_ref')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN queued_destination_ref TEXT')
+      }
+      if (!cols.includes('queued_at')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN queued_at TEXT')
+      }
+      if (!cols.includes('submit_payload_json')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN submit_payload_json TEXT')
+      }
+      if (!cols.includes('container_in_payload_json')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN container_in_payload_json TEXT')
+      }
+      if (!cols.includes('presence_check_until')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN presence_check_until TEXT')
+      }
+      if (!cols.includes('presence_seen_at')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN presence_seen_at TEXT')
+      }
+      if (!cols.includes('presence_warning_at')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN presence_warning_at TEXT')
+      }
+      if (!cols.includes('presence_dest_ref')) {
+        db.run('ALTER TABLE amr_mission_records ADD COLUMN presence_dest_ref TEXT')
+      }
+      db.run('CREATE INDEX IF NOT EXISTS idx_amr_mission_records_queued ON amr_mission_records(queued, queued_at)')
+      db.run(
+        'CREATE INDEX IF NOT EXISTS idx_amr_mission_records_presence_check ON amr_mission_records(presence_check_until)'
+      )
+    }
+  } catch {
+    // Ignore
+  }
+  try {
+    const msCols = tableColumnNames(db, 'amr_multistop_sessions')
+    if (msCols.length > 0) {
+      if (!msCols.includes('queue_blocked_until')) {
+        db.run('ALTER TABLE amr_multistop_sessions ADD COLUMN queue_blocked_until TEXT')
+      }
+      if (!msCols.includes('container_in_payload_json')) {
+        db.run('ALTER TABLE amr_multistop_sessions ADD COLUMN container_in_payload_json TEXT')
+      }
+    }
+  } catch {
+    // Ignore
+  }
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_stand_reservations (
+        id TEXT PRIMARY KEY,
+        stand_external_ref TEXT NOT NULL,
+        mission_record_id TEXT NOT NULL,
+        multistop_session_id TEXT,
+        multistop_step_index INTEGER,
+        created_at TEXT DEFAULT (datetime('now')),
+        released_at TEXT
+      )
+    `)
+    db.run(
+      `CREATE INDEX IF NOT EXISTS idx_amr_stand_reservations_active_ref
+       ON amr_stand_reservations(stand_external_ref, released_at)`
+    )
+    db.run(
+      `CREATE INDEX IF NOT EXISTS idx_amr_stand_reservations_record
+       ON amr_stand_reservations(mission_record_id, released_at)`
+    )
+  } catch {
+    // Ignore
+  }
+}
+
+/** Stand groups (lazy-resolve destinations for stop 2+) + queued mission grouping key. */
+function migrateAmrStandGroups(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_stand_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        zone TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT
+      )
+    `)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_stand_group_members (
+        group_id TEXT NOT NULL REFERENCES amr_stand_groups(id) ON DELETE CASCADE,
+        stand_id TEXT NOT NULL REFERENCES amr_stands(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (group_id, stand_id)
+      )
+    `)
+    db.run(`CREATE INDEX IF NOT EXISTS idx_amr_stand_group_members_stand ON amr_stand_group_members(stand_id)`)
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_amr_stand_groups_name ON amr_stand_groups(name)`)
+
+    const mrCols = tableColumnNames(db, 'amr_mission_records')
+    if (mrCols.length > 0 && !mrCols.includes('queued_group_id')) {
+      db.run('ALTER TABLE amr_mission_records ADD COLUMN queued_group_id TEXT')
+    }
+    const msCols = tableColumnNames(db, 'amr_multistop_sessions')
+    if (msCols.length > 0 && !msCols.includes('queue_blocked_group_id')) {
+      db.run('ALTER TABLE amr_multistop_sessions ADD COLUMN queue_blocked_group_id TEXT')
+    }
+    const sgCols = tableColumnNames(db, 'amr_stand_groups')
+    if (sgCols.length > 0 && !sgCols.includes('sort_order')) {
+      db.run('ALTER TABLE amr_stand_groups ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
     }
   } catch {
     // Ignore

@@ -29,7 +29,11 @@ import {
   HIDE_FLEET_COMPLETE_AFTER_MINUTE_OPTIONS,
   labelHideFleetCompleteOption,
 } from '@/utils/amrAppMissions'
-import { missionJobStatusChipClass } from '@/utils/amrMissionJobStatus'
+import {
+  MISSION_QUEUED_ROW_TABLE_CLASS,
+  missionJobStatusChipClass,
+  missionRowIsQuietQueueWait,
+} from '@/utils/amrMissionJobStatus'
 import {
   expandMultistopSessionsForRecentWindow,
   filterGroupedMissionsHideStale,
@@ -171,8 +175,10 @@ function compareAppMissionGroups(
   if (attentionFirst) {
     const sa = String(fa.multistop_session_id ?? '').trim()
     const sb = String(fb.multistop_session_id ?? '').trim()
-    const aa = Boolean(sa && attentionSet.has(sa))
-    const bb = Boolean(sb && attentionSet.has(sb))
+    const aa =
+      Boolean(sa && attentionSet.has(sa)) && !missionRowIsQuietQueueWait(fa)
+    const bb =
+      Boolean(sb && attentionSet.has(sb)) && !missionRowIsQuietQueueWait(fb)
     if (aa !== bb) return aa ? -1 : 1
   }
   return compareAppMissionRows(fa, fb, col, dir)
@@ -574,6 +580,7 @@ export function AmrMissions() {
                             : String(created ?? '')
                         if (group.kind === 'single') {
                           const headRec = headRecordForMissionDetail(group)
+                          const queuedRow = missionRowIsQuietQueueWait(r)
                           const robotLabel =
                             typeof r.locked_robot_id === 'string' && r.locked_robot_id.trim()
                               ? r.locked_robot_id.trim()
@@ -582,7 +589,9 @@ export function AmrMissions() {
                             <tr
                               key={String(r.id)}
                               tabIndex={0}
-                              className="cursor-pointer border-b border-border/60 transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                              className={`cursor-pointer border-b border-border/60 transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                                queuedRow ? MISSION_QUEUED_ROW_TABLE_CLASS : ''
+                              }`}
                               onClick={() => setDetailMission(headRec)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' || e.key === ' ') {
@@ -604,7 +613,9 @@ export function AmrMissions() {
                           )
                         }
                         const sessionId = String(r.multistop_session_id ?? '').trim()
-                        const needsAttention = Boolean(sessionId && attentionSessionIds.has(sessionId))
+                        const queuedRow = missionRowIsQuietQueueWait(r)
+                        const needsAttention =
+                          Boolean(sessionId && attentionSessionIds.has(sessionId)) && !queuedRow
                         const attentionMeta = sessionId ? attentionBySession.get(sessionId) : undefined
                         const sessRaw = multistopSessionStatusFromGroup(group)
                         const waitingForStart = multistopWaitingForFirstSegmentStart(r, attentionMeta ?? null)
@@ -622,7 +633,11 @@ export function AmrMissions() {
                                 : undefined
                             }
                             className={`cursor-pointer border-b border-border/60 transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                              needsAttention ? 'border-l-4 border-l-amber-500 bg-amber-500/[0.07]' : ''
+                              needsAttention
+                                ? 'border-l-4 border-l-amber-500 bg-amber-500/[0.07]'
+                                : queuedRow
+                                  ? MISSION_QUEUED_ROW_TABLE_CLASS
+                                  : ''
                             }`}
                             onClick={() => setMultistopSummarySessionId(sessionId)}
                             onKeyDown={(e) => {
@@ -650,14 +665,7 @@ export function AmrMissions() {
                             <td className="px-3 py-2">
                               <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0 flex-1">
-                                  {waitingForStart ? (
-                                    <span
-                                      className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-left text-xs font-medium text-foreground/85"
-                                      title="First leg has not started — open Mission Overview to continue or wait for auto-release"
-                                    >
-                                      Waiting for start
-                                    </span>
-                                  ) : r.last_status != null ? (
+                                  {r.last_status != null ? (
                                     <span
                                       title={
                                         sessRaw
@@ -666,6 +674,13 @@ export function AmrMissions() {
                                       }
                                     >
                                       <MissionJobStatusBadge value={r.last_status} />
+                                    </span>
+                                  ) : waitingForStart ? (
+                                    <span
+                                      className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-left text-xs font-medium text-foreground/85"
+                                      title="First leg has not started — open Mission Overview to continue or wait for auto-release"
+                                    >
+                                      Waiting for start
                                     </span>
                                   ) : sessRaw ? (
                                     <span
@@ -749,7 +764,9 @@ export function AmrMissions() {
                     const headRec = headRecordForMissionDetail(group)
                     const isMs = group.kind === 'multistop'
                     const sessionId = String(r.multistop_session_id ?? '').trim()
-                    const needsAttention = Boolean(sessionId && attentionSessionIds.has(sessionId))
+                    const queuedRow = missionRowIsQuietQueueWait(r)
+                    const needsAttention =
+                      Boolean(sessionId && attentionSessionIds.has(sessionId)) && !queuedRow
                     const attentionMeta = sessionId ? attentionBySession.get(sessionId) : undefined
                     const created = r.created_at
                     const createdLabel =
@@ -764,7 +781,11 @@ export function AmrMissions() {
                           needsAttention ? 'Needs attention — open mission and continue' : undefined
                         }
                         className={`cursor-pointer border-b border-border/60 transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                          needsAttention ? 'border-l-4 border-l-amber-500 bg-amber-500/[0.07]' : ''
+                          needsAttention
+                            ? 'border-l-4 border-l-amber-500 bg-amber-500/[0.07]'
+                            : queuedRow
+                              ? MISSION_QUEUED_ROW_TABLE_CLASS
+                              : ''
                         }`}
                         onClick={() => setDetailMission(headRec)}
                         onKeyDown={(e) => {

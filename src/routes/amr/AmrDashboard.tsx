@@ -32,7 +32,11 @@ import {
   type GroupedMissionRow,
 } from '@/utils/amrMultistopDisplay'
 import { containerEmptyFullFriendly } from '@/utils/amrContainerFleet'
-import { missionJobStatusFriendly } from '@/utils/amrMissionJobStatus'
+import {
+  MISSION_QUEUED_ROW_TABLE_CLASS,
+  missionJobStatusFriendly,
+  missionRowIsQuietQueueWait,
+} from '@/utils/amrMissionJobStatus'
 import { robotStatusFriendly } from '@/utils/amrRobotStatus'
 
 type StatusCountRow = { code: number | null; label: string; count: number }
@@ -316,6 +320,7 @@ export function AmrDashboard() {
                   const r = flattenGroupedMissionRow(group)
                   const sessionId = String(r.multistop_session_id ?? '').trim()
                   const att = sessionId ? attentionBySession.get(sessionId) : undefined
+                  const queuedRow = missionRowIsQuietQueueWait(r)
                   const robotLabel =
                     typeof r.locked_robot_id === 'string' && r.locked_robot_id.trim()
                       ? r.locked_robot_id.trim()
@@ -326,7 +331,9 @@ export function AmrDashboard() {
                       <tr
                         key={String(r.id)}
                         tabIndex={0}
-                        className="cursor-pointer border-b border-border/60 transition-colors hover:bg-background/80 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        className={`cursor-pointer border-b border-border/60 transition-colors hover:bg-background/80 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                          queuedRow ? MISSION_QUEUED_ROW_TABLE_CLASS : ''
+                        }`}
                         onClick={() => setDetailMission(headRec)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
@@ -350,7 +357,9 @@ export function AmrDashboard() {
                     <tr
                       key={String(r.id)}
                       tabIndex={0}
-                      className="cursor-pointer border-b border-border/60 transition-colors hover:bg-background/80 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      className={`cursor-pointer border-b border-border/60 transition-colors hover:bg-background/80 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                        queuedRow ? MISSION_QUEUED_ROW_TABLE_CLASS : ''
+                      }`}
                       onClick={() => sessionId && setMultistopSummarySessionId(sessionId)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -367,15 +376,15 @@ export function AmrDashboard() {
                       <td className="py-2 pr-3">
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            {waitingForStart ? (
+                            {r.last_status != null ? (
+                              <MissionJobStatusBadge value={r.last_status} />
+                            ) : waitingForStart ? (
                               <span
                                 className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-left text-xs font-medium text-foreground/85"
                                 title="First leg has not started — open Mission Overview to continue or wait for auto-release"
                               >
                                 Waiting for start
                               </span>
-                            ) : r.last_status != null ? (
-                              <MissionJobStatusBadge value={r.last_status} />
                             ) : (
                               '—'
                             )}
@@ -419,14 +428,20 @@ export function AmrDashboard() {
                 const r = flattenGroupedMissionRow(group)
                 const headRec = headRecordForMissionDetail(group)
                 const sessionId = String(r.multistop_session_id ?? '').trim()
-                const needsAttention = Boolean(sessionId && attentionSessionIds.has(sessionId))
+                const queuedRow = missionRowIsQuietQueueWait(r)
+                const needsAttention =
+                  Boolean(sessionId && attentionSessionIds.has(sessionId)) && !queuedRow
                 const attentionMeta = sessionId ? attentionBySession.get(sessionId) : undefined
                 return (
                   <tr
                     key={String(r.id)}
                     tabIndex={0}
                     className={`cursor-pointer border-b border-border/60 transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                      needsAttention ? 'border-l-4 border-l-amber-500 bg-amber-500/[0.07]' : ''
+                      needsAttention
+                        ? 'border-l-4 border-l-amber-500 bg-amber-500/[0.07]'
+                        : queuedRow
+                          ? MISSION_QUEUED_ROW_TABLE_CLASS
+                          : ''
                     }`}
                     onClick={() => setDetailMission(headRec)}
                     onKeyDown={(e) => {

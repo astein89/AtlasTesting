@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getAmrSettings, postStandPresence, type ZoneCategory, type AmrStandPickerMode } from '@/api/amr'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  AMR_STAND_GROUP_PREFIX,
+  getAmrSettings,
+  getAmrStandGroups,
+  postStandPresence,
+  type ZoneCategory,
+  type AmrStandPickerMode,
+} from '@/api/amr'
 import { PalletPresenceGlyph, palletPresenceKindFromState, type PalletPresenceKind } from '@/components/amr/PalletPresenceGlyph'
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch'
 
@@ -56,6 +63,13 @@ function zoneLabel(zone: string): string {
   return t === '' ? 'No zone' : t
 }
 
+function parseStandGroupZoneKey(zone: string): string | null {
+  const t = zone.trim()
+  if (!t.startsWith(AMR_STAND_GROUP_PREFIX)) return null
+  const id = t.slice(AMR_STAND_GROUP_PREFIX.length).trim()
+  return id || null
+}
+
 /** Single-stand zone row: prefer friendly location label, else external ref. */
 function soleStandZoneButtonLabel(s: AmrStandPickerRow): string {
   const ref = s.external_ref.trim()
@@ -72,10 +86,15 @@ type ZoneGroup = { categoryName: string | null; categoryKey: string; zones: stri
  */
 function buildZoneGroups(
   visibleStands: AmrStandPickerRow[],
-  zoneCategories: ZoneCategory[]
+  zoneCategories: ZoneCategory[],
+  extraZoneKeys: string[] = []
 ): ZoneGroup[] {
   const visibleZoneSet = new Set<string>()
   for (const s of visibleStands) visibleZoneSet.add((s.zone ?? '').trim())
+  for (const k of extraZoneKeys) {
+    const t = k.trim()
+    if (t) visibleZoneSet.add(t)
+  }
   const groups: ZoneGroup[] = []
   const claimed = new Set<string>()
   for (const cat of zoneCategories) {
@@ -115,6 +134,13 @@ function rowPresenceKind(
   })
 }
 
+export type AmrStandPickerMultiSelect = {
+  /** External refs already selected — initial state for the multi-select set. */
+  initialSelectedRefs: string[]
+  /** Called with the chosen external refs (in zone-group iteration + zone alphabetical order). */
+  onConfirm: (externalRefs: string[]) => void
+}
+
 export function AmrStandPickerModal({
   stands,
   onClose,
@@ -123,10 +149,12 @@ export function AmrStandPickerModal({
   mode = 'any',
   zoneCategories,
   canOverride = false,
+  allowGroups = false,
+  multiSelect,
 }: {
   stands: AmrStandPickerRow[]
   onClose: () => void
-  onSelect: (externalRef: string, opts: { override?: boolean }) => void
+  onSelect: (externalRef: string, opts: { override?: boolean; groupId?: string }) => void
   /** Use `aboveDialogs` when opening over another full-screen modal (e.g. Add container). */
   stackOrder?: 'base' | 'aboveDialogs'
   /** When set, hides stands whose `block_pickup` (mode=pickup) / `block_dropoff` (mode=dropoff) flag is set. */
@@ -135,11 +163,26 @@ export function AmrStandPickerModal({
   zoneCategories?: ZoneCategory[]
   /** When true, render the "Show restricted stands" toggle so authorized users can pick a blocked stand with override. */
   canOverride?: boolean
+  /** When true (stop 2+), load stand groups and allow picking a group pool from the zone list. */
+  allowGroups?: boolean
+  /**
+   * When set, switches the picker into multi-select mode: zones step still drills into a zone, but the stands
+   * step renders checkboxes and a Done footer. Stand-group entries are hidden (groups can't be members of groups).
+   */
+  multiSelect?: AmrStandPickerMultiSelect
 }) {
   const [step, setStep] = useState<Step>({ kind: 'zones' })
   const [showRestricted, setShowRestricted] = useState(false)
   const [resolvedCategories, setResolvedCategories] = useState<ZoneCategory[]>(zoneCategories ?? [])
+  const [standGroups, setStandGroups] = useState<Array<{ id: string; name: string; zone: string }>>([])
+  const bodyScrollRef = useRef<HTMLDivElement>(null)
   const zClass = stackOrder === 'aboveDialogs' ? 'z-[80]' : 'z-50'
+
+  /** Multi-select mode: keep selection across zone navigation. */
+  const isMultiSelect = multiSelect != null
+  const [pendingRefs, setPendingRefs] = useState<Set<string>>(
+    () => new Set(multiSelect?.initialSelectedRefs ?? [])
+  )
 
   /** Pickers may show restricted stands only when authorized; the toggle never appears for `any` mode. */
   const restrictionToggleVisible = canOverride && mode !== 'any'
@@ -148,10 +191,16 @@ export function AmrStandPickerModal({
     return visibleStandsForMode(stands, mode, restrictionToggleVisible && showRestricted)
   }, [stands, mode, restrictionToggleVisible, showRestricted])
 
-  const zoneGroups = useMemo(() => buildZoneGroups(visibleStands, resolvedCategories), [
-    visibleStands,
-    resolvedCategories,
-  ])
+  /** Stand groups are not nestable — hide the synthetic group entries when picking members for a group. */
+  const extraGroupZones = useMemo(
+    () => (allowGroups && !isMultiSelect ? standGroups.map((g) => g.zone).filter(Boolean) : []),
+    [allowGroups, isMultiSelect, standGroups]
+  )
+
+  const zoneGroups = useMemo(
+    () => buildZoneGroups(visibleStands, resolvedCategories, extraGroupZones),
+    [visibleStands, resolvedCategories, extraGroupZones]
+  )
 
   const standsForStep = useMemo(() => {
     if (step.kind !== 'stands') return []
@@ -163,18 +212,24 @@ export function AmrStandPickerModal({
     return standsForStep.map((s) => s.external_ref.trim()).filter(Boolean)
   }, [standsForStep, step.kind])
 
-  /** Zones that show a single location inline — fetch presence here too (same as stands step). */
-  const zonesStepSolePresenceIds = useMemo(() => {
+  /**
+   * Stand refs that appear on the zones step itself (sole-stand zone tiles + zones with ≤2 stands inlined).
+   * Group synthetic zones excluded — they never list member stands here.
+   */
+  const zonesStepInlinePresenceIds = useMemo(() => {
     const ids: string[] = []
     const seen = new Set<string>()
     for (const g of zoneGroups) {
       for (const z of g.zones) {
+        if (parseStandGroupZoneKey(z)) continue
         const inZone = standsInZone(visibleStands, z)
-        if (inZone.length !== 1) continue
-        const ref = inZone[0]!.external_ref.trim()
-        if (ref && !seen.has(ref)) {
-          seen.add(ref)
-          ids.push(ref)
+        if (inZone.length !== 1 && inZone.length !== 2) continue
+        for (const s of inZone) {
+          const ref = s.external_ref.trim()
+          if (ref && !seen.has(ref)) {
+            seen.add(ref)
+            ids.push(ref)
+          }
         }
       }
     }
@@ -183,9 +238,9 @@ export function AmrStandPickerModal({
 
   const standIdsForPresence = useMemo(() => {
     if (step.kind === 'stands') return standIdsForZone
-    if (step.kind === 'zones') return zonesStepSolePresenceIds
+    if (step.kind === 'zones') return zonesStepInlinePresenceIds
     return []
-  }, [step.kind, standIdsForZone, zonesStepSolePresenceIds])
+  }, [step.kind, standIdsForZone, zonesStepInlinePresenceIds])
 
   const [presence, setPresence] = useState<Record<string, boolean | null>>({})
   const [presLoading, setPresLoading] = useState(false)
@@ -240,8 +295,53 @@ export function AmrStandPickerModal({
   }, [zoneCategories])
 
   useEffect(() => {
+    if (!allowGroups) {
+      setStandGroups([])
+      return
+    }
+    let cancelled = false
+    void getAmrStandGroups()
+      .then((rows) => {
+        if (cancelled) return
+        setStandGroups(
+          rows
+            .filter((g) => Number(g.enabled ?? 1) === 1)
+            .map((g) => ({
+              id: g.id,
+              name: g.name,
+              zone: g.zone,
+              sort_order: Number(g.sort_order ?? 0),
+            }))
+            .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
+            .map(({ id, name, zone }) => ({ id, name, zone }))
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setStandGroups([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [allowGroups])
+
+  useEffect(() => {
     if (zoneCategories !== undefined) setResolvedCategories(zoneCategories)
   }, [zoneCategories])
+
+  /**
+   * Keep the picker body scrolled to top whenever the step changes:
+   * - zones list ↔ stands list (“← All zones” / tapping a zone)
+   * - switching to a different zone’s stand list
+   * useLayoutEffect runs before paint so the stale position doesn’t flash.
+   */
+  useLayoutEffect(() => {
+    const el = bodyScrollRef.current
+    if (!el) return
+    el.scrollTop = 0
+    requestAnimationFrame(() => {
+      el.scrollTop = 0
+    })
+  }, [step])
 
   useEffect(() => {
     if (standIdsForPresence.length === 0) return
@@ -315,8 +415,8 @@ export function AmrStandPickerModal({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {stands.length === 0 ? (
+        <div ref={bodyScrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
+          {stands.length === 0 && !(allowGroups && standGroups.length > 0) ? (
             <p className="text-sm text-foreground/60">No stands configured. Add stands under Positions / stands.</p>
           ) : step.kind === 'zones' ? (
             zoneGroups.length === 0 ? (
@@ -337,8 +437,80 @@ export function AmrStandPickerModal({
                     </h3>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {g.zones.map((z) => {
+                        const groupPickId = parseStandGroupZoneKey(z)
                         const inZone = standsInZone(visibleStands, z)
-                        const sole = inZone.length === 1 ? inZone[0] : null
+                        const groupTitle = groupPickId
+                          ? standGroups.find((sg) => sg.id === groupPickId)?.name ?? 'Stand group'
+                          : null
+
+                        if (!groupPickId && inZone.length === 2) {
+                          const zn = zoneLabel(z)
+                          return (
+                            <Fragment key={z === '' ? '__no_zone__' : z}>
+                              {inZone.map((s) => {
+                                const ref = s.external_ref.trim()
+                                const lab = s.location_label.trim()
+                                const sub = lab && lab !== ref ? lab : ''
+                                const restrictedRow = isStandRestricted(s, mode)
+                                const pk = rowPresenceKind(ref, {
+                                  presence,
+                                  presLoading,
+                                  presError,
+                                  presUnconfig,
+                                })
+                                const checked = isMultiSelect && pendingRefs.has(ref)
+                                return (
+                                  <button
+                                    key={s.id}
+                                    type="button"
+                                    title={`Zone: ${zn}`}
+                                    className={`flex w-full flex-col items-stretch rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                                      checked
+                                        ? 'border-primary ring-1 ring-primary/35'
+                                        : restrictedRow
+                                          ? 'border-amber-500 ring-1 ring-amber-500/35 dark:border-amber-400 dark:ring-amber-400/30'
+                                          : 'border-border'
+                                    }`}
+                                    onClick={() => {
+                                      if (isMultiSelect) {
+                                        if (!ref) return
+                                        setPendingRefs((prev) => {
+                                          const next = new Set(prev)
+                                          if (next.has(ref)) next.delete(ref)
+                                          else next.add(ref)
+                                          return next
+                                        })
+                                        return
+                                      }
+                                      onSelect(ref, restrictedRow ? { override: true } : {})
+                                    }}
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      {isMultiSelect ? (
+                                        <input
+                                          type="checkbox"
+                                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
+                                          checked={checked}
+                                          readOnly
+                                          aria-label={`Toggle ${ref}`}
+                                        />
+                                      ) : null}
+                                      <span className="min-w-0 break-all font-mono text-sm font-semibold text-foreground">
+                                        {ref}
+                                      </span>
+                                      <PalletPresenceGlyph kind={pk} className="h-4 w-4 shrink-0" showLabel />
+                                    </div>
+                                    {sub ? (
+                                      <span className="mt-0.5 line-clamp-2 text-xs text-foreground/60">{sub}</span>
+                                    ) : null}
+                                  </button>
+                                )
+                              })}
+                            </Fragment>
+                          )
+                        }
+
+                        const sole = !groupPickId && inZone.length === 1 ? inZone[0] : null
                         const restricted = sole ? isStandRestricted(sole, mode) : false
                         return (
                           <button
@@ -350,16 +522,41 @@ export function AmrStandPickerModal({
                                 : 'border-border'
                             }`}
                             onClick={() => {
-                              if (sole) {
+                              if (groupPickId && allowGroups && !isMultiSelect) {
+                                onSelect('', { groupId: groupPickId })
+                                onClose()
+                                return
+                              }
+                              if (sole && !isMultiSelect) {
                                 const ref = sole.external_ref.trim()
                                 onSelect(ref, restricted ? { override: true } : {})
-                              } else {
-                                setStep({ kind: 'stands', zone: z })
+                                return
                               }
+                              if (sole && isMultiSelect) {
+                                const ref = sole.external_ref.trim()
+                                if (!ref) return
+                                setPendingRefs((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(ref)) next.delete(ref)
+                                  else next.add(ref)
+                                  return next
+                                })
+                                return
+                              }
+                              setStep({ kind: 'stands', zone: z })
                             }}
                           >
                             {sole ? (
                               <span className="flex w-full items-start justify-between gap-2">
+                                {isMultiSelect ? (
+                                  <input
+                                    type="checkbox"
+                                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
+                                    checked={pendingRefs.has(sole.external_ref.trim())}
+                                    readOnly
+                                    aria-label={`Toggle ${sole.external_ref.trim()}`}
+                                  />
+                                ) : null}
                                 <span className="min-w-0 break-all text-sm font-medium text-foreground">
                                   {soleStandZoneButtonLabel(sole)}
                                 </span>
@@ -373,6 +570,13 @@ export function AmrStandPickerModal({
                                   className="h-4 w-4 shrink-0"
                                   showLabel
                                 />
+                              </span>
+                            ) : groupTitle ? (
+                              <span className="flex flex-col gap-0.5">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300">
+                                  Group
+                                </span>
+                                <span className="break-words">{groupTitle}</span>
                               </span>
                             ) : (
                               zoneLabel(z)
@@ -400,18 +604,42 @@ export function AmrStandPickerModal({
                   presError,
                   presUnconfig,
                 })
+                const checked = isMultiSelect && pendingRefs.has(ref)
                 return (
                   <button
                     key={s.id}
                     type="button"
                     className={`flex w-full flex-col items-stretch rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                      restricted
-                        ? 'border-amber-500 ring-1 ring-amber-500/35 dark:border-amber-400 dark:ring-amber-400/30'
-                        : 'border-border'
+                      checked
+                        ? 'border-primary ring-1 ring-primary/35'
+                        : restricted
+                          ? 'border-amber-500 ring-1 ring-amber-500/35 dark:border-amber-400 dark:ring-amber-400/30'
+                          : 'border-border'
                     }`}
-                    onClick={() => onSelect(ref, restricted ? { override: true } : {})}
+                    onClick={() => {
+                      if (isMultiSelect) {
+                        if (!ref) return
+                        setPendingRefs((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(ref)) next.delete(ref)
+                          else next.add(ref)
+                          return next
+                        })
+                        return
+                      }
+                      onSelect(ref, restricted ? { override: true } : {})
+                    }}
                   >
                     <div className="flex items-start justify-between gap-2">
+                      {isMultiSelect ? (
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
+                          checked={checked}
+                          readOnly
+                          aria-label={`Toggle ${ref}`}
+                        />
+                      ) : null}
                       <span className="min-w-0 break-all font-mono text-sm font-semibold text-foreground">{ref}</span>
                       <PalletPresenceGlyph kind={pk} className="h-4 w-4 shrink-0" showLabel />
                     </div>
@@ -424,6 +652,33 @@ export function AmrStandPickerModal({
             </div>
           )}
         </div>
+
+        {isMultiSelect ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/30 px-4 py-2.5">
+            <span className="text-xs font-medium text-foreground/75">
+              Selected {pendingRefs.size}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="min-h-[40px] rounded-lg border border-border bg-background px-3 text-sm hover:bg-muted"
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="min-h-[40px] rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
+                onClick={() => {
+                  multiSelect?.onConfirm([...pendingRefs])
+                  onClose()
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {restrictionToggleVisible ? (
           <div

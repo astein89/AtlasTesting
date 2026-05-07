@@ -4,14 +4,21 @@ import type { AmrFleetConfig } from './amrConfig.js'
 import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from './amrFleet.js'
 import {
   buildSegmentMissionData,
-  multistopSegmentDropDestinationRef,
+  multistopSegmentDropGate,
   parseMultistopPlan,
   robotIdFromFleetJob,
 } from './amrMultistop.js'
+import { resolveGroupDestination } from './amrStandGroups.js'
 import { externalRefsBypassingPalletCheck } from './amrStandBypass.js'
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
 import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
 import { getLockedRobotIds, resolveActiveUnlockedRobotIds } from './amrRobots.js'
+import {
+  activeReservationCount,
+  getStandQueuePolicy,
+  isStandAvailableForDrop,
+  reserveStandForRecord,
+} from './amrStandAvailability.js'
 
 export function multistopSegmentMissionCode(baseMissionCode: string, segmentIndex: number): string {
   return `${baseMissionCode.trim()}-${segmentIndex + 1}`
@@ -97,7 +104,8 @@ export type ExecuteMultistopContinueResult =
       json?: unknown
       standOccupiedRef?: string
       /** Stable identifier so the client can branch on the all-locked case (HTTP 409). */
-      code?: 'NO_UNLOCKED_ROBOTS'
+      code?: 'NO_UNLOCKED_ROBOTS' | 'STAND_OCCUPIED'
+      queued?: boolean
     }
 
 export async function executeMultistopContinue(params: {
@@ -129,11 +137,67 @@ export async function executeMultistopContinue(params: {
     return { ok: false, status: 500, error: 'Invalid session plan' }
   }
 
+  const gate0 = multistopSegmentDropGate(plan, next_segment_index)
+  if (gate0?.kind === 'group') {
+    const hcfg = await getAmrHyperionConfig(db)
+    const resolved = await resolveGroupDestination({
+      db,
+      hcfg,
+      groupId: gate0.groupId,
+      userId,
+      source: 'multistop-continue-resolve-group',
+      ignorePresence: Boolean(skipStandPresenceCheck),
+    })
+    if (resolved.ok === false) {
+      if (resolved.reason === 'empty_group') {
+        return { ok: false, status: 400, error: 'Stand group has no enabled members.' }
+      }
+      if (resolved.reason === 'hyperion_unavailable') {
+        return { ok: false, status: 503, error: resolved.message ?? 'Hyperion unavailable for group resolve.' }
+      }
+      if (cfg.missionQueueingEnabled !== false) {
+        const ts = new Date().toISOString()
+        const queueBlockedUntil = new Date(Date.now() + Math.max(1000, cfg.pollMsMissionWorker || 5000)).toISOString()
+        await db
+          .prepare(
+            `UPDATE amr_multistop_sessions
+             SET queue_blocked_until = ?, queue_blocked_group_id = ?, updated_at = ?
+             WHERE id = ?`
+          )
+          .run(queueBlockedUntil, gate0.groupId, ts, sessionId)
+        return {
+          ok: false,
+          status: 409,
+          error: 'No stand available in the selected group. Mission queued.',
+          standOccupiedRef: '',
+          code: 'STAND_OCCUPIED',
+          queued: true,
+        }
+      }
+      return {
+        ok: false,
+        status: 409,
+        error: 'No stand available in the selected group.',
+        standOccupiedRef: '',
+        code: 'STAND_OCCUPIED',
+      }
+    }
+    plan.destinations[next_segment_index].position = resolved.externalRef
+    delete plan.destinations[next_segment_index].groupId
+    await db
+      .prepare(`UPDATE amr_multistop_sessions SET plan_json = ?, updated_at = ? WHERE id = ?`)
+      .run(JSON.stringify(plan), new Date().toISOString(), sessionId)
+  }
+
   if (cfg.missionCreateStandPresenceSanityCheck && !skipStandPresenceCheck) {
-    const destRef = multistopSegmentDropDestinationRef(plan, next_segment_index)
+    const dropGateCheck = multistopSegmentDropGate(plan, next_segment_index)
+    const destRef = dropGateCheck?.kind === 'stand' ? dropGateCheck.ref : ''
     if (destRef) {
+      const policy = await getStandQueuePolicy(db, destRef)
       const bypassSet = await externalRefsBypassingPalletCheck(db, [destRef])
-      if (!bypassSet.has(destRef)) {
+      const bypass = bypassSet.has(destRef) || policy?.bypassPalletCheck === true
+      let palletPresent = false
+      if (!bypass) {
         const hcfg = await getAmrHyperionConfig(db)
         if (!hyperionConfigured(hcfg)) {
           return {
@@ -152,13 +216,43 @@ export async function executeMultistopContinue(params: {
           const st = typeof pr.status === 'number' && pr.status >= 400 && pr.status < 600 ? pr.status : 502
           return { ok: false, status: st, error: pr.message }
         }
-        if (pr.presence[destRef] === true) {
+        palletPresent = pr.presence[destRef] === true
+      }
+      const activeReservations = await activeReservationCount(db, destRef)
+      const isAvailable = isStandAvailableForDrop({
+        palletPresent,
+        policy: {
+          bypassPalletCheck: bypass,
+          activeMissions: policy?.activeMissions ?? 1,
+        },
+        activeReservations,
+      })
+      if (!isAvailable) {
+        if (cfg.missionQueueingEnabled !== false) {
+          const ts = new Date().toISOString()
+          const queueBlockedUntil = new Date(Date.now() + Math.max(1000, cfg.pollMsMissionWorker || 5000)).toISOString()
+          await db
+            .prepare(
+              `UPDATE amr_multistop_sessions
+               SET queue_blocked_until = ?, queue_blocked_group_id = NULL, updated_at = ?
+               WHERE id = ?`
+            )
+            .run(queueBlockedUntil, ts, sessionId)
           return {
             ok: false,
             status: 409,
             error: `Pallet present on stand ${destRef}. Unable to dispatch.`,
             standOccupiedRef: destRef,
+            code: 'STAND_OCCUPIED',
+            queued: true,
           }
+        }
+        return {
+          ok: false,
+          status: 409,
+          error: `Pallet present on stand ${destRef}. Unable to dispatch.`,
+          standOccupiedRef: destRef,
+          code: 'STAND_OCCUPIED',
         }
       }
     }
@@ -234,6 +328,31 @@ export async function executeMultistopContinue(params: {
     ...(sessionContainerCode ? { containerCode: sessionContainerCode } : {}),
   }
   const missionRecordId = uuidv4()
+  if (next_segment_index === 0) {
+    const ciPayloadRaw =
+      typeof row.container_in_payload_json === 'string' ? row.container_in_payload_json.trim() : ''
+    if (ciPayloadRaw) {
+      let ciPayload: unknown
+      try {
+        ciPayload = JSON.parse(ciPayloadRaw)
+      } catch {
+        return { ok: false, status: 500, error: 'Invalid deferred containerIn payload for session.' }
+      }
+      const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
+        db,
+        source,
+        missionRecordId,
+        userId: userId ?? undefined,
+      })
+      if (!ci.ok) return { ok: false, status: ci.status, error: 'Fleet containerIn failed', json: ci.json }
+      if (!fleetJsonIndicatesSuccess(ci.json)) {
+        return { ok: false, status: 400, error: 'containerIn was rejected by the fleet.', json: ci.json }
+      }
+      await db
+        .prepare(`UPDATE amr_multistop_sessions SET container_in_payload_json = NULL, updated_at = ? WHERE id = ?`)
+        .run(new Date().toISOString(), sessionId)
+    }
+  }
   const sm = await forwardAmrFleetRequest(cfg, 'submitMission', submitPayload, {
     db,
     source,
@@ -273,9 +392,16 @@ export async function executeMultistopContinue(params: {
     )
   await db
     .prepare(
-      `UPDATE amr_multistop_sessions SET status = ?, next_segment_index = ?, locked_robot_id = NULL, continue_not_before = NULL, updated_at = ? WHERE id = ?`
+      `UPDATE amr_multistop_sessions SET status = ?, next_segment_index = ?, locked_robot_id = NULL, continue_not_before = NULL, queue_blocked_until = NULL, queue_blocked_group_id = NULL, updated_at = ? WHERE id = ?`
     )
     .run('active', nextAfter, ts, sessionId)
+  const reserveGate = multistopSegmentDropGate(plan, next_segment_index)
+  if (reserveGate?.kind === 'stand') {
+    await reserveStandForRecord(db, reserveGate.ref, missionRecordId, {
+      multistopSessionId: sessionId,
+      multistopStepIndex: next_segment_index,
+    })
+  }
   return {
     ok: true,
     missionRecordId,

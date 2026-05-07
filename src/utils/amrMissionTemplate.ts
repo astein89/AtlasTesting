@@ -7,6 +7,8 @@ export type AmrMissionTemplatePayloadV1 = {
   version: 1
   legs: Array<{
     position: string
+    /** Stop 2+ only; when set, `position` may be empty until dispatch. */
+    groupId?: string
     putDown: boolean
     segmentStartPutDown?: boolean
     continueMode?: 'manual' | 'auto'
@@ -20,6 +22,7 @@ export type AmrMissionTemplatePayloadV1 = {
 export function missionFormToTemplatePayload(
   legs: Array<{
     position: string
+    groupId?: string
     putDown: boolean
     segmentStartPutDown?: boolean
     continueMode?: 'manual' | 'auto'
@@ -33,9 +36,11 @@ export function missionFormToTemplatePayload(
     version: 1,
     legs: legs.map((l) => {
       const cm = l.continueMode === 'auto' ? 'auto' : 'manual'
+      const gid = typeof l.groupId === 'string' ? l.groupId.trim() : ''
       const base = {
         position: l.position.trim(),
         putDown: l.putDown,
+        ...(gid ? { groupId: gid } : {}),
         ...(l.segmentStartPutDown === true ? { segmentStartPutDown: true } : {}),
         continueMode: cm as 'manual' | 'auto',
       }
@@ -59,9 +64,16 @@ export function validateMissionTemplatePayloadForCreate(
   if (legs.length < 2) {
     return { ok: false, message: 'Template needs at least two stops.' }
   }
+  if (legs[0]?.groupId?.trim()) {
+    return {
+      ok: false,
+      message: 'Stop 1 (pickup) must be a single stand — stand groups apply from stop 2 onward.',
+    }
+  }
   const missingLoc: number[] = []
   for (let i = 0; i < legs.length; i++) {
-    if (!legs[i].position.trim()) missingLoc.push(i)
+    const row = legs[i]
+    if (!row.position.trim() && !row.groupId?.trim()) missingLoc.push(i)
   }
   if (missingLoc.length > 0) {
     const stops = missingLoc.map((i) => i + 1).join(', ')
@@ -69,8 +81,8 @@ export function validateMissionTemplatePayloadForCreate(
       ok: false,
       message:
         missingLoc.length === 1
-          ? `Stop ${missingLoc[0] + 1} needs a location (External Ref).`
-          : `Every stop needs a location (External Ref). Missing: stops ${stops}.`,
+          ? `Stop ${missingLoc[0] + 1} needs a location (External Ref) or stand group.`
+          : `Every stop needs a location or stand group (where allowed). Missing: stops ${stops}.`,
     }
   }
   for (let idx = 0; idx < legs.length - 1; idx++) {
@@ -114,13 +126,23 @@ export function templatePayloadToMultistopBody(
     const isLast = i === destLegs.length - 1
     const cm = legs[i + 1] ?? l
     const mode = isLast ? 'manual' : (cm.continueMode ?? 'manual')
-    const base = {
-      position: l.position.trim(),
-      passStrategy: 'AUTO' as const,
-      waitingMillis: 0,
-      continueMode: mode,
-      putDown: l.putDown,
-    }
+    const gid = typeof l.groupId === 'string' ? l.groupId.trim() : ''
+    const base = gid
+      ? {
+          groupId: gid,
+          position: l.position.trim(),
+          passStrategy: 'AUTO' as const,
+          waitingMillis: 0,
+          continueMode: mode,
+          putDown: l.putDown,
+        }
+      : {
+          position: l.position.trim(),
+          passStrategy: 'AUTO' as const,
+          waitingMillis: 0,
+          continueMode: mode,
+          putDown: l.putDown,
+        }
     if (mode === 'auto') {
       const sec = Math.max(0, Math.min(Math.floor(cm.autoContinueSeconds ?? 0), 86400))
       return { ...base, autoContinueSeconds: sec }

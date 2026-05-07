@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import { createAmrStand, deleteAmrStand, getAmrStands, updateAmrStand } from '@/api/amr'
+import { Link } from 'react-router-dom'
+import {
+  createAmrStand,
+  deleteAmrStand,
+  getAmrSettings,
+  getAmrStands,
+  updateAmrStand,
+} from '@/api/amr'
 import { ImportAmrStandsModal } from '@/components/amr/ImportAmrStandsModal'
 import { AmrZoneCategoriesModal } from '@/components/amr/AmrZoneCategoriesModal'
 import { ColumnFilterDropdown } from '@/components/data/ColumnFilterDropdown'
 import { PopupSelect } from '@/components/ui/PopupSelect'
 import { useSortableHeader } from '@/hooks/useSortableHeader'
+import { amrPath } from '@/lib/appPaths'
 import { useAuthStore } from '@/store/authStore'
 
 const STAND_BULK_FIELDS = [
@@ -29,11 +37,12 @@ function restrictionsLabel(row: Record<string, unknown>): string {
   const bp = Number(row.block_pickup) === 1
   const bd = Number(row.block_dropoff) === 1
   const bypass = Number(row.bypass_pallet_check) === 1
+  const activeMissions = Math.max(1, Number(row.active_missions ?? 1))
   const parts: string[] = []
   if (bp && bd) parts.push('No lift, No lower')
   else if (bp) parts.push('No lift')
   else if (bd) parts.push('No lower')
-  if (bypass) parts.push('Bypass pallet check')
+  if (bypass) parts.push(`Bypass pallet check (${activeMissions} active)`)
   return parts.join('; ')
 }
 
@@ -124,6 +133,7 @@ type StandFormState = {
   block_pickup: boolean
   block_dropoff: boolean
   bypass_pallet_check: boolean
+  active_missions: number
 }
 
 const defaultStandForm = (): StandFormState => ({
@@ -137,6 +147,7 @@ const defaultStandForm = (): StandFormState => ({
   block_pickup: false,
   block_dropoff: false,
   bypass_pallet_check: false,
+  active_missions: 1,
 })
 
 function rowToForm(row: Record<string, unknown>): StandFormState {
@@ -151,15 +162,18 @@ function rowToForm(row: Record<string, unknown>): StandFormState {
     block_pickup: Number(row.block_pickup) === 1,
     block_dropoff: Number(row.block_dropoff) === 1,
     bypass_pallet_check: Number(row.bypass_pallet_check) === 1,
+    active_missions: Math.max(1, Number(row.active_missions ?? 1)),
   }
 }
 
 function StandFormFields({
   form,
   setForm,
+  queueingEnabled,
 }: {
   form: StandFormState
   setForm: Dispatch<SetStateAction<StandFormState>>
+  queueingEnabled: boolean
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -257,6 +271,24 @@ function StandFormFields({
           />
           Bypass pallet check (skip empty-stand verification)
         </label>
+        <label className="text-sm">
+          Active missions (bypass cap)
+          <input
+            type="number"
+            min={1}
+            className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-60"
+            disabled={!form.bypass_pallet_check || !queueingEnabled}
+            value={form.active_missions}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, active_missions: Math.max(1, Math.floor(Number(e.target.value) || 1)) }))
+            }
+          />
+          <span className="mt-1 block text-[11px] text-foreground/55">
+            {queueingEnabled
+              ? 'Applies only when Bypass pallet check is enabled.'
+              : 'Requires mission queueing enabled in AMR settings.'}
+          </span>
+        </label>
       </fieldset>
     </div>
   )
@@ -264,6 +296,7 @@ function StandFormFields({
 
 export function AmrStands() {
   const canManage = useAuthStore((s) => s.hasPermission('amr.stands.manage'))
+  const [missionQueueingEnabled, setMissionQueueingEnabled] = useState(true)
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
@@ -294,13 +327,16 @@ export function AmrStands() {
   const load = useCallback(() => {
     setLoading(true)
     void getAmrStands()
-      .then(setRows)
+      .then((s) => setRows(s))
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
     load()
   }, [load])
+  useEffect(() => {
+    void getAmrSettings().then((s) => setMissionQueueingEnabled(s.missionQueueingEnabled !== false))
+  }, [])
 
   useEffect(() => {
     const valid = new Set(rows.map((r) => String(r.id)))
@@ -382,6 +418,7 @@ export function AmrStands() {
         block_pickup: form.block_pickup,
         block_dropoff: form.block_dropoff,
         bypass_pallet_check: form.bypass_pallet_check,
+        active_missions: form.active_missions,
       })
       closeAddModal()
       load()
@@ -407,6 +444,7 @@ export function AmrStands() {
         block_pickup: editForm.block_pickup,
         block_dropoff: editForm.block_dropoff,
         bypass_pallet_check: editForm.bypass_pallet_check,
+        active_missions: editForm.active_missions,
       })
       closeEditModal()
       load()
@@ -606,6 +644,13 @@ export function AmrStands() {
         </div>
         {canManage ? (
           <div className="flex flex-wrap gap-2 shrink-0">
+            <Link
+              to={amrPath('stands', 'groups')}
+              className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
+              title="Manage stand groups (pools used for stop 2+ destinations)"
+            >
+              Manage groups
+            </Link>
             <button
               type="button"
               className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
@@ -734,7 +779,11 @@ export function AmrStands() {
                 {addModalError}
               </div>
             ) : null}
-            <StandFormFields form={form} setForm={setForm} />
+            <StandFormFields
+              form={form}
+              setForm={setForm}
+              queueingEnabled={missionQueueingEnabled}
+            />
             <button
               type="button"
               className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground"
@@ -777,7 +826,11 @@ export function AmrStands() {
                 {editModalError}
               </div>
             ) : null}
-            <StandFormFields form={editForm} setForm={setEditForm} />
+            <StandFormFields
+              form={editForm}
+              setForm={setEditForm}
+              queueingEnabled={missionQueueingEnabled}
+            />
             <button
               type="button"
               className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground"

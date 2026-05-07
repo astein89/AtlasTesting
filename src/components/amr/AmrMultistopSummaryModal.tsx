@@ -5,6 +5,7 @@ import {
   continueAmrMultistopSession,
   getAmrMultistopSession,
   getAmrSettings,
+  getAmrStandGroups,
   getAmrStands,
   postStandPresence,
   terminateStuckAmrMultistopSession,
@@ -25,6 +26,10 @@ import { getApiErrorMessage, parseMultistopContinueStandOccupied } from '@/api/c
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmModal } from '@/components/ui/ConfirmModal'
+import {
+  MISSION_QUEUED_ROUTE_LEG_CARD_CLASS,
+  missionOverviewOrDetailQueuedHue,
+} from '@/utils/amrMissionJobStatus'
 import {
   multistopContinueOccupiedDestinationRef,
   multistopContinueReleaseDisabledUntilStandShowsEmpty,
@@ -78,6 +83,8 @@ function msStepIndex(r: Record<string, unknown>): number {
 
 type PlanDest = {
   position: string
+  /** Lazy-resolve pool (stop 2+); `position` may be empty until dispatch. */
+  groupId?: string
   continueMode?: 'manual' | 'auto'
   autoContinueSeconds?: number
   /** Fleet arrival NODE at this destination; final segment treated as Lower in UI. */
@@ -105,13 +112,15 @@ function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
       if (!x || typeof x !== 'object') return null
       const row = x as Record<string, unknown>
       const position = typeof row.position === 'string' ? row.position.trim() : ''
-      if (!position) return null
+      const groupId = typeof row.groupId === 'string' ? row.groupId.trim() : ''
+      if (!position && !groupId) return null
       const cm = row.continueMode === 'auto' ? 'auto' : 'manual'
       const n =
         typeof row.autoContinueSeconds === 'number'
           ? row.autoContinueSeconds
           : Number(row.autoContinueSeconds)
       const entry: PlanDest = { position, continueMode: cm }
+      if (groupId) entry.groupId = groupId
       if (typeof row.putDown === 'boolean') entry.putDown = row.putDown
       if (cm === 'auto' && Number.isFinite(n) && n >= 0) {
         entry.autoContinueSeconds = Math.min(Math.max(0, Math.floor(n)), 86400)
@@ -178,14 +187,38 @@ function formatReleaseAfterDestination(dest: PlanDest | undefined, isLastStop: b
   return 'After arrival: Manual release'
 }
 
+function planDestEndpointLabel(
+  row: PlanDest | undefined,
+  groupNames?: Record<string, string>
+): string {
+  if (!row) return '—'
+  const pos = row.position?.trim() ?? ''
+  if (pos) return pos
+  const gid = row.groupId?.trim()
+  if (gid) {
+    const name = groupNames?.[gid]
+    return name ? `[group] ${name}` : `[group] ${gid}`
+  }
+  return '—'
+}
+
+/** Stand refs only — not `[group] …` labels (no Hyperion row). */
+function isHyperionPollableStandRef(ref: string): boolean {
+  const t = ref.trim()
+  if (!t || t === '—') return false
+  return !t.startsWith('[group]')
+}
+
 function segmentLegEndpoints(
   si: number,
   plan: PlanDest[] | null | undefined,
-  pickup: string | null
+  pickup: string | null,
+  groupNames?: Record<string, string>
 ): { start: string; end: string } {
   const p = plan ?? []
-  const end = p[si]?.position?.trim() || '—'
-  const start = si === 0 ? pickup?.trim() || '—' : p[si - 1]?.position?.trim() || '—'
+  const end = planDestEndpointLabel(p[si], groupNames)
+  const start =
+    si === 0 ? pickup?.trim() || '—' : planDestEndpointLabel(p[si - 1], groupNames)
   return { start, end }
 }
 
@@ -315,9 +348,20 @@ export function AmrMultistopSummaryModal({
   /** Same auto-refresh cadence as Containers / Mission New / Stand Picker — sourced from AMR settings. */
   const [pollMsContainers, setPollMsContainers] = useState(5000)
   const [standPresenceSanityOn, setStandPresenceSanityOn] = useState(true)
+  const [standGroupNameById, setStandGroupNameById] = useState<Record<string, string>>({})
 
   useEffect(() => {
     void getAmrStands().then((rows) => setPalletPresenceBypassRefs(standRefsBypassingPalletCheck(rows)))
+    void getAmrStandGroups().then((groups) => {
+      const m: Record<string, string> = {}
+      for (const g of groups) {
+        const id = String(g.id ?? '').trim()
+        if (!id) continue
+        const nm = String(g.name ?? '').trim()
+        m[id] = nm || id
+      }
+      setStandGroupNameById(m)
+    })
   }, [])
 
   useEffect(() => {
@@ -325,7 +369,7 @@ export function AmrMultistopSummaryModal({
     void getAmrSettings().then((s) => {
       if (cancelled) return
       setPollMsContainers(Math.max(3000, s.pollMsContainers))
-      setStandPresenceSanityOn(s.missionCreateStandPresenceSanityCheck !== false)
+      setStandPresenceSanityOn(s.missionCreateStandPresenceSanityCheck !== false && s.missionQueueingEnabled === false)
     })
     return () => {
       cancelled = true
@@ -480,14 +524,14 @@ export function AmrMultistopSummaryModal({
     if (legCount === 0) return [] as string[]
     const set = new Set<string>()
     for (let i = 0; i < legCount; i += 1) {
-      const { start, end } = segmentLegEndpoints(i, plan, pickupPos)
+      const { start, end } = segmentLegEndpoints(i, plan, pickupPos, standGroupNameById)
       const a = start.trim()
       const b = end.trim()
-      if (a && a !== '—') set.add(a)
-      if (b && b !== '—') set.add(b)
+      if (a && a !== '—' && isHyperionPollableStandRef(a)) set.add(a)
+      if (b && b !== '—' && isHyperionPollableStandRef(b)) set.add(b)
     }
     return [...set].sort()
-  }, [totalSeg, plan, pickupPos])
+  }, [totalSeg, plan, pickupPos, standGroupNameById])
 
   const legStandRefsKey = legStandRefs.join('\0')
 
@@ -591,7 +635,8 @@ export function AmrMultistopSummaryModal({
     setMsErr(null)
     setContinueBlockedStandRef(null)
     try {
-      if (msData?.session && (await getAmrSettings()).missionCreateStandPresenceSanityCheck !== false) {
+      const settings = await getAmrSettings()
+      if (msData?.session && settings.missionCreateStandPresenceSanityCheck !== false && settings.missionQueueingEnabled === false) {
         const session = msData.session as Record<string, unknown>
         const nextSeg = sessionNextSegmentIndex(session)
         const planRaw = session.plan_json ?? session.planJson
@@ -612,8 +657,16 @@ export function AmrMultistopSummaryModal({
       setMsRefresh((n) => n + 1)
       onSessionUpdated?.()
     } catch (e: unknown) {
-      setMsErr(getApiErrorMessage(e, 'Continue failed'))
-      setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
+      const d = (e as { response?: { data?: { queued?: boolean; standOccupiedRef?: string; error?: string } } })?.response
+        ?.data
+      if (d?.queued) {
+        const ref = typeof d.standOccupiedRef === 'string' ? d.standOccupiedRef.trim() : ''
+        setMsErr(ref ? `Queued — waiting for destination ${ref} to clear.` : 'Queued — waiting for destination to clear.')
+        setContinueBlockedStandRef(null)
+      } else {
+        setMsErr(getApiErrorMessage(e, 'Continue failed'))
+        setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
+      }
     } finally {
       setContinueBusy(false)
     }
@@ -757,6 +810,11 @@ export function AmrMultistopSummaryModal({
     msData?.session && typeof msData.session.locked_robot_id === 'string'
       ? String(msData.session.locked_robot_id).trim()
       : ''
+  /** Fallback from mission row when session lock has already rolled forward to the next leg. */
+  const lockedRobotFromRecord =
+    typeof rolledUp.locked_robot_id === 'string' && rolledUp.locked_robot_id.trim()
+      ? rolledUp.locked_robot_id.trim()
+      : ''
   const sessionContainerFromMs =
     msData?.session && typeof msData.session.container_code === 'string'
       ? String(msData.session.container_code).trim()
@@ -765,10 +823,17 @@ export function AmrMultistopSummaryModal({
     String(rolledUp.container_code ?? '').trim() || sessionContainerFromMs || ''
   const robotDisplayPrimary =
     lockedRobotFromSession ||
+    lockedRobotFromRecord ||
     unlockRobotFromPayload ||
     (payloadRobotIds.length > 0 ? payloadRobotIds.join(', ') : '')
   const robotPrimaryHeading =
-    lockedRobotFromSession ? 'Robot (session)' : unlockRobotFromPayload ? 'Robot (this stop)' : 'Robot(s)'
+    lockedRobotFromSession
+      ? 'Robot (session)'
+      : lockedRobotFromRecord
+        ? 'Robot (assigned)'
+        : unlockRobotFromPayload
+          ? 'Robot (this stop)'
+          : 'Robot(s)'
   const fleetPoolStr = payloadRobotIds.join(', ')
   const showFleetPoolLine =
     payloadRobotIds.length > 0 && fleetPoolStr !== robotDisplayPrimary && Boolean(robotDisplayPrimary)
@@ -786,6 +851,11 @@ export function AmrMultistopSummaryModal({
       : plan
         ? Array.from({ length: plan.length }, (_, i) => i)
         : []
+
+  const sessionQueuedForStand = missionOverviewOrDetailQueuedHue({
+    flat: rolledUp,
+    session: msData?.session ? (msData.session as Record<string, unknown>) : null,
+  })
 
   /** Portal to `document.body` so `fixed inset-0` covers the viewport (not clipped/stacked inside `main`). */
   const modal = (
@@ -944,17 +1014,21 @@ export function AmrMultistopSummaryModal({
             <ul className="space-y-2">
               {legIndices.map((i) => {
                 const bucket = segmentBucket(i, stForBuckets, nextSeg, totalSeg || legIndices.length, recordByStep.get(i))
-                const { start, end } = segmentLegEndpoints(i, plan, pickupPos)
+                const { start, end } = segmentLegEndpoints(i, plan, pickupPos, standGroupNameById)
                 const rec = recordByStep.get(i)
                 const destCount = plan?.length ?? legIndices.length
                 const isLastStop = destCount > 0 && i === destCount - 1
                 const departLower = parsedPlan?.segmentFirstNodePutDown?.[i] === true
                 const arriveLower = isLastStop ? true : plan?.[i]?.putDown === true
+                const legQueued =
+                  sessionQueuedForStand && i === nextSeg && bucket === 'next_continue'
                 return (
                   <li
                     key={i}
                     ref={i === focusLegIndex ? focusLegRef : undefined}
-                    className={`rounded-lg border px-3 py-2.5 text-sm scroll-mt-3 ${bucketRowClass(bucket)}`}
+                    className={`rounded-lg border px-3 py-2.5 text-sm scroll-mt-3 ${
+                      legQueued ? MISSION_QUEUED_ROUTE_LEG_CARD_CLASS : bucketRowClass(bucket)
+                    }`}
                   >
                     <div className="flex flex-nowrap items-start justify-between gap-3">
                       <div className="min-w-0 flex-1 space-y-1.5">
@@ -965,14 +1039,16 @@ export function AmrMultistopSummaryModal({
                           </span>
                           <span
                             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                              bucket === 'next_continue'
-                                ? 'bg-amber-500/20 text-amber-950 dark:text-amber-100'
-                                : bucket === 'current'
-                                  ? 'bg-primary/15 text-primary'
-                                  : 'bg-muted/80 text-foreground/70'
+                              legQueued
+                                ? 'bg-violet-400/25 text-violet-950 dark:bg-violet-500/25 dark:text-violet-100'
+                                : bucket === 'next_continue'
+                                  ? 'bg-amber-500/20 text-amber-950 dark:text-amber-100'
+                                  : bucket === 'current'
+                                    ? 'bg-primary/15 text-primary'
+                                    : 'bg-muted/80 text-foreground/70'
                             }`}
                           >
-                            {bucketLabel(bucket)}
+                            {legQueued ? 'Queued' : bucketLabel(bucket)}
                           </span>
                           {rec?.last_status != null ? (
                             <MissionJobStatusBadge value={rec.last_status as number} />

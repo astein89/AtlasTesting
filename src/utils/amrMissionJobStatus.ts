@@ -16,10 +16,14 @@ export const MISSION_JOB_STATUS_NAMES: Record<number, string> = {
    * Avoids showing the previous segment’s fleet terminal code (e.g. 30) while awaiting Release / Continue.
    */
   91: 'Awaiting release',
+  92: 'Queued',
+  93: 'Presence warning',
 }
 
 /** Synthetic code — never returned by the fleet; see {@link MISSION_JOB_STATUS_NAMES}[91]. */
 export const MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE = 91
+export const MISSION_QUEUED_STATUS_CODE = 92
+export const MISSION_PRESENCE_WARNING_STATUS_CODE = 93
 
 /**
  * Fleet codes after which the mission worker closes the mission row (`CLOSE_MISSION_ROW_STATUS` in `amrMissionWorker.ts`).
@@ -34,6 +38,43 @@ export function missionLastStatusIsActive(lastStatus: unknown): boolean {
   const n = typeof lastStatus === 'number' ? lastStatus : Number(lastStatus)
   if (!Number.isFinite(n)) return true
   return !TERMINAL_MISSION_JOB_STATUS_CODES.has(n)
+}
+
+/** Mission list / banner: queued for stand / worker — not an operator “needs attention” item. */
+export function missionRowIsQuietQueueWait(flat: Record<string, unknown>): boolean {
+  if (Number(flat.queued ?? 0) === 1) return true
+  const ls = typeof flat.last_status === 'number' ? flat.last_status : Number(flat.last_status)
+  return Number.isFinite(ls) && ls === MISSION_QUEUED_STATUS_CODE
+}
+
+/** Active / history mission tables: subtle purple row when mission is queued for dispatch. */
+export const MISSION_QUEUED_ROW_TABLE_CLASS =
+  'border-l-4 border-l-violet-400 bg-violet-400/[0.09] dark:border-l-violet-500 dark:bg-violet-500/[0.14]'
+
+/** Compact queued callout panels (e.g. rack-move queued row banner). */
+export const MISSION_QUEUED_CALLOUT_CLASS =
+  'border-violet-400/45 bg-violet-400/[0.11] dark:border-violet-500/40 dark:bg-violet-500/[0.16]'
+
+/** Route leg card (Mission Overview row / Mission Detail tail stop) when that segment is waiting on queue. */
+export const MISSION_QUEUED_ROUTE_LEG_CARD_CLASS =
+  'border-violet-400/50 bg-violet-400/[0.11] ring-1 ring-violet-400/25 dark:border-violet-500/45 dark:bg-violet-500/[0.14] dark:ring-violet-500/30'
+
+/** Purple shell / callouts: flattened row queued, or session still has queue / deferred CI (matches list rollup cues). */
+export function missionOverviewOrDetailQueuedHue(opts: {
+  flat?: Record<string, unknown> | null
+  session?: Record<string, unknown> | null
+}): boolean {
+  if (opts.flat && missionRowIsQuietQueueWait(opts.flat)) return true
+  const session = opts.session
+  if (session && typeof session === 'object') {
+    const qb =
+      typeof session.queue_blocked_until === 'string' && session.queue_blocked_until.trim().length > 0
+    const ci =
+      typeof session.container_in_payload_json === 'string' &&
+      session.container_in_payload_json.trim().length > 0
+    return Boolean(qb || ci)
+  }
+  return false
 }
 
 export function missionJobStatusFriendly(value: unknown): { label: string; code: number | null } {
@@ -67,6 +108,10 @@ export function missionJobStatusChipClass(code: number | null): string {
     case 25:
     case 91:
       return 'border-violet-500/35 bg-violet-500/10 text-violet-950 dark:text-violet-100'
+    case 92:
+      return 'border-violet-400/45 bg-violet-400/14 text-violet-950 dark:border-violet-500/40 dark:bg-violet-500/16 dark:text-violet-100'
+    case 93:
+      return 'border-amber-500/45 bg-amber-500/12 text-amber-950 dark:text-amber-100'
     case 28:
       return 'border-orange-500/40 bg-orange-500/12 text-orange-950 dark:text-orange-100'
     case 10:

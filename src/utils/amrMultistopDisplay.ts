@@ -1,5 +1,5 @@
 import { filterHideStaleFleetCompleteMissions } from '@/utils/amrAppMissions'
-import { MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE } from '@/utils/amrMissionJobStatus'
+import { MISSION_QUEUED_STATUS_CODE, MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE } from '@/utils/amrMissionJobStatus'
 
 export type GroupedMissionSingle = {
   kind: 'single'
@@ -135,9 +135,17 @@ export function flattenGroupedMissionRow(group: GroupedMissionRow): Record<strin
   const { head, latest, sessionId, segmentCount } = group
   const robotId = mergedMissionRobotId(head, latest)
   const sessionWorkflow = multistopSessionStatusFromGroup(group)
+  const queueBlockedUntil = typeof head.queue_blocked_until === 'string' ? head.queue_blocked_until.trim() : ''
+  const queueBlockedGroupId =
+    typeof head.queue_blocked_group_id === 'string' ? head.queue_blocked_group_id.trim() : ''
+  const hasDeferredContainerIn = typeof head.container_in_payload_json === 'string' && head.container_in_payload_json.trim().length > 0
   /** Previous leg may already be fleet‑complete while the session is still waiting on Release — don’t surface that as row status. */
   const rollupLastStatus =
-    sessionWorkflow === 'awaiting_continue' ? MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE : latest.last_status
+    sessionWorkflow === 'awaiting_continue'
+      ? queueBlockedUntil || hasDeferredContainerIn || queueBlockedGroupId
+        ? MISSION_QUEUED_STATUS_CODE
+        : MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE
+      : latest.last_status
   return {
     ...head,
     last_status: rollupLastStatus,
@@ -242,11 +250,16 @@ export function partitionMissionGroupsForTables(groups: GroupedMissionRow[]): {
 /**
  * First fleet segment not submitted yet (`awaiting_continue`, segment index 0).
  * Uses `multistop_next_segment_index` from mission-records API when present; optional attention row as fallback.
+ * When the row is **queued** ({@link flattenGroupedMissionRow} → {@link MISSION_QUEUED_STATUS_CODE}, or DB `queued`), we keep
+ * the status chip (“Queued”), not “Waiting for start”.
  */
 export function multistopWaitingForFirstSegmentStart(
   r: Record<string, unknown>,
   attention?: { status: string; nextSegmentIndex: number } | null
 ): boolean {
+  if (Number(r.queued ?? 0) === 1) return false
+  const ls = typeof r.last_status === 'number' ? r.last_status : Number(r.last_status)
+  if (Number.isFinite(ls) && ls === MISSION_QUEUED_STATUS_CODE) return false
   const st = String(r.multistop_session_status ?? '').trim()
   const rawIdx = r.multistop_next_segment_index
   if (st === 'awaiting_continue' && rawIdx !== undefined && rawIdx !== null) {

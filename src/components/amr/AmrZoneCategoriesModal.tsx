@@ -21,7 +21,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { getAmrSettings, putAmrSettings, type ZoneCategory } from '@/api/amr'
+import { getAmrSettings, getAmrStandGroups, putAmrSettings, type ZoneCategory } from '@/api/amr'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { ConfirmModal } from '@/components/ui/ConfirmModal'
 import { randomUuid } from '@/lib/randomUuid'
@@ -68,6 +68,7 @@ function SortableCategoryCard({
   onRename,
   onRemove,
   children,
+  isLocked,
 }: {
   category: LocalCategory
   zones: string[]
@@ -75,9 +76,12 @@ function SortableCategoryCard({
   onRename: (name: string) => void
   onRemove: () => void
   children: React.ReactNode
+  /** Auto-managed (e.g. the synthetic `Groups` category): rename / drag / remove disabled. */
+  isLocked?: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `${CATEGORY_PREFIX}${category.id}`,
+    disabled: isLocked === true,
   })
   const style = { transform: CSS.Transform.toString(transform), transition }
   const orphanCount = zones.reduce((acc, z) => acc + (orphanZones.has(z) ? 1 : 0), 0)
@@ -89,33 +93,55 @@ function SortableCategoryCard({
     >
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-2 py-2">
-          <button
-            type="button"
-            className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
-            {...attributes}
-            {...listeners}
-            aria-label={`Drag to reorder category ${category.name || '(unnamed)'}`}
-          >
-            {dragGripIcon()}
-          </button>
+          {isLocked ? (
+            <span
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded p-1.5 text-foreground/45"
+              aria-label="Locked auto-managed category"
+              title="Auto-managed by stand groups"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 11c1.657 0 3 1.343 3 3v3a3 3 0 11-6 0v-3c0-1.657 1.343-3 3-3zm6-3v3M6 8v3m12 0H6m12 0a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2v-8a2 2 0 012-2"
+                />
+              </svg>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
+              {...attributes}
+              {...listeners}
+              aria-label={`Drag to reorder category ${category.name || '(unnamed)'}`}
+            >
+              {dragGripIcon()}
+            </button>
+          )}
           <input
             value={category.name}
             onChange={(e) => onRename(e.target.value)}
             placeholder="Category name"
-            className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm font-medium text-foreground"
+            readOnly={isLocked === true}
+            disabled={isLocked === true}
+            title={isLocked ? 'Auto-managed by stand groups' : undefined}
+            className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-70"
             aria-label="Category name"
           />
           <span className="shrink-0 text-xs text-foreground/60">
             {zones.length} zone{zones.length === 1 ? '' : 's'}
             {orphanCount > 0 ? ` · ${orphanCount} orphan` : ''}
           </span>
-          <button
-            type="button"
-            onClick={onRemove}
-            className="shrink-0 rounded px-2 py-1 text-sm text-red-600 hover:bg-red-500/10 dark:text-red-400"
-          >
-            Remove
-          </button>
+          {isLocked ? null : (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="shrink-0 rounded px-2 py-1 text-sm text-red-600 hover:bg-red-500/10 dark:text-red-400"
+            >
+              Remove
+            </button>
+          )}
         </div>
         {children}
       </div>
@@ -124,15 +150,26 @@ function SortableCategoryCard({
 }
 
 /** Static chip visuals — shared by list item and drag overlay so the cursor preview stays fully opaque. */
+function zoneChipDisplayText(zone: string, groupLabels: Record<string, string> | undefined): string {
+  const t = zone.trim()
+  if (groupLabels && groupLabels[t]) return groupLabels[t]
+  return t || '(blank)'
+}
+
 function ZoneChipFace({
   zone,
   isOrphan,
   showRemove,
+  groupLabels,
 }: {
   zone: string
   isOrphan: boolean
   showRemove?: boolean
+  /** Friendly labels for synthetic stand-group zone keys (`__group:<uuid>`). */
+  groupLabels?: Record<string, string>
 }) {
+  const shown = zoneChipDisplayText(zone, groupLabels)
+  const sans = Boolean(groupLabels?.[zone.trim()])
   return (
     <div
       className={`pointer-events-none flex items-center gap-1 rounded-full border px-2 py-1 text-xs shadow-sm ${
@@ -146,7 +183,7 @@ function ZoneChipFace({
           <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
         </svg>
       </span>
-      <span className="font-mono">{zone || '(blank)'}</span>
+      <span className={sans ? 'font-sans' : 'font-mono'}>{shown}</span>
       {isOrphan ? (
         <span className="ml-0.5 text-[10px] uppercase tracking-wide" title="No stand currently uses this zone">
           no stands
@@ -167,10 +204,12 @@ function SortableZoneChip({
   zone,
   isOrphan,
   onRemove,
+  groupLabels,
 }: {
   zone: string
   isOrphan: boolean
   onRemove: () => void
+  groupLabels?: Record<string, string>
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `${ZONE_PREFIX}${zone}`,
@@ -200,7 +239,9 @@ function SortableZoneChip({
             <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
           </svg>
         </button>
-        <span className="font-mono">{zone || '(blank)'}</span>
+        <span className={groupLabels?.[zone.trim()] ? 'font-sans' : 'font-mono'}>
+          {zoneChipDisplayText(zone, groupLabels)}
+        </span>
         {isOrphan ? (
           <span className="ml-0.5 text-[10px] uppercase tracking-wide" title="No stand currently uses this zone">
             no stands
@@ -211,7 +252,7 @@ function SortableZoneChip({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onRemove}
           className="ml-1 rounded p-0.5 text-foreground/55 hover:bg-background hover:text-red-600"
-          aria-label={`Remove zone ${zone}`}
+          aria-label={`Remove zone ${zoneChipDisplayText(zone, groupLabels)}`}
           title="Move to Uncategorized"
         >
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -228,12 +269,14 @@ function ZoneBucketArea({
   zones,
   orphanZones,
   onRemoveZoneFromCategory,
+  groupLabels,
 }: {
   bucketId: string
   zones: string[]
   orphanZones: Set<string>
   /** Removes the zone from its category (returns it to Uncategorized). Only called from category cards. */
   onRemoveZoneFromCategory?: (zone: string) => void
+  groupLabels?: Record<string, string>
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `${BUCKET_DROP_PREFIX}${bucketId}` })
   return (
@@ -258,6 +301,7 @@ function ZoneBucketArea({
               zone={zone}
               isOrphan={orphanZones.has(zone)}
               onRemove={() => onRemoveZoneFromCategory?.(zone)}
+              groupLabels={groupLabels}
             />
           ))
         )}
@@ -277,6 +321,8 @@ interface AmrZoneCategoriesModalProps {
 export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCategoriesModalProps) {
   const { showAlert } = useAlertConfirm()
   const [categories, setCategories] = useState<LocalCategory[]>([])
+  /** Synthetic zone keys from stand groups — merged into catalog so “Groups” chips are not orphaned. */
+  const [standGroupZoneLabels, setStandGroupZoneLabels] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [pendingDeleteCatId, setPendingDeleteCatId] = useState<string | null>(null)
@@ -314,11 +360,56 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
     }
   }, [showAlert])
 
-  const allZonesSet = useMemo(() => new Set(allZones), [allZones])
+  useEffect(() => {
+    let cancelled = false
+    void getAmrStandGroups()
+      .then((groups) => {
+        if (cancelled) return
+        const labels: Record<string, string> = {}
+        for (const g of groups) {
+          const z = String(g.zone ?? '').trim()
+          if (!z) continue
+          const name = String(g.name ?? '').trim()
+          labels[z] = name || z
+        }
+        setStandGroupZoneLabels(labels)
+      })
+      .catch(() => {
+        if (!cancelled) setStandGroupZoneLabels({})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Auto-managed Groups category — locked from rename / drag / delete; matches server `amrStandGroupZoneSync.ts`. */
+  const isGroupsCategoryName = useCallback(
+    (n: string) => n.trim().toLowerCase() === 'groups',
+    []
+  )
+
+  /** Hide the auto Groups category entirely when no live stand groups exist (settings stay untouched). */
+  const hasAnyStandGroups = Object.keys(standGroupZoneLabels).length > 0
+
+  const visibleCategories = useMemo(
+    () =>
+      hasAnyStandGroups ? categories : categories.filter((c) => !isGroupsCategoryName(c.name)),
+    [categories, hasAnyStandGroups, isGroupsCategoryName]
+  )
+
+  const mergedAllZones = useMemo(() => {
+    const keys = new Set(allZones)
+    if (hasAnyStandGroups) {
+      for (const z of Object.keys(standGroupZoneLabels)) keys.add(z)
+    }
+    return [...keys].sort((a, b) => a.localeCompare(b))
+  }, [allZones, standGroupZoneLabels, hasAnyStandGroups])
+
+  const allZonesSet = useMemo(() => new Set(mergedAllZones), [mergedAllZones])
 
   const buckets = useMemo<Bucket[]>(() => {
     const claimed = new Set<string>()
-    const out: Bucket[] = categories.map((c) => {
+    const out: Bucket[] = visibleCategories.map((c) => {
       for (const z of c.zones) claimed.add(z)
       return {
         bucketId: c.id,
@@ -327,7 +418,7 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
         uncategorized: false,
       }
     })
-    const uncategorized = allZones.filter((z) => !claimed.has(z)).slice().sort((a, b) => a.localeCompare(b))
+    const uncategorized = mergedAllZones.filter((z) => !claimed.has(z)).slice().sort((a, b) => a.localeCompare(b))
     out.push({
       bucketId: UNCATEGORIZED_BUCKET_ID,
       title: 'Uncategorized',
@@ -335,17 +426,17 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
       uncategorized: true,
     })
     return out
-  }, [categories, allZones])
+  }, [visibleCategories, mergedAllZones])
 
   const orphanZones = useMemo<Set<string>>(() => {
     const orphans = new Set<string>()
-    for (const c of categories) {
+    for (const c of visibleCategories) {
       for (const z of c.zones) {
         if (!allZonesSet.has(z)) orphans.add(z)
       }
     }
     return orphans
-  }, [categories, allZonesSet])
+  }, [visibleCategories, allZonesSet])
   const orphanCount = orphanZones.size
 
   const moveZoneTo = useCallback(
@@ -572,12 +663,13 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
               onDragEnd={handleDragEnd}
             >
               <SortableContext
-                items={categories.map((c) => `${CATEGORY_PREFIX}${c.id}`)}
+                items={visibleCategories.map((c) => `${CATEGORY_PREFIX}${c.id}`)}
                 strategy={verticalListSortingStrategy}
               >
                 <ul className="m-0 list-none space-y-3 p-0">
-                  {categories.map((c) => {
+                  {visibleCategories.map((c) => {
                     const bucketZones = c.zones
+                    const locked = isGroupsCategoryName(c.name)
                     return (
                       <SortableCategoryCard
                         key={c.id}
@@ -586,12 +678,14 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
                         orphanZones={orphanZones}
                         onRename={(name) => renameCategory(c.id, name)}
                         onRemove={() => requestRemoveCategory(c.id)}
+                        isLocked={locked}
                       >
                         <ZoneBucketArea
                           bucketId={c.id}
                           zones={bucketZones}
                           orphanZones={orphanZones}
                           onRemoveZoneFromCategory={(z) => removeZoneFromCategory(c.id, z)}
+                          groupLabels={standGroupZoneLabels}
                         />
                       </SortableCategoryCard>
                     )
@@ -618,6 +712,7 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
                   bucketId={UNCATEGORIZED_BUCKET_ID}
                   zones={buckets[buckets.length - 1]?.zones ?? []}
                   orphanZones={orphanZones}
+                  groupLabels={standGroupZoneLabels}
                 />
               </div>
 
@@ -640,7 +735,12 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
               <DragOverlay dropAnimation={null} zIndex={200}>
                 {activeDragZone != null ? (
                   <div className="cursor-grabbing drop-shadow-lg">
-                    <ZoneChipFace zone={activeDragZone} isOrphan={orphanZones.has(activeDragZone)} showRemove={false} />
+                    <ZoneChipFace
+                      zone={activeDragZone}
+                      isOrphan={orphanZones.has(activeDragZone)}
+                      showRemove={false}
+                      groupLabels={standGroupZoneLabels}
+                    />
                   </div>
                 ) : activeDragCategoryId != null ? (
                   <div className="cursor-grabbing rounded-lg border border-border bg-card px-4 py-3 shadow-xl">

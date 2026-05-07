@@ -115,6 +115,11 @@ function randomMsInRange(minMs, maxMs) {
   return lo + Math.floor(Math.random() * (hi - lo + 1))
 }
 
+/** Uniform random element from a non-empty array. */
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
 /** Cumulative step times for the executing phase; one random duration per node hop. */
 function buildExecutingTiming(positions) {
   const n = Array.isArray(positions) ? positions.length : 0
@@ -521,14 +526,23 @@ function pickDefaultRobotId() {
 
 /**
  * Match production `submitMission`: the app sends `robotIds` (array); the fleet job exposes `robotId`.
- * Use the first non-empty id, then singular `robotId` / `robot_id`, else the dashboard default.
+ * Pick uniformly at random among non-empty `robotIds` (fleet pool). When several ids are not loaded in
+ * the emulator, prefer ids that resolve to a robot row so the mission sim avoids missing-robot warnings.
+ * Fallback: singular `robotId` / `robot_id`, else first/default robot.
  */
 function robotIdFromSubmitMissionBody(body) {
   const ids = body?.robotIds
   if (Array.isArray(ids)) {
+    const candidates = []
     for (const x of ids) {
       const id = normKey(x)
-      if (id) return id
+      if (id) candidates.push(id)
+    }
+    if (candidates.length === 1) return candidates[0]
+    if (candidates.length > 1) {
+      const known = candidates.filter((id) => resolveMapKey(robots, id) !== undefined)
+      const pool = known.length > 0 ? known : candidates
+      return pickRandom(pool)
     }
   }
   const single = normKey(body?.robotId ?? body?.robot_id)

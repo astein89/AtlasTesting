@@ -23,14 +23,21 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const pathNorm = location.pathname.replace(/\/$/, '') || '/'
   const missionsRoot = amrPath('missions')
   const inMissionsSection = pathNorm === missionsRoot || pathNorm.startsWith(`${missionsRoot}/`)
+  const standsRoot = amrPath('stands')
+  const inStandsSection = pathNorm === standsRoot || pathNorm.startsWith(`${standsRoot}/`)
   const wikiOrFilesWide = inWiki || (inFiles && hasPermission('module.files'))
+  /** AMR nav is short labels — use a slimmer rail than the default 18rem (`w-72`) module sidebar. */
+  const amrSidebarWide =
+    'w-[min(14rem,calc(100vw-1rem))] max-w-[min(14rem,calc(100vw-1rem))] md:w-[min(14rem,calc(100vw-1rem))] md:max-w-[min(14rem,calc(100vw-1rem))]'
 
   return (
     <aside
       className={`fixed inset-y-0 left-0 z-50 flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-border bg-card p-4 pt-16 transition-transform md:relative md:self-stretch md:pt-4 md:translate-x-0 ${
         wikiOrFilesWide
           ? 'w-[min(16.5rem,calc(100vw-1rem))] max-w-[min(16.5rem,calc(100vw-1rem))] md:w-[min(16.5rem,calc(100vw-1rem))] md:max-w-[min(16.5rem,calc(100vw-1rem))]'
-          : 'w-72 max-w-72 md:w-72 md:max-w-72'
+          : inAmr
+            ? amrSidebarWide
+            : 'w-72 max-w-72 md:w-72 md:max-w-72'
       } ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
     >
       <nav className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
@@ -232,9 +239,10 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             <NavLink
               to={amrPath('stands')}
               onClick={onClose}
-              className={({ isActive }) =>
+              end
+              className={() =>
                 `${baseLink} ${
-                  isActive
+                  inStandsSection
                     ? 'bg-primary text-primary-foreground'
                     : 'text-foreground hover:bg-background'
                 }`
@@ -242,6 +250,21 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             >
               Stands
             </NavLink>
+            {inStandsSection ? (
+              <NavLink
+                to={amrPath('stands', 'groups')}
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `${baseLink} ml-2 border-l border-border/70 pl-4 ${
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-foreground hover:bg-background'
+                  }`
+                }
+              >
+                Groups
+              </NavLink>
+            ) : null}
             <NavLink
               to={amrPath('settings')}
               onClick={onClose}

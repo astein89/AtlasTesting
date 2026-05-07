@@ -18,6 +18,8 @@ export type MultistopPlanDest = {
    * Final segment end leg always uses drop (`true`) regardless.
    */
   putDown?: boolean
+  /** Lazy-resolve pool (stop 2+); when set, `position` may be empty until dispatch. */
+  groupId?: string
 }
 
 /** Release timing after `containerIn`, before the first `submitMission` (pickup row in UI). */
@@ -51,7 +53,8 @@ function parseContinueFields(o: Record<string, unknown>): MultistopPickupContinu
 
 function parseDestinationRecord(o: Record<string, unknown>): MultistopPlanDest | null {
   const position = typeof o.position === 'string' ? o.position.trim() : ''
-  if (!position) return null
+  const groupId = typeof o.groupId === 'string' ? o.groupId.trim() : ''
+  if (!position && !groupId) return null
   const cf = parseContinueFields(o)
   const base: MultistopPlanDest = {
     position,
@@ -59,6 +62,7 @@ function parseDestinationRecord(o: Record<string, unknown>): MultistopPlanDest |
     waitingMillis: 0,
     continueMode: cf.continueMode,
   }
+  if (groupId) base.groupId = groupId
   if (typeof o.putDown === 'boolean') base.putDown = o.putDown
   if (cf.continueMode !== 'auto' || cf.autoContinueSeconds === undefined) return base
   return { ...base, continueMode: 'auto', autoContinueSeconds: cf.autoContinueSeconds }
@@ -99,7 +103,8 @@ export type NormalizeDestinationResult =
 /** Validate API input for one destination row (POST/PATCH create mission). */
 export function normalizeDestinationInput(o: Record<string, unknown>): NormalizeDestinationResult {
   const position = typeof o.position === 'string' ? o.position.trim() : ''
-  if (!position) return { ok: false, error: 'each destination needs position' }
+  const groupId = typeof o.groupId === 'string' ? o.groupId.trim() : ''
+  if (!position && !groupId) return { ok: false, error: 'each destination needs position or groupId' }
   const cmRaw = o.continueMode
   const continueMode: ContinueMode = cmRaw === 'auto' ? 'auto' : 'manual'
   if (continueMode === 'auto') {
@@ -117,10 +122,12 @@ export function normalizeDestinationInput(o: Record<string, unknown>): Normalize
       continueMode: 'auto',
       autoContinueSeconds: Math.floor(n),
     }
+    if (groupId) dest.groupId = groupId
     if (typeof o.putDown === 'boolean') dest.putDown = o.putDown
     return { ok: true, dest }
   }
   const dest: MultistopPlanDest = { position, passStrategy: 'AUTO', waitingMillis: 0, continueMode: 'manual' }
+  if (groupId) dest.groupId = groupId
   if (typeof o.putDown === 'boolean') dest.putDown = o.putDown
   return { ok: true, dest }
 }
@@ -262,12 +269,18 @@ export function multistopPlanToStandLegPairs(
   const pairs: Array<{ position: string; putDown: boolean }> = []
   const pickup = pickupRaw.trim()
   for (let i = 0; i < n; i++) {
-    const startPos = i === 0 ? pickup : dests[i - 1].position.trim()
+    const prev = i === 0 ? null : dests[i - 1]
+    const startPos = i === 0 ? pickup : (prev?.position ?? '').trim()
+    const prevUnresolved = i > 0 && Boolean(prev?.groupId?.trim()) && !startPos
+    const end = dests[i]
+    const endPos = (end.position ?? '').trim()
+    const endUnresolved = Boolean(end.groupId?.trim()) && !endPos
+    if (prevUnresolved || endUnresolved) continue
     const startPut =
       Array.isArray(seg) && seg.length === n ? seg[i] === true : false
-    const endPut = i === n - 1 ? true : dests[i].putDown === true
+    const endPut = i === n - 1 ? true : end.putDown === true
     pairs.push({ position: startPos, putDown: startPut })
-    pairs.push({ position: dests[i].position.trim(), putDown: endPut })
+    pairs.push({ position: endPos, putDown: endPut })
   }
   return pairs
 }
@@ -307,24 +320,38 @@ export function buildSegmentMissionData(
   return [startLeg, endLeg]
 }
 
+export type MultistopSegmentDropGate =
+  | null
+  | { kind: 'stand'; ref: string }
+  | { kind: 'group'; groupId: string }
+
 /**
- * Stand that must be empty before continuing segment `nextSegmentIndex`, aligned with {@link buildSegmentMissionData}.
- * Skips segment 0 (first fleet leg): create-time / pickup-row sanity covers that destination.
+ * Drop destination gate before releasing segment `nextSegmentIndex`, aligned with {@link buildSegmentMissionData}.
+ * Includes segment 0 (same rule as later segments): empty-stand checks / queue gates run at Continue / worker release,
+ * not only at mission create.
  */
-export function multistopSegmentDropDestinationRef(
-  plan: MultistopPlan,
-  nextSegmentIndex: number
-): string | null {
+export function multistopSegmentDropGate(plan: MultistopPlan, nextSegmentIndex: number): MultistopSegmentDropGate {
   const dests = plan.destinations
   const n = dests.length
   if (!Number.isFinite(nextSegmentIndex) || nextSegmentIndex < 0 || nextSegmentIndex >= n) return null
-  if (nextSegmentIndex === 0) return null
   const end = dests[nextSegmentIndex]
   const isFinal = nextSegmentIndex === n - 1
   const endPutDown = isFinal ? true : end.putDown === true
   if (!endPutDown) return null
-  const ref = end.position.trim()
-  return ref || null
+  const gid = typeof end.groupId === 'string' ? end.groupId.trim() : ''
+  const ref = (end.position ?? '').trim()
+  if (ref) return { kind: 'stand', ref }
+  if (gid) return { kind: 'group', groupId: gid }
+  return null
+}
+
+/** @deprecated Prefer {@link multistopSegmentDropGate} for group support. */
+export function multistopSegmentDropDestinationRef(
+  plan: MultistopPlan,
+  nextSegmentIndex: number
+): string | null {
+  const g = multistopSegmentDropGate(plan, nextSegmentIndex)
+  return g?.kind === 'stand' ? g.ref : null
 }
 
 export function robotIdFromFleetJob(job: Record<string, unknown>): string {

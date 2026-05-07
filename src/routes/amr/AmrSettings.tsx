@@ -31,6 +31,8 @@ type AmrSettingsFormState = {
   pollMsContainers: number
   hideFleetCompleteAfterMinutesDefault: number | null
   missionCreateStandPresenceSanityCheck: boolean
+  missionQueueingEnabled: boolean
+  palletDropConfirmTimeoutMs: number
   authKeyConfigured: boolean
   hyperionServerIp: string
   hyperionServerPort: number
@@ -100,6 +102,11 @@ function amrFleetSettingsToForm(s: AmrFleetSettings): AmrSettingsFormState {
     pollMsContainers: s.pollMsContainers,
     hideFleetCompleteAfterMinutesDefault: s.hideFleetCompleteAfterMinutesDefault ?? null,
     missionCreateStandPresenceSanityCheck: s.missionCreateStandPresenceSanityCheck !== false,
+    missionQueueingEnabled: s.missionQueueingEnabled !== false,
+    palletDropConfirmTimeoutMs:
+      typeof s.palletDropConfirmTimeoutMs === 'number' && Number.isFinite(s.palletDropConfirmTimeoutMs)
+        ? s.palletDropConfirmTimeoutMs
+        : 10000,
     authKeyConfigured: s.authKeyConfigured,
     ...hyperionConnectionFromBaseUrl(s.hyperionBaseUrl),
     hyperionUsername: s.hyperionUsername ?? '',
@@ -137,6 +144,8 @@ export function AmrSettings() {
     pollMsContainers: 5000,
     hideFleetCompleteAfterMinutesDefault: null as number | null,
     missionCreateStandPresenceSanityCheck: true,
+    missionQueueingEnabled: true,
+    palletDropConfirmTimeoutMs: 10000,
     authKeyConfigured: false,
     ...hyperionConnectionFromBaseUrl(''),
     hyperionUsername: '',
@@ -403,6 +412,15 @@ export function AmrSettings() {
             {hyperionTesting ? 'Testing…' : 'Test connection'}
           </button>
         </div>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+        <div>
+          <h2 className="text-sm font-medium">Mission settings</h2>
+          <p className="mt-1 text-xs text-foreground/60">
+            Presence checks, queueing, and post-lower confirmation use Hyperion when it is configured above.
+          </p>
+        </div>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug">
           <input
             type="checkbox"
@@ -420,6 +438,39 @@ export function AmrSettings() {
               submit. If stop 1 appears empty but another stop reports a pallet, a confirmation appears. Uncheck to
               skip that request and dialog. In-mission pallet chips and Containers refresh behavior are unchanged.
             </span>
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug">
+          <input
+            type="checkbox"
+            className="mt-0.5 shrink-0 rounded border-border"
+            checked={form.missionQueueingEnabled}
+            disabled={!canEdit}
+            onChange={(e) => setForm((f) => ({ ...f, missionQueueingEnabled: e.target.checked }))}
+          />
+          <span>
+            <span className="font-medium text-foreground">Enable mission queueing</span>
+            <span className="mt-1 block text-xs text-foreground/65">
+              When enabled, blocked destination missions are queued and dispatched automatically once the stand clears.
+              Queueing also controls post-lower stand reservation checks.
+            </span>
+          </span>
+        </label>
+        <label className="block text-sm">
+          Post-lower pallet confirm timeout (ms)
+          <input
+            type="number"
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            disabled={!canEdit}
+            min={1000}
+            max={600000}
+            value={form.palletDropConfirmTimeoutMs}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, palletDropConfirmTimeoutMs: Number(e.target.value) }))
+            }
+          />
+          <span className="mt-1 block text-[11px] text-foreground/55">
+            Worker keeps polling stand presence after a lower until pallet is detected or this timeout expires.
           </span>
         </label>
       </section>

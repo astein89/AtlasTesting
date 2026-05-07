@@ -285,6 +285,7 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_pickup INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_dropoff INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS bypass_pallet_check INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS active_missions INTEGER NOT NULL DEFAULT 1`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_amr_stands_external ON amr_stands(external_ref)`,
   `CREATE TABLE IF NOT EXISTS amr_mission_records (
     id TEXT PRIMARY KEY,
@@ -305,8 +306,19 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
     FOREIGN KEY (created_by) REFERENCES users(id)
   )`,
   `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS worker_closed INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS queued INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS queued_destination_ref TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS queued_at TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS submit_payload_json TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS container_in_payload_json TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS presence_check_until TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS presence_seen_at TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS presence_warning_at TEXT`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS presence_dest_ref TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_amr_mission_records_worker_closed ON amr_mission_records(worker_closed)`,
   `CREATE INDEX IF NOT EXISTS idx_amr_mission_records_finalized ON amr_mission_records(finalized)`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_mission_records_queued ON amr_mission_records(queued, queued_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_mission_records_presence_check ON amr_mission_records(presence_check_until)`,
   `UPDATE amr_mission_records SET worker_closed = 1 WHERE finalized = 1`,
   `UPDATE amr_mission_records SET finalized = CASE WHEN last_status IN (30, 35) THEN 1 ELSE 0 END WHERE worker_closed = 1`,
   `CREATE TABLE IF NOT EXISTS amr_mission_status_log (
@@ -356,6 +368,38 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_amr_mission_records_multistop ON amr_mission_records(multistop_session_id)`,
   `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS locked_robot_id TEXT`,
   `ALTER TABLE amr_multistop_sessions ADD COLUMN IF NOT EXISTS continue_not_before TEXT`,
+  `ALTER TABLE amr_multistop_sessions ADD COLUMN IF NOT EXISTS queue_blocked_until TEXT`,
+  `ALTER TABLE amr_multistop_sessions ADD COLUMN IF NOT EXISTS container_in_payload_json TEXT`,
+  `CREATE TABLE IF NOT EXISTS amr_stand_reservations (
+    id TEXT PRIMARY KEY,
+    stand_external_ref TEXT NOT NULL,
+    mission_record_id TEXT NOT NULL,
+    multistop_session_id TEXT,
+    multistop_step_index INTEGER,
+    created_at TEXT ${tsTextDefault},
+    released_at TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_stand_reservations_active_ref ON amr_stand_reservations(stand_external_ref, released_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_stand_reservations_record ON amr_stand_reservations(mission_record_id, released_at)`,
+  `CREATE TABLE IF NOT EXISTS amr_stand_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    zone TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT ${tsTextDefault},
+    updated_at TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS amr_stand_group_members (
+    group_id TEXT NOT NULL REFERENCES amr_stand_groups(id) ON DELETE CASCADE,
+    stand_id TEXT NOT NULL REFERENCES amr_stands(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT ${tsTextDefault},
+    PRIMARY KEY (group_id, stand_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_stand_group_members_stand ON amr_stand_group_members(stand_id)`,
+  `ALTER TABLE amr_mission_records ADD COLUMN IF NOT EXISTS queued_group_id TEXT`,
+  `ALTER TABLE amr_multistop_sessions ADD COLUMN IF NOT EXISTS queue_blocked_group_id TEXT`,
   `CREATE TABLE IF NOT EXISTS amr_mission_templates (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,

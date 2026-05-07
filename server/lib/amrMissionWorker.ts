@@ -5,6 +5,19 @@ import { formatLogRecordedAt } from './hostTimeZone.js'
 import { executeMultistopContinue } from './amrMultistopContinue.js'
 import { computeContinueDeadlineIso, parseMultistopPlan, robotIdFromFleetJob } from './amrMultistop.js'
 import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from './amrFleet.js'
+import {
+  activeReservationCount,
+  getStandQueuePolicy,
+  isStandAvailableForDrop,
+  releaseReservationsForRecord,
+  reserveStandForRecord,
+} from './amrStandAvailability.js'
+import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
+import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
+import { resolveGroupDestination } from './amrStandGroups.js'
+
+/** Synthetic chip when drop presence deadline passes without confirming pallet cleared (stored in DB, not fleet). */
+const PRESENCE_WARNING_STATUS_CODE = 93
 
 /** Fleet job statuses that close this mission row (`worker_closed = 1`) and stop jobQuery polling for it. */
 const CLOSE_MISSION_ROW_STATUS = new Set([30, 31, 35])
@@ -87,6 +100,25 @@ function parseMissionFinalPosition(payloadJson: string): string | null {
   }
 }
 
+function parseMissionEndDropMeta(payloadJson: string): { isDrop: boolean; destinationRef: string } {
+  if (!payloadJson.trim()) return { isDrop: false, destinationRef: '' }
+  try {
+    const o = JSON.parse(payloadJson) as {
+      submit?: { missionData?: Array<{ sequence?: number; position?: string; putDown?: boolean }> }
+      missionData?: Array<{ sequence?: number; position?: string; putDown?: boolean }>
+    }
+    const md = o.submit?.missionData ?? o.missionData
+    if (!Array.isArray(md) || md.length === 0) return { isDrop: false, destinationRef: '' }
+    const sorted = [...md].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
+    const last = sorted[sorted.length - 1]
+    const destinationRef = typeof last?.position === 'string' ? last.position.trim() : ''
+    const isDrop = last?.putDown === true
+    return { isDrop, destinationRef }
+  } catch {
+    return { isDrop: false, destinationRef: '' }
+  }
+}
+
 /** Last route node — payload first, then column stored at mission creation (never use container_code as position). */
 function resolveFinalPosition(row: {
   mission_payload_json: unknown
@@ -112,7 +144,9 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
 
       const open = (await db
         .prepare(
-          `SELECT * FROM amr_mission_records WHERE COALESCE(worker_closed, 0) = 0 ORDER BY created_at ASC LIMIT 50`
+          `SELECT * FROM amr_mission_records
+           WHERE COALESCE(worker_closed, 0) = 0 AND COALESCE(queued, 0) = 0
+           ORDER BY created_at ASC LIMIT 50`
         )
         .all()) as Array<{
         id: string
@@ -232,6 +266,26 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           if (msId && Number.isFinite(stepIdx) && job) {
             await applyMultistopLegFleetOutcome(db, msId, stepIdx, job, ts, status)
           }
+          const endMeta = parseMissionEndDropMeta(missionPayloadToString(row.mission_payload_json))
+          const queueingEnabled = cfg.missionQueueingEnabled !== false
+          if (
+            queueingEnabled &&
+            FINALIZED_SUCCESS_STATUS.has(status) &&
+            endMeta.isDrop &&
+            endMeta.destinationRef
+          ) {
+            const timeoutMs = Math.max(1000, Math.min(600000, Number(cfg.palletDropConfirmTimeoutMs || 10000)))
+            const deadline = new Date(Date.now() + timeoutMs).toISOString()
+            await db
+              .prepare(
+                `UPDATE amr_mission_records
+                 SET presence_dest_ref = ?, presence_check_until = ?, updated_at = ?
+                 WHERE id = ?`
+              )
+              .run(endMeta.destinationRef, deadline, ts, row.id)
+          } else {
+            await releaseReservationsForRecord(db, row.id)
+          }
         } else if (
           status === 50 &&
           msId &&
@@ -250,14 +304,242 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
         }
       }
 
+      if (cfg.missionQueueingEnabled !== false) {
+        const queuedRows = (await db
+          .prepare(
+            `SELECT * FROM amr_mission_records
+             WHERE COALESCE(queued, 0) = 1
+             ORDER BY COALESCE(queued_at, created_at) ASC
+             LIMIT 200`
+          )
+          .all()) as Array<Record<string, unknown>>
+        const headsByDestination = new Map<string, Record<string, unknown>>()
+        const headsByGroup = new Map<string, Record<string, unknown>>()
+        for (const r of queuedRows) {
+          const ref = typeof r.queued_destination_ref === 'string' ? r.queued_destination_ref.trim() : ''
+          if (ref && !headsByDestination.has(ref)) headsByDestination.set(ref, r)
+          const gid = typeof r.queued_group_id === 'string' ? r.queued_group_id.trim() : ''
+          if (gid && !headsByGroup.has(gid)) headsByGroup.set(gid, r)
+        }
+        const hcfg = await getAmrHyperionConfig(db)
+        const presenceCache: Record<string, boolean> = {}
+        for (const [ref, row] of headsByDestination.entries()) {
+          const policy = await getStandQueuePolicy(db, ref)
+          if (!policy) continue
+          let palletPresent = false
+          if (!policy.bypassPalletCheck) {
+            if (!hyperionConfigured(hcfg)) continue
+            if (!(ref in presenceCache)) {
+              const pr = await fetchStandPresenceFromHyperion(hcfg, [ref], {
+                db,
+                source: 'mission-worker-queue-dispatch',
+              })
+              if (!pr.ok) continue
+              presenceCache[ref] = pr.presence[ref] === true
+            }
+            palletPresent = presenceCache[ref] === true
+          }
+          const reservations = await activeReservationCount(db, ref)
+          const available = isStandAvailableForDrop({
+            palletPresent,
+            policy,
+            activeReservations: reservations,
+          })
+          if (!available) continue
+          const id = typeof row.id === 'string' ? row.id : ''
+          if (!id) continue
+          const ciRaw = typeof row.container_in_payload_json === 'string' ? row.container_in_payload_json.trim() : ''
+          if (ciRaw) {
+            let ciPayload: unknown
+            try {
+              ciPayload = JSON.parse(ciRaw)
+            } catch {
+              continue
+            }
+            const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
+              db,
+              source: 'mission-worker-queue-dispatch',
+              missionRecordId: id,
+            })
+            if (!ci.ok || !fleetJsonIndicatesSuccess(ci.json)) continue
+            await db
+              .prepare(`UPDATE amr_mission_records SET container_in_payload_json = NULL, updated_at = ? WHERE id = ?`)
+              .run(new Date().toISOString(), id)
+          }
+          const submitRaw = typeof row.submit_payload_json === 'string' ? row.submit_payload_json.trim() : ''
+          if (!submitRaw) continue
+          let submitPayload: unknown
+          try {
+            submitPayload = JSON.parse(submitRaw)
+          } catch {
+            continue
+          }
+          const sm = await forwardAmrFleetRequest(cfg, 'submitMission', submitPayload, {
+            db,
+            source: 'mission-worker-queue-dispatch',
+            missionRecordId: id,
+          })
+          if (!sm.ok || !fleetJsonIndicatesSuccess(sm.json)) continue
+          const ts = new Date().toISOString()
+          await db
+            .prepare(
+              `UPDATE amr_mission_records
+               SET queued = 0, queued_destination_ref = NULL, queued_at = NULL, submit_payload_json = NULL, last_status = NULL, updated_at = ?
+               WHERE id = ?`
+            )
+            .run(ts, id)
+          await reserveStandForRecord(db, ref, id, {
+            multistopSessionId:
+              typeof row.multistop_session_id === 'string' ? row.multistop_session_id : null,
+            multistopStepIndex: typeof row.multistop_step_index === 'number' ? row.multistop_step_index : null,
+          })
+        }
+
+        for (const [gid, row] of headsByGroup.entries()) {
+          const rr = await resolveGroupDestination({
+            db,
+            hcfg,
+            groupId: gid,
+            userId: null,
+            source: 'mission-worker-queue-dispatch-group',
+          })
+          if (!rr.ok) continue
+          const id = typeof row.id === 'string' ? row.id : ''
+          if (!id) continue
+          const ciRaw = typeof row.container_in_payload_json === 'string' ? row.container_in_payload_json.trim() : ''
+          if (ciRaw) {
+            let ciPayload: unknown
+            try {
+              ciPayload = JSON.parse(ciRaw)
+            } catch {
+              continue
+            }
+            const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
+              db,
+              source: 'mission-worker-queue-dispatch',
+              missionRecordId: id,
+            })
+            if (!ci.ok || !fleetJsonIndicatesSuccess(ci.json)) continue
+            await db
+              .prepare(`UPDATE amr_mission_records SET container_in_payload_json = NULL, updated_at = ? WHERE id = ?`)
+              .run(new Date().toISOString(), id)
+          }
+          const submitRaw = typeof row.submit_payload_json === 'string' ? row.submit_payload_json.trim() : ''
+          if (!submitRaw) continue
+          let submitPayload: Record<string, unknown>
+          try {
+            submitPayload = JSON.parse(submitRaw) as Record<string, unknown>
+          } catch {
+            continue
+          }
+          const md = submitPayload.missionData
+          if (Array.isArray(md) && md.length >= 2) {
+            const last = md[md.length - 1] as Record<string, unknown>
+            last.position = rr.externalRef
+          }
+          const sm = await forwardAmrFleetRequest(cfg, 'submitMission', submitPayload, {
+            db,
+            source: 'mission-worker-queue-dispatch',
+            missionRecordId: id,
+          })
+          if (!sm.ok || !fleetJsonIndicatesSuccess(sm.json)) continue
+          const ts = new Date().toISOString()
+          await db
+            .prepare(
+              `UPDATE amr_mission_records
+               SET queued = 0, queued_destination_ref = NULL, queued_group_id = NULL, queued_at = NULL, submit_payload_json = NULL, last_status = NULL, updated_at = ?
+               WHERE id = ?`
+            )
+            .run(ts, id)
+          await reserveStandForRecord(db, rr.externalRef, id, {
+            multistopSessionId:
+              typeof row.multistop_session_id === 'string' ? row.multistop_session_id : null,
+            multistopStepIndex: typeof row.multistop_step_index === 'number' ? row.multistop_step_index : null,
+          })
+        }
+
+        const checks = (await db
+          .prepare(
+            `SELECT id, presence_dest_ref, presence_check_until
+             FROM amr_mission_records
+             WHERE presence_check_until IS NOT NULL
+               AND presence_seen_at IS NULL
+               AND presence_warning_at IS NULL
+             LIMIT 200`
+          )
+          .all()) as Array<{ id: string; presence_dest_ref?: string | null; presence_check_until?: string | null }>
+        const hcfgChecks = await getAmrHyperionConfig(db)
+        if (hyperionConfigured(hcfgChecks)) {
+          for (const row of checks) {
+            const ref = typeof row.presence_dest_ref === 'string' ? row.presence_dest_ref.trim() : ''
+            if (!ref) continue
+            const pr = await fetchStandPresenceFromHyperion(hcfgChecks, [ref], {
+              db,
+              source: 'mission-worker-presence-confirm',
+            })
+            if (!pr.ok) continue
+            const ts = new Date().toISOString()
+            if (pr.presence[ref] === true) {
+              await db
+                .prepare(
+                  `UPDATE amr_mission_records
+                   SET presence_seen_at = ?, presence_check_until = NULL, updated_at = ?
+                   WHERE id = ?`
+                )
+                .run(ts, ts, row.id)
+              await releaseReservationsForRecord(db, row.id)
+              continue
+            }
+            const deadline = typeof row.presence_check_until === 'string' ? Date.parse(row.presence_check_until) : NaN
+            if (Number.isFinite(deadline) && Date.now() >= deadline) {
+              await db
+                .prepare(
+                  `UPDATE amr_mission_records
+                   SET presence_warning_at = ?, presence_check_until = NULL, last_status = ?, updated_at = ?
+                   WHERE id = ?`
+                )
+                .run(ts, PRESENCE_WARNING_STATUS_CODE, ts, row.id)
+            }
+          }
+        }
+      }
+
       const nowIso = new Date().toISOString()
+      const groupDue = (await db
+        .prepare(
+          `SELECT id, created_by FROM amr_multistop_sessions
+           WHERE status = 'awaiting_continue'
+             AND queue_blocked_group_id IS NOT NULL
+             AND (queue_blocked_until IS NULL OR queue_blocked_until <= ?)
+           LIMIT 10`
+        )
+        .all(nowIso)) as Array<{ id: string; created_by?: string | null }>
+      for (const s of groupDue) {
+        const sid = typeof s.id === 'string' ? s.id.trim() : ''
+        if (!sid) continue
+        const uid = typeof s.created_by === 'string' && s.created_by.trim() ? s.created_by.trim() : null
+        const result = await executeMultistopContinue({
+          db,
+          cfg,
+          sessionId: sid,
+          userId: uid,
+          source: 'multistop-auto-continue',
+        })
+        if (!result.ok && result.status !== 404) {
+          console.warn(`[amr-mission-worker] group-blocked continue retry ${sid}: ${result.error}`)
+        }
+      }
+
       const due = (await db
         .prepare(
           `SELECT id, created_by FROM amr_multistop_sessions
-           WHERE status = 'awaiting_continue' AND continue_not_before IS NOT NULL AND continue_not_before <= ?
+           WHERE status = 'awaiting_continue'
+             AND continue_not_before IS NOT NULL
+             AND continue_not_before <= ?
+             AND (queue_blocked_until IS NULL OR queue_blocked_until <= ?)
            LIMIT 20`
         )
-        .all(nowIso)) as Array<{ id: string; created_by?: string | null }>
+        .all(nowIso, nowIso)) as Array<{ id: string; created_by?: string | null }>
       for (const s of due) {
         const sid = typeof s.id === 'string' ? s.id.trim() : ''
         if (!sid) continue
@@ -278,6 +560,7 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
             continue
           }
           if (result.status === 409) {
+            if ((result as { queued?: boolean }).queued) continue
             // Occupied destination (or business rule): stop auto timer; operator must Continue manually after clearing.
             await db
               .prepare(

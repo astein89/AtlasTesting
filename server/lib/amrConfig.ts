@@ -36,6 +36,10 @@ export type AmrFleetConfig = {
    * When true (default), before creating a mission the app asks Hyperion and warns if stop 1 is empty while another stop reports a pallet.
    */
   missionCreateStandPresenceSanityCheck: boolean
+  /** Master switch for queued mission dispatch / stand reservation flow. */
+  missionQueueingEnabled: boolean
+  /** Deadline window for post-lower pallet confirmation polling. */
+  palletDropConfirmTimeoutMs: number
   /** Ordered zone categories (managed via Categories modal on the Stands screen). Empty by default. */
   zoneCategories: ZoneCategory[]
 }
@@ -57,6 +61,8 @@ export const DEFAULT_AMR_FLEET_CONFIG: AmrFleetConfig = {
   pollMsContainers: 5000,
   hideFleetCompleteAfterMinutesDefault: null,
   missionCreateStandPresenceSanityCheck: true,
+  missionQueueingEnabled: true,
+  palletDropConfirmTimeoutMs: 10000,
   zoneCategories: [],
 }
 
@@ -131,6 +137,11 @@ function mergeConfig(raw: unknown): AmrFleetConfig {
   }
   if (typeof o.missionCreateStandPresenceSanityCheck === 'boolean')
     base.missionCreateStandPresenceSanityCheck = o.missionCreateStandPresenceSanityCheck
+  if (typeof o.missionQueueingEnabled === 'boolean') base.missionQueueingEnabled = o.missionQueueingEnabled
+  if (typeof o.palletDropConfirmTimeoutMs === 'number' && Number.isFinite(o.palletDropConfirmTimeoutMs)) {
+    const n = Math.floor(o.palletDropConfirmTimeoutMs)
+    base.palletDropConfirmTimeoutMs = Math.max(1000, Math.min(600000, n))
+  }
   if ('zoneCategories' in o) {
     base.zoneCategories = normalizeZoneCategories(o.zoneCategories)
   }

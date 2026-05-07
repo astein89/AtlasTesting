@@ -56,8 +56,8 @@ const SUMMARY_ONLY_KEYS = new Set(['batteryLevel', 'status'])
 
 const NUMERIC_KEYS = new Set(['x', 'y', 'nodeNumber', 'robotOrientation', 'occupyStatus', 'liftStatus', 'batteryLevel', 'reliability'])
 
-/** Categories on the grid: attention first, then less available, then working states, unknown codes, empty last. */
-const STATUS_GRID_SECTION_ORDER = [7, 2, 6, 4, 5, 3] as const
+/** Categories on the grid: attention first, then less available, then working states. Offline is last among fleet statuses so it sits just above Locked. */
+const STATUS_GRID_SECTION_ORDER = [7, 6, 4, 5, 3] as const
 
 function statusCategoryKey(status: unknown): number | 'none' {
   if (status === null || status === undefined || status === '') return 'none'
@@ -76,16 +76,19 @@ function compareRobotsByName(a: RobotRow, b: RobotRow): number {
 
 function sortedStatusCategoryKeys(keys: Set<number | 'none'>): (number | 'none')[] {
   const orderNums = STATUS_GRID_SECTION_ORDER as readonly number[]
+  const OFFLINE_CODE = 2
   const out: (number | 'none')[] = []
   for (const c of STATUS_GRID_SECTION_ORDER) {
     if (keys.has(c)) out.push(c)
   }
   const extras = [...keys].filter(
-    (k): k is number => k !== 'none' && typeof k === 'number' && !orderNums.includes(k)
+    (k): k is number =>
+      k !== 'none' && typeof k === 'number' && !orderNums.includes(k) && k !== OFFLINE_CODE
   )
   extras.sort((a, b) => a - b)
   out.push(...extras)
   if (keys.has('none')) out.push('none')
+  if (keys.has(OFFLINE_CODE)) out.push(OFFLINE_CODE)
   return out
 }
 

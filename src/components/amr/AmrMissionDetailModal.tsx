@@ -19,9 +19,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import {
+  ackPresenceWarning,
   continueAmrMultistopSession,
+  forceReleaseMission,
   getAmrMultistopSession,
   getAmrSettings,
+  getAmrStandGroups,
   getAmrStands,
   patchAmrMultistopSession,
   postStandPresence,
@@ -55,6 +58,11 @@ import {
   type MultistopReleasePlanDest,
 } from '@/utils/amrPalletPresenceSanity'
 import { formatRemainingMmSs, remainingMsUntilIso } from '@/utils/amrContinueCountdown'
+import {
+  MISSION_QUEUED_CALLOUT_CLASS,
+  MISSION_QUEUED_ROUTE_LEG_CARD_CLASS,
+  missionOverviewOrDetailQueuedHue,
+} from '@/utils/amrMissionJobStatus'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 
@@ -158,6 +166,8 @@ type MultistopPlanDest = {
   autoContinueSeconds?: number
   /** Intermediate stops: fleet drop vs pickup at this NODE_POINT; final stop is always drop. */
   putDown?: boolean
+  /** Lazy-resolve pool (stop 2+); `position` may be empty until dispatch. */
+  groupId?: string
 }
 
 type DraftDest = MultistopPlanDest & { id: string }
@@ -177,13 +187,19 @@ function draftToPlan(rows: DraftDest[]): Record<string, unknown>[] {
   const normalized = normalizeDraftPutDownRows(rows)
   return normalized.map((row) => {
     const position = row.position.trim()
+    const gid = row.groupId?.trim() ?? ''
     const mode = row.continueMode === 'auto' ? 'auto' : 'manual'
     const base: Record<string, unknown> = {
-      position,
       passStrategy: 'AUTO',
       waitingMillis: 0,
       continueMode: mode,
       putDown: row.putDown === true,
+    }
+    if (gid) {
+      base.groupId = gid
+      base.position = position
+    } else {
+      base.position = position
     }
     if (mode === 'auto') {
       const sec = Math.max(0, Math.min(Math.floor(row.autoContinueSeconds ?? 0), 86400))
@@ -203,13 +219,15 @@ function parsePlanDestinations(planJson: unknown): MultistopPlanDest[] | null {
       if (!x || typeof x !== 'object') return null
       const row = x as Record<string, unknown>
       const position = typeof row.position === 'string' ? row.position.trim() : ''
-      if (!position) return null
+      const groupId = typeof row.groupId === 'string' ? row.groupId.trim() : ''
+      if (!position && !groupId) return null
       const cm = row.continueMode === 'auto' ? 'auto' : 'manual'
       const n =
         typeof row.autoContinueSeconds === 'number'
           ? row.autoContinueSeconds
           : Number(row.autoContinueSeconds)
       const entry: MultistopPlanDest = { position, continueMode: cm }
+      if (groupId) entry.groupId = groupId
       if (typeof row.putDown === 'boolean') entry.putDown = row.putDown
       if (cm === 'auto' && Number.isFinite(n) && n >= 0) {
         entry.autoContinueSeconds = Math.min(Math.max(0, Math.floor(n)), 86400)
@@ -329,27 +347,54 @@ function legRestrictionStatus(
   return { violated: false, message: '' }
 }
 
+function planDestEndpointLabel(
+  row: MultistopPlanDest | undefined,
+  groupNames?: Record<string, string>
+): string {
+  if (!row) return '—'
+  const pos = row.position?.trim() ?? ''
+  if (pos) return pos
+  const gid = row.groupId?.trim()
+  if (gid) {
+    const name = groupNames?.[gid]
+    return name ? `[group] ${name}` : `[group] ${gid}`
+  }
+  return '—'
+}
+
 /** Start/end nodes for plan segment index `si` (0-based). */
 function segmentLegEndpoints(
   si: number,
   plan: MultistopPlanDest[] | null | undefined,
-  pickup: string | null
+  pickup: string | null,
+  groupNames?: Record<string, string>
 ): { start: string; end: string } {
   const p = plan ?? []
-  const end = p[si]?.position?.trim() || '—'
-  const start = si === 0 ? pickup?.trim() || '—' : p[si - 1]?.position?.trim() || '—'
+  const end = planDestEndpointLabel(p[si], groupNames)
+  const start =
+    si === 0 ? pickup?.trim() || '—' : planDestEndpointLabel(p[si - 1], groupNames)
   return { start, end }
+}
+
+function isHyperionPollableStandRef(ref: string): boolean {
+  const t = ref.trim()
+  if (!t || t === '—') return false
+  return !t.startsWith('[group]')
 }
 
 function validateMultistopPlan(
   plan: Array<{
     position: string
+    groupId?: string
     continueMode?: 'manual' | 'auto'
     autoContinueSeconds?: number
   }>
 ): string | null {
   for (let i = 0; i < plan.length; i++) {
-    if (!plan[i].position.trim()) return `Destination ${i + 1} needs an External Ref.`
+    const row = plan[i]
+    if (!row.position.trim() && !row.groupId?.trim()) {
+      return `Destination ${i + 1} needs an External Ref or stand group.`
+    }
   }
   for (let i = 0; i < plan.length - 1; i++) {
     const r = plan[i]
@@ -426,6 +471,7 @@ function SortableTailDestCard({
   segmentIndexInPlan,
   totalDestinations,
   warnDestinationOccupied,
+  highlightQueued,
   departPutDown,
 }: {
   row: DraftDest
@@ -456,6 +502,8 @@ function SortableTailDestCard({
    * (`awaiting_continue`). Hide while a segment is **active** so in-flight work does not look like a release block.
    */
   warnDestinationOccupied?: boolean
+  /** This leg is waiting on stand queue / deferred dispatch (violet card — not the whole modal). */
+  highlightQueued?: boolean
   /** Fleet putDown at first NODE_POINT of this segment (Depart). */
   departPutDown: boolean
 }) {
@@ -478,8 +526,15 @@ function SortableTailDestCard({
     <div className="mb-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold tabular-nums text-foreground">
-            Stop {stopNum} of {totalStops}
+          <p className="flex flex-wrap items-center gap-2 text-xs font-semibold tabular-nums text-foreground">
+            <span>
+              Stop {stopNum} of {totalStops}
+            </span>
+            {highlightQueued === true ? (
+              <span className="rounded-full bg-violet-400/25 px-2 py-0.5 text-[10px] font-medium text-violet-950 dark:bg-violet-500/25 dark:text-violet-100">
+                Queued
+              </span>
+            ) : null}
           </p>
           {standPresence ? (
             <div className="mt-1.5 space-y-1">
@@ -562,9 +617,11 @@ function SortableTailDestCard({
       } ${
         destOccupied
           ? 'border-red-500/45 bg-red-500/10 ring-1 ring-red-500/25 dark:border-red-500/40 dark:bg-red-950/35'
-          : isNext
-            ? 'border-primary/45 bg-primary/8 ring-1 ring-primary/20'
-            : 'border-border/80 bg-muted/15'
+          : highlightQueued === true
+            ? MISSION_QUEUED_ROUTE_LEG_CARD_CLASS
+            : isNext
+              ? 'border-primary/45 bg-primary/8 ring-1 ring-primary/20'
+              : 'border-border/80 bg-muted/15'
       } ${isDragging ? 'z-[5] opacity-95 shadow-md' : ''}`}
     >
       {destOccupied ? (
@@ -643,6 +700,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [blockedDestPresenceError, setBlockedDestPresenceError] = useState(false)
   const [blockedDestPresenceUnconfig, setBlockedDestPresenceUnconfig] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
+  const [queuedMissionForceOpen, setQueuedMissionForceOpen] = useState(false)
+  const [queuedMissionForceBusy, setQueuedMissionForceBusy] = useState(false)
+  const [ackPresenceBusy, setAckPresenceBusy] = useState(false)
   const [terminateStuckConfirmOpen, setTerminateStuckConfirmOpen] = useState(false)
   const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
   const [continueBusy, setContinueBusy] = useState(false)
@@ -679,6 +739,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [addStopErr, setAddStopErr] = useState<string | null>(null)
   const [addStopSuggestOpen, setAddStopSuggestOpen] = useState(false)
   const [addStopPickerOpen, setAddStopPickerOpen] = useState(false)
+  /** Stop 2+ stand-group pool (lazy-resolve); cleared when a concrete stand ref is chosen. */
+  const [addStopGroupId, setAddStopGroupId] = useState<string | null>(null)
+  const [standGroupNameById, setStandGroupNameById] = useState<Record<string, string>>({})
   const addStopSuggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Avoid msLoading flicker when parent polling bumps `record.updated_at` but session id is unchanged. */
   const prevFetchedMultistopSessionIdRef = useRef<string | null>(null)
@@ -715,6 +778,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         e.preventDefault()
         cancelAddStopSuggestClose()
         setAddStopSuggestOpen(false)
+        setAddStopGroupId(null)
         setRouteStopModal(null)
         setAddStopErr(null)
         return
@@ -751,12 +815,23 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       setPollMsContainers(Math.max(3000, s.pollMsContainers))
       setStandPresenceSanityOn(s.missionCreateStandPresenceSanityCheck !== false)
     })
+    void getAmrStandGroups().then((groups) => {
+      const m: Record<string, string> = {}
+      for (const g of groups) {
+        const id = String(g.id ?? '').trim()
+        if (!id) continue
+        const nm = String(g.name ?? '').trim()
+        m[id] = nm || id
+      }
+      setStandGroupNameById(m)
+    })
   }, [])
 
   useEffect(() => {
     cancelAddStopSuggestClose()
     setAddStopSuggestOpen(false)
     setAddStopPickerOpen(false)
+    setAddStopGroupId(null)
     setRouteStopModal(null)
     setAddStopErr(null)
   }, [sessionId, cancelAddStopSuggestClose])
@@ -837,7 +912,13 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   /** Resolved plan for leg labels: prefer live draft, else session snapshot. */
   const planPlainForLegLabels = useMemo((): MultistopPlanDest[] | null => {
     if (draftDestinations?.length) {
-      return draftDestinations.map((r) => ({ position: r.position }))
+      return draftDestinations.map((r) => ({
+        position: r.position,
+        continueMode: r.continueMode,
+        autoContinueSeconds: r.autoContinueSeconds,
+        putDown: r.putDown,
+        groupId: r.groupId,
+      }))
     }
     return parsePlanDestinations(msData?.session?.plan_json)
   }, [draftDestinations, msData?.session?.plan_json])
@@ -882,14 +963,19 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     const set = new Set<string>()
     const n = planPlainForLegLabels.length
     for (let i = 0; i < n; i += 1) {
-      const { start, end } = segmentLegEndpoints(i, planPlainForLegLabels, pickupPos)
+      const { start, end } = segmentLegEndpoints(
+        i,
+        planPlainForLegLabels,
+        pickupPos,
+        standGroupNameById
+      )
       const a = start.trim()
       const b = end.trim()
-      if (a && a !== '—') set.add(a)
-      if (b && b !== '—') set.add(b)
+      if (a && a !== '—' && isHyperionPollableStandRef(a)) set.add(a)
+      if (b && b !== '—' && isHyperionPollableStandRef(b)) set.add(b)
     }
     return [...set].sort()
-  }, [sessionId, planPlainForLegLabels, pickupPos])
+  }, [sessionId, planPlainForLegLabels, pickupPos, standGroupNameById])
 
   const routePlanStandRefsKey = routePlanStandRefs.join('\0')
 
@@ -1038,12 +1124,14 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     setAddStopErr(null)
     setAddStopSuggestOpen(false)
     setAddStopPickerOpen(false)
+    setAddStopGroupId(null)
     cancelAddStopSuggestClose()
   }, [cancelAddStopSuggestClose])
 
   const openAddStopModal = useCallback(() => {
     setAddStopErr(null)
     setAddStopPosition('')
+    setAddStopGroupId(null)
     setAddStopContinueMode('manual')
     setAddStopAutoSeconds(0)
     setRouteStopPutDown(true)
@@ -1061,6 +1149,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       const isFinal = draftDestinations != null && idx >= 0 && idx >= draftDestinations.length - 1
       setAddStopErr(null)
       setAddStopPosition(row.position)
+      setAddStopGroupId(row.groupId?.trim() || null)
       setAddStopContinueMode(row.continueMode === 'auto' ? 'auto' : 'manual')
       setAddStopAutoSeconds(row.autoContinueSeconds ?? 0)
       setRouteStopPutDown(isFinal ? true : row.putDown === true)
@@ -1140,9 +1229,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const commitRouteStopModal = useCallback(() => {
     if (!routeStopModal) return
     const modal = routeStopModal
+    const gid = addStopGroupId?.trim() ?? ''
     const pos = normalizeExternalRefFromStands(standRows, addStopPosition)
-    if (!pos.trim()) {
-      setAddStopErr('Enter an External Ref for this stop.')
+    if (!gid && !pos.trim()) {
+      setAddStopErr('Enter an External Ref for this stop or pick a stand group.')
       return
     }
 
@@ -1166,7 +1256,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     }
 
     const effectivePutDown = modal.mode === 'edit' && isFinal ? true : routeStopPutDown
-    const restriction = legRestrictionStatus(standRows, pos, effectivePutDown)
+    const restriction =
+      gid && !pos.trim()
+        ? { violated: false, message: '' }
+        : legRestrictionStatus(standRows, pos, effectivePutDown)
     if (restriction.violated && !overrideSpecialLocations) {
       setAddStopErr(
         canOverrideSpecial
@@ -1189,6 +1282,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         continueMode: cm,
         ...(cm === 'auto' ? { autoContinueSeconds: sec } : {}),
       }
+      if (gid) row.groupId = gid
       setDraftDestinations((prev) => {
         if (!prev) return prev
         const newRows = normalizeDraftPutDownRows([...prev, row])
@@ -1207,18 +1301,32 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         prev.map((r) => {
           if (r.id !== rowId) return r
           if (isFinal) {
-            return { ...r, position: pos }
+            const u: DraftDest = { ...r, position: pos }
+            if (gid) u.groupId = gid
+            else delete u.groupId
+            return u
           }
           if (cm === 'auto') {
-            return {
+            const u: DraftDest = {
               ...r,
               position: pos,
               putDown: palletDrop,
               continueMode: 'auto' as const,
               autoContinueSeconds: sec,
             }
+            if (gid) u.groupId = gid
+            else delete u.groupId
+            return u
           }
-          return { ...r, position: pos, putDown: palletDrop, continueMode: 'manual' as const }
+          const u: DraftDest = {
+            ...r,
+            position: pos,
+            putDown: palletDrop,
+            continueMode: 'manual' as const,
+          }
+          if (gid) u.groupId = gid
+          else delete u.groupId
+          return u
         })
       )
       queueMicrotask(() => {
@@ -1229,6 +1337,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   }, [
     routeStopModal,
     addStopPosition,
+    addStopGroupId,
     addStopContinueMode,
     addStopAutoSeconds,
     standRows,
@@ -1241,9 +1350,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   ])
 
   const addStopSuggestedStands = useMemo(() => {
-    if (!routeStopModal) return []
+    if (!routeStopModal || addStopGroupId) return []
     return filterStandsForSuggest(standRows, addStopPosition)
-  }, [routeStopModal, standRows, addStopPosition])
+  }, [routeStopModal, standRows, addStopPosition, addStopGroupId])
 
   const editStopSegmentIndex =
     routeStopModal?.mode === 'edit' && draftDestinations
@@ -1547,6 +1656,52 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const forceReleaseStandRefForConfirm =
     (continueBlockedStandRef ?? nextContinueOccupiedCheckRef)?.trim() || null
 
+  const missionRecordPk = record ? String(record.id ?? '').trim() : ''
+  const isQueuedMission = Number(record?.queued) === 1
+  const queuedDestRef =
+    typeof record?.queued_destination_ref === 'string' ? record.queued_destination_ref.trim() : ''
+  const queuedAtIso = typeof record?.queued_at === 'string' ? record.queued_at.trim() : ''
+  const presenceWarnIso =
+    typeof record?.presence_warning_at === 'string' ? record.presence_warning_at.trim() : ''
+  const presenceDestRef =
+    typeof record?.presence_dest_ref === 'string' ? record.presence_dest_ref.trim() : ''
+
+  const routeNextLegQueued = missionOverviewOrDetailQueuedHue({
+    flat: record,
+    session: msData?.session ? (msData.session as Record<string, unknown>) : null,
+  })
+
+  const onConfirmQueuedMissionForce = async () => {
+    if (!missionRecordPk) return
+    setQueuedMissionForceOpen(false)
+    setQueuedMissionForceBusy(true)
+    setMsErr(null)
+    try {
+      await forceReleaseMission(missionRecordPk)
+      setMsRefresh((n) => n + 1)
+      onSessionUpdated?.()
+    } catch (e: unknown) {
+      setMsErr(getApiErrorMessage(e, 'Force dispatch failed'))
+    } finally {
+      setQueuedMissionForceBusy(false)
+    }
+  }
+
+  const onAckPresenceWarning = async () => {
+    if (!missionRecordPk) return
+    setAckPresenceBusy(true)
+    setMsErr(null)
+    try {
+      await ackPresenceWarning(missionRecordPk)
+      setMsRefresh((n) => n + 1)
+      onSessionUpdated?.()
+    } catch (e: unknown) {
+      setMsErr(getApiErrorMessage(e, 'Could not acknowledge warning'))
+    } finally {
+      setAckPresenceBusy(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
@@ -1557,6 +1712,27 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        <ConfirmModal
+          open={queuedMissionForceOpen}
+          title="Force dispatch queued mission"
+          variant="amber"
+          message={
+            queuedDestRef ? (
+              <span>
+                Dispatch <span className="font-mono">{missionRecordPk}</span> to fleet now, even if stand{' '}
+                <span className="font-mono">{queuedDestRef}</span> still appears occupied?
+              </span>
+            ) : (
+              `Dispatch mission ${missionRecordPk} now without waiting for queue policy? Only if the destination is safe.`
+            )
+          }
+          confirmLabel={queuedMissionForceBusy ? 'Dispatching…' : 'Force dispatch'}
+          cancelLabel="Cancel"
+          onCancel={() => {
+            if (!queuedMissionForceBusy) setQueuedMissionForceOpen(false)
+          }}
+          onConfirm={() => void onConfirmQueuedMissionForce()}
+        />
         <ConfirmModal
           open={forceReleaseConfirmOpen}
           title="Force release"
@@ -1651,6 +1827,53 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 </span>
               ) : null}
             </div>
+            {isQueuedMission && missionRecordPk ? (
+              <div
+                className={`mt-3 rounded-lg px-3 py-2.5 text-sm leading-snug text-foreground ${MISSION_QUEUED_CALLOUT_CLASS}`}
+              >
+                <p className="text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
+                  Queued for destination
+                </p>
+                <p className="mt-1 break-all font-mono text-xs">{queuedDestRef || '—'}</p>
+                {queuedAtIso ? (
+                  <p className="mt-1 text-xs text-foreground/65">Queued since {formatDateTime(queuedAtIso)}</p>
+                ) : null}
+                {canForceRelease ? (
+                  <button
+                    type="button"
+                    disabled={queuedMissionForceBusy}
+                    className="mt-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-950 hover:bg-amber-500/16 disabled:opacity-50 dark:text-amber-100"
+                    onClick={() => setQueuedMissionForceOpen(true)}
+                  >
+                    Force dispatch…
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {presenceWarnIso && missionRecordPk ? (
+              <div className="mt-3 rounded-lg border border-amber-500/35 bg-amber-500/8 px-3 py-2.5 text-sm leading-snug text-foreground">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-amber-950 dark:text-amber-100">
+                  Drop presence warning
+                </p>
+                <p className="mt-1 text-xs text-foreground/80">
+                  Hyperion still reports a pallet at{' '}
+                  {presenceDestRef ? <span className="font-mono">{presenceDestRef}</span> : 'the drop stand'} after the
+                  post-drop check window (warned at {formatDateTime(presenceWarnIso)}).
+                </p>
+                {canForceRelease ? (
+                  <button
+                    type="button"
+                    disabled={ackPresenceBusy}
+                    className="mt-2 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+                    onClick={() => void onAckPresenceWarning()}
+                  >
+                    {ackPresenceBusy ? 'Acknowledging…' : 'Acknowledge (clear warning)'}
+                  </button>
+                ) : (
+                  <p className="mt-2 text-xs text-foreground/55">Operators with mission force-release permission can acknowledge.</p>
+                )}
+              </div>
+            ) : null}
             <div className="mt-4 grid gap-3 border-t border-border/70 pt-3 sm:grid-cols-2">
               <div className="min-w-0">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-foreground/50">Container</p>
@@ -1876,7 +2099,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                         .sort((a, b) => msStepIndex(a) - msStepIndex(b))
                         .map((rec) => {
                           const si = msStepIndex(rec)
-                          const { start, end } = segmentLegEndpoints(si, planPlainForLegLabels, pickupPos)
+                          const { start, end } = segmentLegEndpoints(
+                            si,
+                            planPlainForLegLabels,
+                            pickupPos,
+                            standGroupNameById
+                          )
                           const completedDepart =
                             draftSegFirstPutDown.length > si ? draftSegFirstPutDown[si] === true : false
                           const completedArriveLower =
@@ -2070,7 +2298,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                               const { start: legStart, end: legEnd } = segmentLegEndpoints(
                                 si,
                                 planPlainForLegLabels,
-                                pickupPos
+                                pickupPos,
+                                standGroupNameById
                               )
                               return (
                                 <SortableTailDestCard
@@ -2086,6 +2315,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                   legStart={legStart}
                                   legEnd={legEnd}
                                   warnDestinationOccupied={awaitingContinue && i === 0}
+                                  highlightQueued={routeNextLegQueued && awaitingContinue && i === 0}
                                   departPutDown={draftSegFirstPutDown[si] === true}
                                   standPresence={routeStandPresenceUi}
                                   legToolbar={
@@ -2161,6 +2391,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               <DetailRow label="Container">
                 {containerDisplayPrimary ? <span className="font-mono">{containerDisplayPrimary}</span> : '—'}
               </DetailRow>
+              <DetailRow label={robotPrimaryHeading}>
+                {robotDisplayPrimary ? <span className="font-mono">{robotDisplayPrimary}</span> : '—'}
+              </DetailRow>
               <DetailRow label="Final stand">{String(record.final_position ?? '—')}</DetailRow>
               <DetailRow label="Tracking">{trackingFriendly(record.worker_closed)}</DetailRow>
               <DetailRow label="Fleet complete">
@@ -2212,10 +2445,18 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           mode={routeStopStandPickerMode}
           zoneCategories={zoneCategories}
           canOverride={canOverrideSpecial}
+          allowGroups
           onClose={() => setAddStopPickerOpen(false)}
           onSelect={(externalRef, opts) => {
             if (opts.override) setOverrideSpecialLocations(true)
-            setAddStopPosition(externalRef)
+            const pickGid = opts.groupId?.trim()
+            if (pickGid) {
+              setAddStopGroupId(pickGid)
+              setAddStopPosition('')
+            } else {
+              setAddStopGroupId(null)
+              setAddStopPosition(externalRef)
+            }
             setAddStopPickerOpen(false)
           }}
         />
@@ -2255,7 +2496,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 Location (External Ref)
               </label>
               <div className="mt-1 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-x-4 lg:gap-y-2">
-                <div className="flex min-h-[40px] min-w-0 w-full items-stretch gap-2 lg:col-start-1 lg:row-start-1">
+                    <div className="flex min-h-[40px] min-w-0 w-full items-stretch gap-2 lg:col-start-1 lg:row-start-1">
                   <div className="relative min-w-0 flex-1">
                     <div className="flex min-h-[40px] items-stretch overflow-hidden rounded-lg border border-border bg-background focus-within:ring-2 focus-within:ring-ring">
                       <input
@@ -2263,11 +2504,22 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                         autoComplete="off"
                         spellCheck={false}
                         enterKeyHint="done"
+                        readOnly={Boolean(addStopGroupId)}
                         title="Scan or pick a stand External Ref (keyboard / barcode)"
                         className="min-h-[40px] min-w-0 flex-1 border-0 bg-transparent py-2 pl-3 font-mono text-base outline-none ring-0 transition-[color,box-shadow] placeholder:text-foreground/45 focus:ring-0 md:text-sm"
-                        value={addStopPosition}
+                        value={
+                          addStopGroupId
+                            ? `Group: ${standGroupNameById[addStopGroupId] ?? addStopGroupId}`
+                            : addStopPosition
+                        }
                         onChange={(e) => {
-                          setAddStopPosition(e.target.value)
+                          const v = e.target.value
+                          if (addStopGroupId) {
+                            setAddStopGroupId(null)
+                            setAddStopPosition(v)
+                          } else {
+                            setAddStopPosition(v)
+                          }
                           setAddStopErr(null)
                         }}
                         onFocus={() => {
@@ -2275,6 +2527,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                           setAddStopSuggestOpen(true)
                         }}
                         onBlur={() => {
+                          if (addStopGroupId) {
+                            scheduleAddStopSuggestClose()
+                            return
+                          }
                           const n = normalizeExternalRefFromStands(standRows, addStopPosition)
                           if (n !== addStopPosition) setAddStopPosition(n)
                           scheduleAddStopSuggestClose()
@@ -2293,7 +2549,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                         }}
                         placeholder="Scan or type External Ref…"
                       />
-                      {addStopPosition.trim() ? (
+                      {addStopPosition.trim() || addStopGroupId ? (
                         <button
                           type="button"
                           tabIndex={-1}
@@ -2303,6 +2559,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                           onMouseDown={(e) => {
                             e.preventDefault()
                             setAddStopPosition('')
+                            setAddStopGroupId(null)
                             cancelAddStopSuggestClose()
                             setAddStopSuggestOpen(false)
                           }}
@@ -2342,6 +2599,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                 className="w-full px-3 py-2 text-left font-mono text-sm font-medium hover:bg-muted"
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => {
+                                  setAddStopGroupId(null)
                                   setAddStopPosition(s.external_ref)
                                   cancelAddStopSuggestClose()
                                   setAddStopSuggestOpen(false)
@@ -2452,6 +2710,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 </div>
               </div>
               {(() => {
+                if (addStopGroupId && !addStopPosition.trim()) return null
                 const status = legRestrictionStatus(
                   standRows,
                   addStopPosition,

@@ -3,15 +3,41 @@ import { v4 as uuidv4 } from 'uuid'
 import type { AmrFleetSettings } from '@/api/amr'
 
 import { genDcaCode } from '@/utils/amrDcaCode'
+import { isActiveRobotFleetStatus } from '@/utils/amrRobotStatus'
+
+/**
+ * Mirrors `resolveActiveUnlockedRobotIds` in `server/lib/amrRobots.ts` using the browser's last robotQuery snapshot.
+ */
+function previewActiveUnlockedIdsFromFleetRows(
+  fleetRows: ReadonlyArray<Record<string, unknown>>,
+  lockedSet: Set<string>
+): string[] {
+  const seen = new Set<string>()
+  for (const row of fleetRows) {
+    if (!row || typeof row !== 'object') continue
+    const o = row as Record<string, unknown>
+    const rid = String(o.robotId ?? o.robot_id ?? '').trim()
+    if (!rid) continue
+    if (!isActiveRobotFleetStatus(o.status)) continue
+    if (lockedSet.has(rid)) continue
+    seen.add(rid)
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
+}
 
 /**
  * Mirrors `resolveSubmitRobotIds` in `server/lib/amrRobots.ts` for preview-side parity with the wire payload.
  * Returns `null` when the locked-out condition would 409 the create.
+ *
+ * When robots are locked and the client omitted `robotIds`, the server uses `resolveActiveUnlockedRobotIds` (live fleet),
+ * not `robotIdsDefault`. Pass {@link fleetRobotSnapshot} from the same `robotQuery` the UI already loaded so preview
+ * matches. If the snapshot is still empty (fleet not fetched yet), we fall back to default ids minus locks.
  */
 function previewResolveSubmitRobotIds(
   settings: AmrFleetSettings,
   clientPick: unknown,
-  lockedIds: ReadonlyArray<string> | undefined
+  lockedIds: ReadonlyArray<string> | undefined,
+  fleetRobotSnapshot?: ReadonlyArray<Record<string, unknown>>
 ): string[] | null {
   const lockedSet = new Set((lockedIds ?? []).filter((x): x is string => typeof x === 'string' && x.trim() !== ''))
   const pickArray = Array.isArray(clientPick)
@@ -20,8 +46,15 @@ function previewResolveSubmitRobotIds(
   if (lockedSet.size === 0) {
     return pickArray ?? settings.robotIdsDefault
   }
-  /** Preview cannot reach the live fleet — when `clientPick` is empty we fall back to `robotIdsDefault` minus locks. */
-  const base = pickArray ?? settings.robotIdsDefault
+  if (pickArray) {
+    const out = pickArray.filter((id) => !lockedSet.has(id))
+    return out.length === 0 ? null : out
+  }
+  if (fleetRobotSnapshot !== undefined && fleetRobotSnapshot.length > 0) {
+    const live = previewActiveUnlockedIdsFromFleetRows(fleetRobotSnapshot, lockedSet)
+    return live.length === 0 ? null : live
+  }
+  const base = settings.robotIdsDefault
   const out = base.filter((id) => !lockedSet.has(id))
   return out.length === 0 ? null : out
 }
@@ -72,11 +105,15 @@ export type RackMoveFleetPreviewResult =
  * `lockedIds` (optional): mirrors the server lock filter so the preview matches the wire payload —
  * locked robots are dropped from the resolved `robotIds` list. When all candidates would be locked,
  * returns the same `NO_UNLOCKED_ROBOTS` 409 the server would emit.
+ *
+ * `fleetRobotSnapshot` (optional): `robotQuery` rows from the client; when robots are locked and `body.robotIds` is
+ * empty, resolves ids the same way the server does (active + unlocked from fleet), instead of only `robotIdsDefault`.
  */
 export function buildRackMoveFleetForwardPreview(
   settings: AmrFleetSettings,
   body: Record<string, unknown>,
-  lockedIds?: ReadonlyArray<string>
+  lockedIds?: ReadonlyArray<string>,
+  fleetRobotSnapshot?: ReadonlyArray<Record<string, unknown>>
 ): RackMoveFleetPreviewResult {
   const missionData = body.missionData
   if (!Array.isArray(missionData) || missionData.length === 0) {
@@ -119,7 +156,7 @@ export function buildRackMoveFleetForwardPreview(
     isNew: true,
   }
 
-  const resolvedRobotIds = previewResolveSubmitRobotIds(settings, body.robotIds, lockedIds)
+  const resolvedRobotIds = previewResolveSubmitRobotIds(settings, body.robotIds, lockedIds, fleetRobotSnapshot)
   if (resolvedRobotIds === null) {
     return {
       ok: false,
@@ -250,9 +287,19 @@ export function buildMultistopFleetTimeline(
     robotIds?: string[]
     /** Same intersect/active-unlocked rule the server applies — see `resolveSubmitRobotIds`. */
     lockedIds?: ReadonlyArray<string>
+    /** Same as `buildRackMoveFleetForwardPreview` — parity when locks exist and caller omits `robotIds`. */
+    fleetRobotSnapshot?: ReadonlyArray<Record<string, unknown>>
   }
 ): MultistopFleetTimelineResult {
-  const { pickupPosition, destinations, persistent, robotIds, segmentFirstNodePutDown, lockedIds } = args
+  const {
+    pickupPosition,
+    destinations,
+    persistent,
+    robotIds,
+    segmentFirstNodePutDown,
+    lockedIds,
+    fleetRobotSnapshot,
+  } = args
   if (destinations.length < 2) {
     return { ok: false, error: 'Add Stop needs at least two destinations (three or more stops).' }
   }
@@ -263,7 +310,7 @@ export function buildMultistopFleetTimeline(
   }
 
   const previewClientPick = Array.isArray(robotIds) && robotIds.length > 0 ? robotIds : null
-  const resolved = previewResolveSubmitRobotIds(settings, previewClientPick, lockedIds)
+  const resolved = previewResolveSubmitRobotIds(settings, previewClientPick, lockedIds, fleetRobotSnapshot)
   if (resolved === null) {
     return {
       ok: false,

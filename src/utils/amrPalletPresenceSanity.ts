@@ -36,23 +36,21 @@ export function sessionNextSegmentIndex(session: Record<string, unknown>): numbe
   return Number.isFinite(n) ? Math.floor(n) : NaN
 }
 
-/**
- * Destination external ref that must be empty before continuing, using the same rules as fleet `submitMission`
- * (`buildSegmentMissionData`: final segment always drops).
- * Segment 0 is skipped — first-leg destination is covered at mission create when the setting is enabled.
- */
-/** Blocker when stand presence indicates the next drop destination is occupied. */
+/** Copy for stand-occupied Continue / release errors. */
 export function multistopStandOccupiedContinueMessage(destinationRef: string): string {
   const ref = destinationRef.trim()
   return ref ? `Pallet present on stand ${ref}. Unable to dispatch.` : `Pallet present on stand. Unable to dispatch.`
 }
 
+/**
+ * Next segment’s drop destination external ref (if any), aligned with server `multistopSegmentDropDestinationRef` /
+ * `buildSegmentMissionData` (final segment always drops; intermediates only when `putDown` is true).
+ */
 export function multistopContinueOccupiedDestinationRef(
   plan: MultistopReleasePlanDest[],
   nextSeg: number
 ): string | null {
   if (!plan.length || !Number.isFinite(nextSeg) || nextSeg < 0 || nextSeg >= plan.length) return null
-  if (nextSeg === 0) return null
   const dest = plan[nextSeg]
   const isFinal = nextSeg === plan.length - 1
   const movingPalletToDestination = isFinal || dest.putDown === true

@@ -38,6 +38,8 @@ import {
   continueNotBeforeForAwaitingSession,
   multistopPlanFromTemplateLegs,
   multistopPlanToStandLegPairs,
+  multistopSegmentDropDestinationRef,
+  multistopSegmentDropGate,
   normalizeDestinationInput,
   normalizePickupContinueInput,
   parseMultistopPlan,
@@ -45,10 +47,24 @@ import {
   type MultistopPlan,
 } from '../lib/amrMultistop.js'
 import {
+  parseStandGroupSentinelPosition,
+  resolveGroupDestination,
+  standGroupSentinelPosition,
+  standGroupZoneKey,
+} from '../lib/amrStandGroups.js'
+import { removeStandGroupFromZoneCategories, syncStandGroupIntoZoneCategories } from '../lib/amrStandGroupZoneSync.js'
+import {
   executeMultistopContinue,
   multistopSegmentMissionCode,
   resolveMultistopBaseMissionCode,
 } from '../lib/amrMultistopContinue.js'
+import {
+  activeReservationCount,
+  getStandQueuePolicy,
+  isStandAvailableForDrop,
+  releaseReservationsForRecord,
+  reserveStandForRecord,
+} from '../lib/amrStandAvailability.js'
 import { rescheduleAmrMissionWorker } from '../lib/amrMissionWorker.js'
 import {
   validateMissionTemplatePayload,
@@ -61,6 +77,7 @@ function jsonMissionTemplatePayload(p: AmrMissionTemplatePayloadV1): string {
 }
 
 const router = Router()
+const QUEUED_STATUS_CODE = 92
 
 const FLEET_MUTATION_OPS = new Set([
   'submitMission',
@@ -120,6 +137,149 @@ async function standIdWithDwgRef(dwg: string | null, excludeId?: string): Promis
         | undefined)
     : ((await db.prepare('SELECT id FROM amr_stands WHERE dwg_ref = ?').get(dwg)) as { id: string } | undefined)
   return row?.id
+}
+
+async function destinationAvailableForDispatch(
+  destinationRef: string,
+  userId: string
+): Promise<{ available: boolean; standKnown: boolean; palletPresent: boolean }> {
+  const ref = destinationRef.trim()
+  if (!ref) return { available: true, standKnown: false, palletPresent: false }
+  const policy = await getStandQueuePolicy(db, ref)
+  if (!policy) return { available: true, standKnown: false, palletPresent: false }
+  let palletPresent = false
+  if (!policy.bypassPalletCheck) {
+    const hcfg = await getAmrHyperionConfig(db)
+    if (!hyperionConfigured(hcfg)) {
+      return { available: true, standKnown: true, palletPresent: false }
+    }
+    const pr = await fetchStandPresenceFromHyperion(hcfg, [ref], {
+      db,
+      source: 'mission-queue-presence',
+      userId,
+    })
+    if (!pr.ok) {
+      // Non-blocking for create; queue gate treats unknown as available to preserve existing behavior.
+      return { available: true, standKnown: true, palletPresent: false }
+    }
+    palletPresent = pr.presence[ref] === true
+  }
+  const reservations = await activeReservationCount(db, ref)
+  const available = isStandAvailableForDrop({
+    palletPresent,
+    policy,
+    activeReservations: reservations,
+  })
+  return { available, standKnown: true, palletPresent }
+}
+
+async function dispatchQueuedMissionRecordById(
+  missionRecordId: string,
+  userId: string | null
+): Promise<
+  | { ok: true; fleetSubmit: unknown }
+  | { ok: false; status: number; error: string; detail?: unknown; code?: string }
+> {
+  const id = missionRecordId.trim()
+  if (!id) return { ok: false, status: 400, error: 'missionRecordId required' }
+  const row = (await db.prepare('SELECT * FROM amr_mission_records WHERE id = ?').get(id)) as
+    | Record<string, unknown>
+    | undefined
+  if (!row) return { ok: false, status: 404, error: 'Mission not found' }
+  if (Number(row.queued ?? 0) !== 1) return { ok: false, status: 409, error: 'Mission is not queued' }
+  const submitRaw = typeof row.submit_payload_json === 'string' ? row.submit_payload_json.trim() : ''
+  if (!submitRaw) return { ok: false, status: 500, error: 'Queued mission is missing submit payload' }
+  let submitPayload: unknown
+  try {
+    submitPayload = JSON.parse(submitRaw)
+  } catch {
+    return { ok: false, status: 500, error: 'Queued submit payload is invalid JSON' }
+  }
+  const queuedGroupId = typeof row.queued_group_id === 'string' ? row.queued_group_id.trim() : ''
+  if (queuedGroupId) {
+    const hcfg = await getAmrHyperionConfig(db)
+    const rr = await resolveGroupDestination({
+      db,
+      hcfg,
+      groupId: queuedGroupId,
+      userId: userId ?? undefined,
+      source: 'mission-force-release-group',
+    })
+    if (!rr.ok) {
+      if (rr.reason === 'all_occupied' || rr.reason === 'empty_group') {
+        return { ok: false, status: 409, error: 'No stand available in the queued group.', code: 'GROUP_ALL_OCCUPIED' }
+      }
+      return {
+        ok: false,
+        status: 503,
+        error: rr.message ?? 'Could not resolve stand group.',
+      }
+    }
+    const sp = submitPayload as Record<string, unknown>
+    const md = sp.missionData
+    if (Array.isArray(md) && md.length >= 2) {
+      const last = md[md.length - 1] as Record<string, unknown>
+      last.position = rr.externalRef
+    }
+    submitPayload = sp
+  }
+  const cfg = await getAmrFleetConfig(db)
+  const ciRaw = typeof row.container_in_payload_json === 'string' ? row.container_in_payload_json.trim() : ''
+  if (ciRaw) {
+    let ciPayload: unknown
+    try {
+      ciPayload = JSON.parse(ciRaw)
+    } catch {
+      return { ok: false, status: 500, error: 'Queued containerIn payload is invalid JSON' }
+    }
+    const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
+      db,
+      source: 'mission-force-release',
+      missionRecordId: id,
+      userId: userId ?? undefined,
+    })
+    if (!ci.ok) return { ok: false, status: ci.status, error: 'Fleet containerIn failed', detail: ci.json }
+    if (!fleetJsonIndicatesSuccess(ci.json)) {
+      return { ok: false, status: 400, error: 'containerIn was rejected by the fleet.', detail: ci.json }
+    }
+    await db
+      .prepare(`UPDATE amr_mission_records SET container_in_payload_json = NULL, updated_at = ? WHERE id = ?`)
+      .run(nowTs(), id)
+  }
+  const sm = await forwardAmrFleetRequest(cfg, 'submitMission', submitPayload, {
+    db,
+    source: 'mission-force-release',
+    missionRecordId: id,
+    userId: userId ?? undefined,
+  })
+  if (!sm.ok) return { ok: false, status: sm.status, error: 'Fleet submitMission failed', detail: sm.json }
+  if (!fleetJsonIndicatesSuccess(sm.json)) {
+    return { ok: false, status: 400, error: 'submitMission was rejected by the fleet.', detail: sm.json }
+  }
+  let destinationRef = typeof row.queued_destination_ref === 'string' ? row.queued_destination_ref.trim() : ''
+  if (queuedGroupId) {
+    const md = (submitPayload as Record<string, unknown>).missionData
+    if (Array.isArray(md) && md.length >= 2) {
+      const pos = (md[md.length - 1] as { position?: unknown }).position
+      if (typeof pos === 'string' && pos.trim()) destinationRef = pos.trim()
+    }
+  }
+  await db
+    .prepare(
+      `UPDATE amr_mission_records
+       SET queued = 0, queued_destination_ref = NULL, queued_group_id = NULL, queued_at = NULL, submit_payload_json = NULL, last_status = NULL, updated_at = ?
+       WHERE id = ?`
+    )
+    .run(nowTs(), id)
+  if (destinationRef) {
+    await reserveStandForRecord(db, destinationRef, id, {
+      multistopSessionId:
+        typeof row.multistop_session_id === 'string' ? row.multistop_session_id : null,
+      multistopStepIndex:
+        typeof row.multistop_step_index === 'number' ? row.multistop_step_index : null,
+    })
+  }
+  return { ok: true, fleetSubmit: sm.json }
 }
 
 type StandLegToValidate = { position: string; putDown: boolean }
@@ -215,6 +375,9 @@ router.put(
     }
     if (typeof body.missionCreateStandPresenceSanityCheck === 'boolean')
       patch.missionCreateStandPresenceSanityCheck = body.missionCreateStandPresenceSanityCheck
+    if (typeof body.missionQueueingEnabled === 'boolean') patch.missionQueueingEnabled = body.missionQueueingEnabled
+    if (typeof body.palletDropConfirmTimeoutMs === 'number')
+      patch.palletDropConfirmTimeoutMs = body.palletDropConfirmTimeoutMs
     if ('zoneCategories' in body) {
       patch.zoneCategories = normalizeZoneCategories(body.zoneCategories)
     }
@@ -455,6 +618,184 @@ router.post(
 )
 
 router.get(
+  '/dc/stand-groups',
+  authMiddleware,
+  requirePermission('module.amr'),
+  asyncRoute(async (_req, res) => {
+    const groups = (await db
+      .prepare('SELECT * FROM amr_stand_groups ORDER BY sort_order ASC, LOWER(name) ASC')
+      .all()) as Record<string, unknown>[]
+    const memberRows = (await db
+      .prepare(
+        `SELECT m.group_id AS group_id, m.stand_id AS stand_id, m.position AS sort_position, s.external_ref AS external_ref
+         FROM amr_stand_group_members m
+         JOIN amr_stands s ON s.id = m.stand_id
+         ORDER BY m.group_id, m.position ASC, s.external_ref ASC`
+      )
+      .all()) as Array<{
+      group_id: string
+      stand_id: string
+      sort_position: number
+      external_ref: string
+    }>
+    const byGroup = new Map<string, Array<{ standId: string; externalRef: string; position: number }>>()
+    for (const m of memberRows) {
+      const gid = String(m.group_id ?? '')
+      if (!byGroup.has(gid)) byGroup.set(gid, [])
+      byGroup.get(gid)!.push({
+        standId: m.stand_id,
+        externalRef: m.external_ref,
+        position: Number(m.sort_position) || 0,
+      })
+    }
+    res.json({
+      groups: groups.map((g) => ({
+        ...g,
+        members: byGroup.get(String(g.id ?? '')) ?? [],
+      })),
+    })
+  })
+)
+
+router.post(
+  '/dc/stand-groups',
+  authMiddleware,
+  requirePermission('amr.stands.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const b = req.body as Record<string, unknown>
+    const name = typeof b.name === 'string' ? b.name.trim() : ''
+    if (!name) {
+      res.status(400).json({ error: 'name required' })
+      return
+    }
+    const dup = (await db.prepare('SELECT id FROM amr_stand_groups WHERE LOWER(TRIM(name)) = LOWER(?)').get(name)) as
+      | { id: string }
+      | undefined
+    if (dup?.id) {
+      res.status(400).json({ error: 'A stand group with this name already exists.' })
+      return
+    }
+    const id = uuidv4()
+    const zone = standGroupZoneKey(id)
+    const ts = nowTs()
+    const sortRaw = Number(b.sort_order)
+    const sort_order = Number.isFinite(sortRaw) ? Math.floor(sortRaw) : 0
+    await db
+      .prepare(
+        `INSERT INTO amr_stand_groups (id, name, zone, enabled, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, 1, ?, ?, ?)`
+      )
+      .run(id, name, zone, sort_order, ts, ts)
+    const rawIds = b.memberStandIds ?? b.member_stand_ids
+    const standIds = Array.isArray(rawIds)
+      ? rawIds.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+      : []
+    let pos = 0
+    for (const sid of standIds) {
+      const exists = (await db.prepare('SELECT id FROM amr_stands WHERE id = ?').get(sid)) as { id?: string } | undefined
+      if (!exists?.id) continue
+      await db
+        .prepare(
+          `INSERT INTO amr_stand_group_members (group_id, stand_id, position, created_at) VALUES (?, ?, ?, ?)`
+        )
+        .run(id, sid, pos, ts)
+      pos += 1
+    }
+    await syncStandGroupIntoZoneCategories(db, id)
+    rescheduleAmrMissionWorker()
+    const row = (await db.prepare('SELECT * FROM amr_stand_groups WHERE id = ?').get(id)) as Record<string, unknown>
+    res.status(201).json({ group: row })
+  })
+)
+
+router.patch(
+  '/dc/stand-groups/:id',
+  authMiddleware,
+  requirePermission('amr.stands.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+    if (!id) {
+      res.status(400).json({ error: 'id required' })
+      return
+    }
+    const existing = (await db.prepare('SELECT * FROM amr_stand_groups WHERE id = ?').get(id)) as
+      | Record<string, unknown>
+      | undefined
+    if (!existing) {
+      res.status(404).json({ error: 'Stand group not found' })
+      return
+    }
+    const b = req.body as Record<string, unknown>
+    const ts = nowTs()
+    if (typeof b.name === 'string') {
+      const name = b.name.trim()
+      if (!name) {
+        res.status(400).json({ error: 'name cannot be empty' })
+        return
+      }
+      const dup = (await db
+        .prepare('SELECT id FROM amr_stand_groups WHERE LOWER(TRIM(name)) = LOWER(?) AND id != ?')
+        .get(name, id)) as { id: string } | undefined
+      if (dup?.id) {
+        res.status(400).json({ error: 'A stand group with this name already exists.' })
+        return
+      }
+      await db.prepare(`UPDATE amr_stand_groups SET name = ?, updated_at = ? WHERE id = ?`).run(name, ts, id)
+    }
+    if (typeof b.enabled === 'boolean') {
+      await db
+        .prepare(`UPDATE amr_stand_groups SET enabled = ?, updated_at = ? WHERE id = ?`)
+        .run(b.enabled ? 1 : 0, ts, id)
+    }
+    if (typeof b.sort_order === 'number' && Number.isFinite(b.sort_order)) {
+      await db
+        .prepare(`UPDATE amr_stand_groups SET sort_order = ?, updated_at = ? WHERE id = ?`)
+        .run(Math.floor(b.sort_order), ts, id)
+    }
+    const rawIds = b.memberStandIds ?? b.member_stand_ids
+    if (Array.isArray(rawIds)) {
+      const standIds = rawIds.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+      await db.prepare(`DELETE FROM amr_stand_group_members WHERE group_id = ?`).run(id)
+      let pos = 0
+      for (const sid of standIds) {
+        const exists = (await db.prepare('SELECT id FROM amr_stands WHERE id = ?').get(sid)) as { id?: string } | undefined
+        if (!exists?.id) continue
+        await db
+          .prepare(
+            `INSERT INTO amr_stand_group_members (group_id, stand_id, position, created_at) VALUES (?, ?, ?, ?)`
+          )
+          .run(id, sid, pos, ts)
+        pos += 1
+      }
+    }
+    const row = (await db.prepare('SELECT * FROM amr_stand_groups WHERE id = ?').get(id)) as Record<string, unknown>
+    rescheduleAmrMissionWorker()
+    res.json({ group: row })
+  })
+)
+
+router.delete(
+  '/dc/stand-groups/:id',
+  authMiddleware,
+  requirePermission('amr.stands.manage'),
+  asyncRoute(async (req, res) => {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+    if (!id) {
+      res.status(400).json({ error: 'id required' })
+      return
+    }
+    await removeStandGroupFromZoneCategories(db, id)
+    const r = await db.prepare(`DELETE FROM amr_stand_groups WHERE id = ?`).run(id)
+    if (r.changes === 0) {
+      res.status(404).json({ error: 'Stand group not found' })
+      return
+    }
+    rescheduleAmrMissionWorker()
+    res.status(204).end()
+  })
+)
+
+router.get(
   '/dc/stands',
   authMiddleware,
   requirePermission('module.amr'),
@@ -490,6 +831,8 @@ router.post(
     const block_pickup = coerceBoolFlag(b.block_pickup, 0)
     const block_dropoff = coerceBoolFlag(b.block_dropoff, 0)
     const bypass_pallet_check = coerceBoolFlag(b.bypass_pallet_check, 0)
+    const active_missions_raw = Number(b.active_missions)
+    const active_missions = Number.isFinite(active_missions_raw) && active_missions_raw >= 1 ? Math.floor(active_missions_raw) : 1
     const ts = nowTs()
 
     if (await standIdWithExternalRef(external_ref)) {
@@ -507,8 +850,8 @@ router.post(
 
     await db
       .prepare(
-        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, active_missions, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -523,6 +866,7 @@ router.post(
         block_pickup,
         block_dropoff,
         bypass_pallet_check,
+        active_missions,
         ts,
         ts
       )
@@ -579,6 +923,15 @@ router.patch(
       'bypass_pallet_check' in b
         ? coerceBoolFlag(b.bypass_pallet_check, 0)
         : (Number(existing.bypass_pallet_check ?? 0) ? 1 : 0)
+    const active_missions = (() => {
+      if ('active_missions' in b) {
+        const n = Number(b.active_missions)
+        if (Number.isFinite(n) && n >= 1) return Math.floor(n)
+        return 1
+      }
+      const n = Number(existing.active_missions ?? 1)
+      return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1
+    })()
 
     const conflictLoc = await standIdWithExternalRef(external_ref, id)
     if (conflictLoc) {
@@ -596,7 +949,7 @@ router.patch(
 
     await db
       .prepare(
-        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, updated_at = ? WHERE id = ?`
+        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, active_missions = ?, updated_at = ? WHERE id = ?`
       )
       .run(
         zone,
@@ -610,6 +963,7 @@ router.patch(
         block_pickup,
         block_dropoff,
         bypass_pallet_check,
+        active_missions,
         nowTs(),
         id
       )
@@ -729,6 +1083,14 @@ router.post(
       const block_pickup = coerceBoolFlag(blockPickupRaw, 0)
       const block_dropoff = coerceBoolFlag(blockDropoffRaw, 0)
       const bypass_pallet_check = coerceBoolFlag(bypassPalletRaw, 0)
+      const activeMissionsRaw =
+        row.active_missions ??
+        row['Active Missions'] ??
+        row.activeMissions ??
+        row['active missions']
+      const active_missions_num = Number(activeMissionsRaw)
+      const active_missions =
+        Number.isFinite(active_missions_num) && active_missions_num >= 1 ? Math.floor(active_missions_num) : 1
 
       if (dwgNorm) {
         const winnerDwgLine = firstCsvLineForDwg.get(dwgNorm)
@@ -757,7 +1119,7 @@ router.post(
           }
           await db
             .prepare(
-              `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, updated_at = ? WHERE id = ?`
+              `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, active_missions = ?, updated_at = ? WHERE id = ?`
             )
             .run(
               zone,
@@ -770,6 +1132,7 @@ router.post(
               block_pickup,
               block_dropoff,
               bypass_pallet_check,
+              active_missions,
               ts,
               existing.id
             )
@@ -785,8 +1148,8 @@ router.post(
           const id = uuidv4()
           await db
             .prepare(
-              `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, active_missions, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             )
             .run(
               id,
@@ -801,6 +1164,7 @@ router.post(
               block_pickup,
               block_dropoff,
               bypass_pallet_check,
+              active_missions,
               ts,
               ts
             )
@@ -830,7 +1194,10 @@ router.get(
         `SELECT r.*, u.username AS created_by_username,
                 ms.status AS multistop_session_status,
                 ms.next_segment_index AS multistop_next_segment_index,
-                ms.locked_robot_id AS session_locked_robot_id
+                ms.locked_robot_id AS session_locked_robot_id,
+                ms.queue_blocked_until,
+                ms.queue_blocked_group_id,
+                ms.container_in_payload_json
          FROM amr_mission_records r
          LEFT JOIN users u ON u.id = r.created_by
          LEFT JOIN amr_multistop_sessions ms ON ms.id = r.multistop_session_id
@@ -862,7 +1229,12 @@ router.get(
         created_by: ms.created_by ?? null,
         mission_type: 'RACK_MOVE',
         mission_payload_json: JSON.stringify({ deferredFirstSegment: true }),
-        last_status: null,
+        last_status:
+          ms.queue_blocked_until != null ||
+          ms.container_in_payload_json != null ||
+          ms.queue_blocked_group_id != null
+            ? QUEUED_STATUS_CODE
+            : null,
         worker_closed: 0,
         finalized: 0,
         persistent_container: ms.persistent_container ?? 0,
@@ -879,6 +1251,12 @@ router.get(
           typeof ms.locked_robot_id === 'string' && ms.locked_robot_id.trim()
             ? String(ms.locked_robot_id).trim()
             : null,
+        /** Mirrors JOIN columns on real rows so list rollup stays “Queued”, not degraded to awaiting-release. */
+        queue_blocked_until: ms.queue_blocked_until != null ? String(ms.queue_blocked_until) : null,
+        queue_blocked_group_id:
+          ms.queue_blocked_group_id != null ? String(ms.queue_blocked_group_id) : null,
+        container_in_payload_json:
+          typeof ms.container_in_payload_json === 'string' ? ms.container_in_payload_json : null,
       })
     }
     const merged = [...rows, ...synthetic].sort((a, b) =>
@@ -997,6 +1375,49 @@ router.post(
       return
     }
 
+    const destinationGroupId = typeof b.destinationGroupId === 'string' ? b.destinationGroupId.trim() : ''
+    const forceRelease = b.forceRelease === true || b.forceRelease === 'true'
+    if (forceRelease && !roleHasPermission(req.user?.permissions ?? [], 'amr.missions.force_release')) {
+      res.status(403).json({ error: 'Force release permission required.' })
+      return
+    }
+
+    if (destinationGroupId) {
+      const hcfg = await getAmrHyperionConfig(db)
+      const rr = await resolveGroupDestination({
+        db,
+        hcfg,
+        groupId: destinationGroupId,
+        userId: req.user!.id,
+        source: 'rack-move',
+        ignorePresence: forceRelease,
+      })
+      if (rr.ok) {
+        ;(sortedForSubmit[1] as Record<string, unknown>).position = rr.externalRef
+      } else if (rr.reason === 'empty_group') {
+        res.status(400).json({ error: 'Stand group has no enabled members.' })
+        return
+      } else if (rr.reason === 'hyperion_unavailable') {
+        res.status(503).json({ error: rr.message ?? 'Hyperion unavailable.' })
+        return
+      } else {
+        const canQueueByFlagRm = cfg.missionQueueingEnabled !== false
+        if (!canQueueByFlagRm || forceRelease) {
+          res.status(409).json({ error: 'No stand available in the selected group.' })
+          return
+        }
+        ;(sortedForSubmit[1] as Record<string, unknown>).position =
+          standGroupSentinelPosition(destinationGroupId)
+      }
+    }
+
+    const dest1 = sortedForSubmit[1] as Record<string, unknown>
+    const dest1Pos = typeof dest1?.position === 'string' ? dest1.position.trim() : ''
+    if (!dest1Pos) {
+      res.status(400).json({ error: 'missionData[1].position required (or destinationGroupId)' })
+      return
+    }
+
     const legsToValidate: StandLegToValidate[] = sortedForSubmit.map((step) => {
       const s = step as Record<string, unknown>
       const pos = s.position
@@ -1039,24 +1460,6 @@ router.post(
       isNew: true,
     }
 
-    const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
-      db,
-      source: 'rack-move',
-      missionRecordId,
-      userId: req.user!.id,
-    })
-    if (!ci.ok) {
-      res.status(ci.status).json(ci.json)
-      return
-    }
-    if (!fleetJsonIndicatesSuccess(ci.json)) {
-      res.status(400).json({
-        error: 'containerIn was rejected by the fleet; submitMission was not called.',
-        fleet: ci.json,
-      })
-      return
-    }
-
     const robotIdsResolution = await resolveSubmitRobotIds(cfg, db, b.robotIds, {
       db,
       source: 'rack-move',
@@ -1085,6 +1488,82 @@ router.post(
       missionData: sortedForSubmit,
       /** Same physical container as containerIn — fleet must not treat each submitMission as a new load. */
       containerCode,
+    }
+
+    const destinationStep = sortedForSubmit[sortedForSubmit.length - 1] as Record<string, unknown>
+    const rawDestRef =
+      destinationStep.putDown === true && typeof destinationStep.position === 'string'
+        ? destinationStep.position.trim()
+        : ''
+    const sentinelGidRm = parseStandGroupSentinelPosition(rawDestRef)
+    const destinationRef =
+      destinationStep.putDown === true && rawDestRef && !sentinelGidRm ? rawDestRef : ''
+    const canQueueByFlag = cfg.missionQueueingEnabled !== false
+    const availability =
+      canQueueByFlag && destinationRef
+        ? await destinationAvailableForDispatch(destinationRef, req.user!.id)
+        : { available: true, standKnown: false, palletPresent: false }
+    const shouldQueueOccupied =
+      canQueueByFlag && Boolean(destinationRef) && !availability.available && !forceRelease
+    const shouldQueueGroup = canQueueByFlag && Boolean(sentinelGidRm) && !forceRelease
+    const shouldQueue = shouldQueueOccupied || shouldQueueGroup
+    if (shouldQueue) {
+      const ts = nowTs()
+      await db
+        .prepare(
+          `INSERT INTO amr_mission_records
+             (id, job_code, mission_code, container_code, created_by, mission_type, mission_payload_json, last_status,
+              persistent_container, worker_closed, finalized, container_out_done, final_position, multistop_session_id,
+              multistop_step_index, queued, queued_destination_ref, queued_group_id, queued_at, submit_payload_json, container_in_payload_json,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          missionRecordId,
+          missionCode,
+          missionCode,
+          containerCode,
+          req.user!.id,
+          String(submitPayload.missionType),
+          JSON.stringify({ submit: submitPayload, containerIn: ciPayload }),
+          QUEUED_STATUS_CODE,
+          persistentContainer ? 1 : 0,
+          (sortedForSubmit[sortedForSubmit.length - 1] as { position?: string })?.position ?? first.position,
+          destinationRef || null,
+          sentinelGidRm,
+          ts,
+          JSON.stringify(submitPayload),
+          JSON.stringify(ciPayload),
+          ts,
+          ts
+        )
+      res.status(201).json({
+        missionRecordId,
+        missionCode,
+        containerCode,
+        queued: true,
+        destinationRef: destinationRef || null,
+        ...(sentinelGidRm ? { queuedGroupId: sentinelGidRm } : {}),
+      })
+      return
+    }
+
+    const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
+      db,
+      source: 'rack-move',
+      missionRecordId,
+      userId: req.user!.id,
+    })
+    if (!ci.ok) {
+      res.status(ci.status).json(ci.json)
+      return
+    }
+    if (!fleetJsonIndicatesSuccess(ci.json)) {
+      res.status(400).json({
+        error: 'containerIn was rejected by the fleet; submitMission was not called.',
+        fleet: ci.json,
+      })
+      return
     }
 
     const sm = await forwardAmrFleetRequest(cfg, 'submitMission', submitPayload, {
@@ -1129,6 +1608,9 @@ router.post(
         ts,
         ts
       )
+    if (destinationRef) {
+      await reserveStandForRecord(db, destinationRef, missionRecordId)
+    }
 
     res.status(201).json({
       missionRecordId: id,
@@ -1420,6 +1902,7 @@ router.post(
         const ref = typeof result.standOccupiedRef === 'string' ? result.standOccupiedRef.trim() : ''
         res.status(409).json({
           error: result.error,
+          ...(result.queued ? { queued: true } : {}),
           ...(ref
             ? { code: 'STAND_OCCUPIED' as const, standOccupiedRef: ref }
             : result.code === 'NO_UNLOCKED_ROBOTS'
@@ -1439,6 +1922,77 @@ router.post(
       next_segment_index: result.next_segment_index,
       fleetSubmit: result.fleetSubmit,
     })
+  })
+)
+
+router.post(
+  '/dc/missions/:missionRecordId/force-release',
+  authMiddleware,
+  requirePermission('amr.missions.force_release'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const missionRecordId =
+      typeof req.params.missionRecordId === 'string' ? req.params.missionRecordId.trim() : ''
+    const result = await dispatchQueuedMissionRecordById(missionRecordId, req.user?.id ?? null)
+    if (!result.ok) {
+      res.status(result.status).json({
+        error: result.error,
+        ...(result.detail !== undefined ? { detail: result.detail } : {}),
+        ...(typeof result.code === 'string' ? { code: result.code } : {}),
+      })
+      return
+    }
+    res.status(201).json({ ok: true, missionRecordId, fleetSubmit: result.fleetSubmit })
+  })
+)
+
+router.post(
+  '/dc/missions/:missionRecordId/ack-presence-warning',
+  authMiddleware,
+  requirePermission('amr.missions.force_release'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const missionRecordId =
+      typeof req.params.missionRecordId === 'string' ? req.params.missionRecordId.trim() : ''
+    if (!missionRecordId) {
+      res.status(400).json({ error: 'missionRecordId required' })
+      return
+    }
+    const row = (await db
+      .prepare(
+        'SELECT id, presence_warning_at, finalized FROM amr_mission_records WHERE id = ?'
+      )
+      .get(missionRecordId)) as {
+      id?: string
+      presence_warning_at?: string | null
+      finalized?: number
+    } | undefined
+    if (!row?.id) {
+      res.status(404).json({ error: 'Mission not found' })
+      return
+    }
+    const logRow = (await db
+      .prepare(
+        `SELECT job_status FROM amr_mission_status_log
+         WHERE mission_record_id = ?
+         ORDER BY recorded_at DESC
+         LIMIT 1`
+      )
+      .get(missionRecordId)) as { job_status?: number } | undefined
+    const fromLog =
+      typeof logRow?.job_status === 'number' && Number.isFinite(logRow.job_status) ? logRow.job_status : null
+    /** Chip was bumped to synthetic 93; restore last fleet code from history, else infer from finalized. */
+    const restoredLast =
+      fromLog ??
+      (Number(row.finalized) === 1 ? 30 : 31)
+
+    await db
+      .prepare(
+        `UPDATE amr_mission_records
+         SET presence_warning_at = NULL, last_status = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(restoredLast, nowTs(), missionRecordId)
+    await releaseReservationsForRecord(db, missionRecordId)
+    res.json({ ok: true, missionRecordId })
   })
 )
 
@@ -1680,6 +2234,11 @@ router.post(
     const sessionId = uuidv4()
     const total_segments = plan.destinations.length
     const missionRecordId = uuidv4()
+    const forceRelease = b.forceRelease === true || b.forceRelease === 'true'
+    if (forceRelease && !roleHasPermission(req.user?.permissions ?? [], 'amr.missions.force_release')) {
+      res.status(403).json({ error: 'Force release permission required.' })
+      return
+    }
 
     const robotIdsResolution = await resolveSubmitRobotIds(cfg, db, b.robotIds, {
       db,
@@ -1706,6 +2265,136 @@ router.post(
       enterOrientation,
       isNew: true,
     }
+
+    const robotIdsJson = JSON.stringify(robotIds)
+    const ts = nowTs()
+    const canQueueByFlag = cfg.missionQueueingEnabled !== false
+
+    const gate0pre = multistopSegmentDropGate(plan, 0)
+    if (gate0pre?.kind === 'group') {
+      const hcfg = await getAmrHyperionConfig(db)
+      const rr = await resolveGroupDestination({
+        db,
+        hcfg,
+        groupId: gate0pre.groupId,
+        userId: req.user!.id,
+        source: 'multistop-start',
+        ignorePresence: forceRelease,
+      })
+      if (rr.ok) {
+        plan.destinations[0].position = rr.externalRef
+        delete plan.destinations[0].groupId
+      } else if (rr.reason === 'empty_group') {
+        res.status(400).json({ error: 'Stand group has no enabled members.' })
+        return
+      } else if (rr.reason === 'hyperion_unavailable') {
+        res.status(503).json({ error: rr.message ?? 'Hyperion unavailable.' })
+        return
+      } else if (rr.reason === 'all_occupied') {
+        if (!canQueueByFlag || forceRelease) {
+          res.status(409).json({ error: 'No stand available in the selected group.' })
+          return
+        }
+        const planJsonQueue = JSON.stringify(plan)
+        const continueNotBefore = nowTs()
+        await db
+          .prepare(
+            `INSERT INTO amr_multistop_sessions (id, status, pickup_position, plan_json, total_segments, next_segment_index, locked_robot_id, container_code, persistent_container, enter_orientation, robot_ids_json, base_mission_code, continue_not_before, queue_blocked_until, queue_blocked_group_id, container_in_payload_json, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            sessionId,
+            'awaiting_continue',
+            pickupRaw,
+            planJsonQueue,
+            total_segments,
+            0,
+            containerCode,
+            persistentContainer ? 1 : 0,
+            enterOrientation,
+            robotIdsJson,
+            baseMissionCode,
+            continueNotBefore,
+            continueNotBefore,
+            gate0pre.groupId,
+            JSON.stringify(ciPayload),
+            req.user!.id,
+            ts,
+            ts
+          )
+        rescheduleAmrMissionWorker()
+        res.status(201).json({
+          multistopSessionId: sessionId,
+          missionRecordId: null,
+          missionCode: null,
+          baseMissionCode,
+          containerCode,
+          total_segments,
+          next_segment_index: 0,
+          firstSegmentDeferred: true,
+          queued: true,
+          queuedGroupId: gate0pre.groupId,
+          destinationRef: null,
+          fleetSubmit: null,
+          fleetContainerIn: null,
+        })
+        return
+      }
+    }
+
+    const planJson = JSON.stringify(plan)
+    const deferFirst = shouldDeferFirstSegmentSubmit(plan)
+    const firstSegmentDropRef = multistopSegmentDropDestinationRef(plan, 0) ?? ''
+    const availability =
+      canQueueByFlag && firstSegmentDropRef
+        ? await destinationAvailableForDispatch(firstSegmentDropRef, req.user!.id)
+        : { available: true, standKnown: false, palletPresent: false }
+    const shouldQueue = canQueueByFlag && firstSegmentDropRef && !availability.available && !forceRelease
+
+    if (shouldQueue) {
+      const continueNotBefore = nowTs()
+      await db
+        .prepare(
+          `INSERT INTO amr_multistop_sessions (id, status, pickup_position, plan_json, total_segments, next_segment_index, locked_robot_id, container_code, persistent_container, enter_orientation, robot_ids_json, base_mission_code, continue_not_before, queue_blocked_until, queue_blocked_group_id, container_in_payload_json, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          sessionId,
+          'awaiting_continue',
+          pickupRaw,
+          planJson,
+          total_segments,
+          0,
+          containerCode,
+          persistentContainer ? 1 : 0,
+          enterOrientation,
+          robotIdsJson,
+          baseMissionCode,
+          continueNotBefore,
+          continueNotBefore,
+          null,
+          JSON.stringify(ciPayload),
+          req.user!.id,
+          ts,
+          ts
+        )
+      res.status(201).json({
+        multistopSessionId: sessionId,
+        missionRecordId: null,
+        missionCode: null,
+        baseMissionCode,
+        containerCode,
+        total_segments,
+        next_segment_index: 0,
+        firstSegmentDeferred: true,
+        queued: true,
+        destinationRef: firstSegmentDropRef,
+        fleetSubmit: null,
+        fleetContainerIn: null,
+      })
+      return
+    }
+
     const ci = await forwardAmrFleetRequest(cfg, 'containerIn', ciPayload, {
       db,
       source: 'multistop-start',
@@ -1723,11 +2412,6 @@ router.post(
       })
       return
     }
-
-    const planJson = JSON.stringify(plan)
-    const robotIdsJson = JSON.stringify(robotIds)
-    const ts = nowTs()
-    const deferFirst = shouldDeferFirstSegmentSubmit(plan)
 
     if (deferFirst) {
       const continueNotBefore = continueNotBeforeDeferredFirstSegment(plan, Date.now())
@@ -1826,6 +2510,12 @@ router.post(
         ts,
         ts
       )
+    if (firstSegmentDropRef) {
+      await reserveStandForRecord(db, firstSegmentDropRef, missionRecordId, {
+        multistopSessionId: sessionId,
+        multistopStepIndex: 0,
+      })
+    }
     await db
       .prepare(
         `INSERT INTO amr_mission_records (id, job_code, mission_code, container_code, created_by, mission_type, mission_payload_json, last_status, persistent_container, worker_closed, finalized, container_out_done, final_position, multistop_session_id, multistop_step_index, created_at, updated_at)

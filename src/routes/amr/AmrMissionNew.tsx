@@ -38,8 +38,11 @@ import {
   type AmrRobotLockRow,
   type ZoneCategory,
   amrFleetProxy,
+  continueAmrMultistopSession,
   createAmrMissionTemplate,
   createMultistopMission,
+  getAmrStandGroups,
+  type AmrStandGroupRow,
   getAmrMissionTemplate,
   getAmrSettings,
   getAmrStands,
@@ -48,6 +51,7 @@ import {
   postStandPresence,
   updateAmrMissionTemplate,
 } from '@/api/amr'
+import { getApiErrorMessage } from '@/api/client'
 import {
   AmrDestinationOccupiedConfirmBody,
   AmrDestinationOccupiedConfirmFooterRetry,
@@ -78,6 +82,8 @@ import { isActiveRobotFleetStatus } from '@/utils/amrRobotStatus'
 type Leg = {
   id: string
   position: string
+  /** Stop 2+ only: lazy-resolve pool; when set, `position` may be empty until dispatch. */
+  groupId?: string
   /**
    * Fleet `putDown` when the AMR **arrives** at this stand within its sub-mission (segment end at this stop).
    * **Lower** forks (`true`) vs **lift** forks (`false`). Unused on the first stop; locked lower on the final stop.
@@ -258,9 +264,17 @@ type MissionFormFieldError =
   | { kind: 'autoSeconds'; legIndex: number }
 
 function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; message: string; fieldError: MissionFormFieldError } {
+  if (legs[0]?.groupId?.trim()) {
+    return {
+      ok: false,
+      message: 'Stop 1 (pickup) must be a single stand — stand groups apply from stop 2 onward.',
+      fieldError: { kind: 'location', legIndices: [0] },
+    }
+  }
   const missingLoc: number[] = []
   for (let i = 0; i < legs.length; i++) {
-    if (!legs[i].position.trim()) missingLoc.push(i)
+    const gid = legs[i].groupId?.trim()
+    if (!legs[i].position.trim() && !gid) missingLoc.push(i)
   }
   if (missingLoc.length > 0) {
     const stops = missingLoc.map((i) => i + 1).join(', ')
@@ -377,8 +391,10 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const canAmrModule = useAuthStore((s) => s.hasPermission('module.amr'))
   const canAmrApiDebug = useAuthStore((s) => s.hasPermission('amr.tools.dev'))
   const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
-  const { showConfirm } = useAlertConfirm()
+  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
+  const { showConfirm, showAlert } = useAlertConfirm()
   const [stands, setStands] = useState<AmrStandPickerRow[]>([])
+  const [standGroups, setStandGroups] = useState<AmrStandGroupRow[]>([])
   const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
   const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
   /** After opening the map picker for stop 1, deep-link `?from=` no longer overwrites the field (override / change start). */
@@ -440,6 +456,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const [pollMsContainers, setPollMsContainers] = useState(5000)
   /** From fleet settings: optional Hyperion sanity confirm before create multistop mission. */
   const [missionCreateStandPresenceSanityCheck, setMissionCreateStandPresenceSanityCheck] = useState(true)
+  const [missionQueueingEnabled, setMissionQueueingEnabled] = useState(true)
   const [robotSelectOpen, setRobotSelectOpen] = useState(false)
   const [debugModalOpen, setDebugModalOpen] = useState(false)
   const [selectedRobotIds, setSelectedRobotIds] = useState<string[]>([])
@@ -571,6 +588,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         }))
       )
     )
+    void getAmrStandGroups()
+      .then(setStandGroups)
+      .catch(() => setStandGroups([]))
   }, [])
 
   const palletPresenceBypassRefs = useMemo(() => standRefsBypassingPalletCheck(stands), [stands])
@@ -587,6 +607,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       setPollMsRobots(Math.max(3000, s.pollMsRobots))
       setPollMsContainers(Math.max(3000, s.pollMsContainers))
       setMissionCreateStandPresenceSanityCheck(s.missionCreateStandPresenceSanityCheck !== false)
+      setMissionQueueingEnabled(s.missionQueueingEnabled !== false)
       setZoneCategories(Array.isArray(s.zoneCategories) ? s.zoneCategories : [])
     })
   }, [])
@@ -860,13 +881,23 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       /** Row `legs[i+1]` matches this destination stop; release before the next segment uses that row. */
       const cm = legs[i + 1] ?? l
       const mode = isLast ? 'manual' : (cm.continueMode ?? 'manual')
-      const base = {
-        position: l.position.trim(),
-        passStrategy: 'AUTO' as const,
-        waitingMillis: 0,
-        continueMode: mode,
-        putDown: l.putDown,
-      }
+      const gid = l.groupId?.trim()
+      const base = gid
+        ? {
+            groupId: gid,
+            position: l.position.trim(),
+            passStrategy: 'AUTO' as const,
+            waitingMillis: 0,
+            continueMode: mode,
+            putDown: l.putDown,
+          }
+        : {
+            position: l.position.trim(),
+            passStrategy: 'AUTO' as const,
+            waitingMillis: 0,
+            continueMode: mode,
+            putDown: l.putDown,
+          }
       if (mode === 'auto') {
         const sec = Math.max(0, Math.min(Math.floor(cm.autoContinueSeconds ?? 0), 86400))
         return { ...base, autoContinueSeconds: sec }
@@ -898,7 +929,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     const p = legs[0]?.position.trim() ?? ''
     const d0 = legs[1]
     const md =
-      p && d0?.position.trim()
+      p && (d0?.position.trim() || d0?.groupId?.trim())
         ? [
             {
               sequence: 1,
@@ -910,7 +941,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
             },
             {
               sequence: 2,
-              position: d0.position.trim(),
+              position: d0.groupId?.trim()
+                ? `[group] ${standGroups.find((g) => g.id === d0.groupId)?.name ?? d0.groupId}`
+                : d0.position.trim(),
               type: 'NODE_POINT',
               passStrategy: 'AUTO',
               waitingMillis: 0,
@@ -924,7 +957,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         'Server always calls containerIn first, then submitMission (segment 0). Further segments use Continue on Missions.',
       _preview_first_submitMission_missionData: md,
     }
-  }, [generatedMissionCode, containerCode, persistent, legs, stands, selectedRobotIds])
+  }, [generatedMissionCode, containerCode, persistent, legs, stands, selectedRobotIds, standGroups])
 
   const rackMoveDebugRequestUrl =
     typeof window !== 'undefined'
@@ -935,7 +968,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const fleetPreviewInput = useMemo((): Record<string, unknown> => {
     const p = legs[0]?.position.trim() ?? ''
     const d0 = legs[1]
-    if (!p || !d0?.position.trim()) return { missionData: [] }
+    if (!p || (!d0?.position.trim() && !d0?.groupId?.trim())) return { missionData: [] }
     return {
       missionCode: generatedMissionCode,
       persistentContainer: persistent,
@@ -953,7 +986,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         },
         {
           sequence: 2,
-          position: d0.position.trim(),
+          position: d0.groupId?.trim()
+            ? `[group] ${standGroups.find((g) => g.id === d0.groupId)?.name ?? d0.groupId}`
+            : d0.position.trim(),
           type: 'NODE_POINT',
           passStrategy: 'AUTO',
           waitingMillis: 0,
@@ -970,20 +1005,28 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     containerCode,
     selectedRobotIds,
     hasThreeOrMoreStops,
+    standGroups,
   ])
 
   const lockedIdsArray = useMemo(() => [...lockedRobotIds], [lockedRobotIds])
 
   const rackMoveFleetForwardPreview = useMemo(() => {
     if (!rackMoveDebugFleetSettings) return null
-    return buildRackMoveFleetForwardPreview(rackMoveDebugFleetSettings, fleetPreviewInput, lockedIdsArray)
-  }, [rackMoveDebugFleetSettings, fleetPreviewInput, lockedIdsArray])
+    return buildRackMoveFleetForwardPreview(
+      rackMoveDebugFleetSettings,
+      fleetPreviewInput,
+      lockedIdsArray,
+      robotFleetRows
+    )
+  }, [rackMoveDebugFleetSettings, fleetPreviewInput, lockedIdsArray, robotFleetRows])
 
   const multistopFleetTimeline = useMemo(() => {
     if (!rackMoveDebugFleetSettings) return null
     const pickupPosition = legs[0]?.position.trim() ?? ''
     const destinations = legs.slice(1).map((l) => ({
-      position: l.position.trim(),
+      position: l.groupId?.trim()
+        ? `[group] ${standGroups.find((g) => g.id === l.groupId)?.name ?? l.groupId}`
+        : l.position.trim(),
       passStrategy: 'AUTO' as const,
       waitingMillis: 0,
       putDown: l.putDown,
@@ -996,8 +1039,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       persistent,
       robotIds: selectedRobotIds.length > 0 ? selectedRobotIds : undefined,
       lockedIds: lockedIdsArray,
+      fleetRobotSnapshot: robotFleetRows,
     })
-  }, [rackMoveDebugFleetSettings, legs, persistent, selectedRobotIds, lockedIdsArray])
+  }, [rackMoveDebugFleetSettings, legs, persistent, selectedRobotIds, lockedIdsArray, robotFleetRows, standGroups])
 
   if (!canManage && variant === 'page') {
     return (
@@ -1046,7 +1090,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       return
     }
 
-    if (missionCreateStandPresenceSanityCheck) {
+    if (missionCreateStandPresenceSanityCheck && !missionQueueingEnabled) {
       const uniquePresenceRefs = [...new Set(legs.map((l) => l.position.trim()).filter(Boolean))].sort()
       if (uniquePresenceRefs.length > 0) {
         try {
@@ -1079,9 +1123,51 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     try {
       const data = (await createMultistopMission(buildMultistopPayload())) as {
         multistopSessionId?: unknown
+        queued?: unknown
+        destinationRef?: unknown
       }
       const sid =
         typeof data.multistopSessionId === 'string' ? data.multistopSessionId.trim() : ''
+      const queuedInitial = data.queued === true
+      const queuedDest =
+        typeof data.destinationRef === 'string' ? data.destinationRef.trim() : ''
+      if (queuedInitial && sid) {
+        if (canForceRelease) {
+          const force = await showConfirm(
+            <span>
+              First segment is <strong className="font-medium">queued</strong> until the drop stand clears
+              {queuedDest ? (
+                <>
+                  {' '}(<span className="font-mono">{queuedDest}</span>)
+                </>
+              ) : null}
+              . Auto-dispatch resumes when Hyperion reports the stand empty. Force dispatch now and skip that check?
+            </span>,
+            {
+              title: 'Mission queued',
+              confirmLabel: 'Force dispatch',
+              cancelLabel: 'Wait for queue',
+              variant: 'danger',
+            }
+          )
+          if (force) {
+            try {
+              await continueAmrMultistopSession(sid, { forceRelease: true })
+            } catch (forceErr: unknown) {
+              validationErrorActiveRef.current = false
+              setError(getApiErrorMessage(forceErr, 'Force dispatch failed'))
+              return
+            }
+          }
+        } else {
+          showAlert(
+            queuedDest
+              ? `Mission is queued until stand ${queuedDest} clears; DC will dispatch the first segment automatically.`
+              : 'Mission is queued until the drop stand clears; DC will dispatch the first segment automatically.',
+            'Queued'
+          )
+        }
+      }
       if (openOverviewAfter && sid) {
         navigate(
           `${amrPath('missions')}?${new URLSearchParams({ multistopSummary: sid }).toString()}`
@@ -1181,6 +1267,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         t.payload.legs.map((leg) =>
           newLeg({
             position: leg.position,
+            ...(leg.groupId?.trim() ? { groupId: leg.groupId.trim() } : {}),
             putDown: leg.putDown,
             ...(leg.segmentStartPutDown === true ? { segmentStartPutDown: true } : {}),
             continueMode: leg.continueMode ?? 'manual',
@@ -1264,6 +1351,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
           t.payload.legs.map((leg) =>
             newLeg({
               position: leg.position,
+              ...(leg.groupId?.trim() ? { groupId: leg.groupId.trim() } : {}),
               putDown: leg.putDown,
               ...(leg.segmentStartPutDown === true ? { segmentStartPutDown: true } : {}),
               continueMode: leg.continueMode ?? 'manual',
@@ -1701,10 +1789,19 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                       title={startLocked ? undefined : 'Scan or pick a stand External Ref (keyboard / barcode)'}
                       aria-invalid={locationInvalid || undefined}
                       className="min-h-[40px] min-w-0 flex-1 border-0 bg-transparent py-2 pl-3 font-mono text-base outline-none ring-0 transition-[color,box-shadow] placeholder:text-foreground/45 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-70 md:text-sm"
-                      value={leg.position}
+                      readOnly={Boolean(leg.groupId?.trim() && idx > 0)}
+                      value={
+                        leg.groupId?.trim() && idx > 0
+                          ? `Group: ${standGroups.find((g) => g.id === leg.groupId)?.name ?? leg.groupId}`
+                          : leg.position
+                      }
                       onChange={(e) => {
                         const v = e.target.value
-                        updateLeg(idx, { position: v })
+                        if (leg.groupId?.trim() && idx > 0) {
+                          updateLeg(idx, { groupId: undefined, position: v })
+                        } else {
+                          updateLeg(idx, { position: v })
+                        }
                         if (startLocked) return
                         cancelSuggestClose()
                         if (v.length > 0) {
@@ -1715,6 +1812,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                       }}
                       onBlur={() => {
                         if (startLocked) return
+                        if (leg.groupId?.trim() && idx > 0) return
                         const n = normalizeExternalRefFromStands(stands, leg.position)
                         if (n !== leg.position) updateLeg(idx, { position: n })
                         scheduleSuggestClose()
@@ -1731,7 +1829,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                       }}
                       placeholder={startLocked ? '' : 'Scan or type External Ref…'}
                     />
-                    {leg.position.trim() ? (
+                    {leg.position.trim() && !leg.groupId?.trim() ? (
                       <span className="flex shrink-0 items-center gap-1 bg-muted/15 px-1.5 py-1 sm:px-2">
                         <PalletPresenceGlyph
                           kind={palletPresenceKindFromState({
@@ -1751,7 +1849,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                         />
                       </span>
                     ) : null}
-                    {!startLocked && leg.position.trim() ? (
+                    {!startLocked && (leg.position.trim() || leg.groupId?.trim()) ? (
                       <button
                         type="button"
                         tabIndex={-1}
@@ -1760,7 +1858,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                         title="Clear"
                         onMouseDown={(e) => {
                           e.preventDefault()
-                          updateLeg(idx, { position: '' })
+                          updateLeg(idx, { position: '', groupId: undefined })
                           setOpenSuggestLegIdx(null)
                         }}
                       >
@@ -2241,11 +2339,17 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               mode={pickerMode}
               zoneCategories={zoneCategories}
               canOverride={canOverrideSpecial}
+              allowGroups={idx > 0}
               onClose={() => setPickerLegIdx(null)}
               onSelect={(externalRef, opts) => {
                 if (idx === null) return
                 if (opts.override) setOverrideSpecialLocations(true)
-                updateLeg(idx, { position: externalRef })
+                const gid = opts.groupId?.trim()
+                if (gid) {
+                  updateLeg(idx, { position: '', groupId: gid })
+                } else {
+                  updateLeg(idx, { position: externalRef, groupId: undefined })
+                }
                 setPickerLegIdx(null)
               }}
             />

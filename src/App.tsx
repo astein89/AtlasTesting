@@ -76,6 +76,9 @@ const AmrRobots = lazy(() => import('./routes/amr/AmrRobots').then((m) => ({ def
 const AmrContainers = lazy(() => import('./routes/amr/AmrContainers').then((m) => ({ default: m.AmrContainers })))
 const AmrLogs = lazy(() => import('./routes/amr/AmrLogs').then((m) => ({ default: m.AmrLogs })))
 const AmrStands = lazy(() => import('./routes/amr/AmrStands').then((m) => ({ default: m.AmrStands })))
+const AmrStandGroups = lazy(() =>
+  import('./routes/amr/AmrStandGroups').then((m) => ({ default: m.AmrStandGroups }))
+)
 const AmrSettings = lazy(() => import('./routes/amr/AmrSettings').then((m) => ({ default: m.AmrSettings })))
 const AmrApiPlayground = lazy(() =>
   import('./routes/amr/AmrApiPlayground').then((m) => ({ default: m.AmrApiPlayground }))
@@ -500,6 +503,14 @@ export function createAppBrowserRouter(basePath: string) {
             <Route path="containers" element={<AmrContainers />} />
             <Route path="logs" element={<AmrLogs />} />
             <Route path="stands" element={<AmrStands />} />
+            <Route
+              path="stands/groups"
+              element={
+                <Suspense fallback={null}>
+                  <AmrStandGroups />
+                </Suspense>
+              }
+            />
             <Route path="settings" element={<AmrSettings />} />
             <Route path="tools/api-playground" element={<AmrApiPlayground />} />
           </Route>
