@@ -27,7 +27,7 @@ export type AmrStandPickerRow = {
   bypass_pallet_check?: number
   /** Special-location flag: 1 = no pallet dropoff at this stand (no lower). Optional for backward compat. */
   block_dropoff?: number
-  /** `non_stand` = waypoint with no pallet presence / cannot be mission final rack drop. */
+  /** `non_stand` = waypoint — typically no Hyperion pallet presence UI; lift/lower allowed unless blocked. */
   location_type?: string
 }
 
@@ -269,7 +269,7 @@ export function AmrStandPickerModal({
   zoneCategories,
   canOverride = false,
   allowGroups = false,
-  /** When true, hide non-stand waypoints from the stand list (e.g. rack drop as final destination). */
+  /** When true, hide non-stand waypoints until the user enables "Show restricted" (needs canOverride + pickup/dropoff). */
   omitNonStandWaypoints = false,
   multiSelect,
 }: {
@@ -286,7 +286,7 @@ export function AmrStandPickerModal({
   canOverride?: boolean
   /** When true (stop 2+), load stand groups and allow picking a group pool from the zone list. */
   allowGroups?: boolean
-  /** When true, hide non-stand waypoints from the stand list (e.g. rack drop as final destination). */
+  /** When true, hide non-stand waypoints until "Show restricted" (needs canOverride + pickup/dropoff). */
   omitNonStandWaypoints?: boolean
   /**
    * When set, switches the picker into multi-select mode: zones step still drills into a zone, but the stands
@@ -314,7 +314,9 @@ export function AmrStandPickerModal({
 
   const visibleStands = useMemo(() => {
     let v = visibleStandsForMode(stands, mode, restrictionToggleVisible && showRestricted)
-    if (omitNonStandWaypoints) {
+    const hideNonStandWaypoints =
+      omitNonStandWaypoints && !(restrictionToggleVisible && showRestricted)
+    if (hideNonStandWaypoints) {
       v = v.filter((s) => normalizeAmrStandLocationType(s.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND)
     }
     return v
@@ -599,7 +601,11 @@ export function AmrStandPickerModal({
                   : mode === 'dropoff'
                   ? 'No stands allow pallet dropoff.'
                   : 'No stands available.'}
-                {restrictionToggleVisible && !showRestricted ? ' Toggle "Show restricted" below to include them.' : ''}
+                {restrictionToggleVisible && !showRestricted
+                  ? ` Toggle "Show restricted" below to include them.${
+                      omitNonStandWaypoints ? ' Non-stand waypoints for this stop also require Restricted on.' : ''
+                    }`
+                  : ''}
               </p>
             ) : (
               <div className="space-y-3">
@@ -898,7 +904,8 @@ export function AmrStandPickerModal({
                 }
               >
                 {' '}
-                ({mode === 'pickup' ? 'no-lift' : 'no-lower'})
+                ({mode === 'pickup' ? 'no-lift' : 'no-lower'}
+                {omitNonStandWaypoints ? '; non-stand waypoints when on' : ''})
               </span>
             </span>
           </div>

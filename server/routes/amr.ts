@@ -76,7 +76,6 @@ import {
   AMR_STAND_LOCATION_TYPE_NON_STAND,
   AMR_STAND_LOCATION_TYPE_STAND,
   externalRefUsesNonStandRow,
-  externalRefsNonStandLocation,
   normalizeAmrStandLocationType,
   standIdIsAssignedToStandGroup,
 } from '../lib/amrStandLocationType.js'
@@ -353,7 +352,6 @@ async function validateStandBlocksForLegs(
     if (!p) continue
     const stand = byRef.get(p)
     if (!stand) continue
-    if (normalizeAmrStandLocationType(stand.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND) continue
     if (!leg.putDown && Number(stand.block_pickup) === 1) {
       violations.push(`Location "${p}" does not allow pallet pickup (no lift).`)
     }
@@ -919,10 +917,6 @@ router.post(
       normalizeAmrStandLocationType(b.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
         ? AMR_STAND_LOCATION_TYPE_NON_STAND
         : AMR_STAND_LOCATION_TYPE_STAND
-    if (location_type === AMR_STAND_LOCATION_TYPE_NON_STAND) {
-      block_pickup = 0
-      block_dropoff = 0
-    }
     const ts = nowTs()
 
     if (await standIdWithExternalRef(external_ref)) {
@@ -1049,11 +1043,6 @@ router.patch(
       })
       return
     }
-    if (location_type === AMR_STAND_LOCATION_TYPE_NON_STAND) {
-      block_pickup = 0
-      block_dropoff = 0
-    }
-
     const conflictLoc = await standIdWithExternalRef(external_ref, id)
     if (conflictLoc) {
       res.status(400).json({
@@ -1694,15 +1683,6 @@ router.post(
     const dest1Pos = typeof dest1?.position === 'string' ? dest1.position.trim() : ''
     if (!dest1Pos) {
       res.status(400).json({ error: 'missionData[1].position required (or destinationGroupId)' })
-      return
-    }
-
-    const nonStandRm = await externalRefsNonStandLocation(db, [dest1Pos])
-    if (nonStandRm.has(dest1Pos)) {
-      res.status(400).json({
-        error:
-          'A non-stand (waypoint) location cannot be the final stop in a mission. Choose a rack stand as the destination.',
-      })
       return
     }
 

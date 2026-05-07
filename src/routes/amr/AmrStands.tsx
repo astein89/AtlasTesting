@@ -191,7 +191,6 @@ function StandFormFields({
   setForm: Dispatch<SetStateAction<StandFormState>>
   queueingEnabled: boolean
 }) {
-  const waypoint = form.location_type === AMR_STAND_LOCATION_TYPE_NON_STAND
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className="col-span-full text-sm">
@@ -207,7 +206,6 @@ function StandFormFields({
             setForm((f) => ({
               ...f,
               location_type: v,
-              ...(v === AMR_STAND_LOCATION_TYPE_NON_STAND ? { block_pickup: false, block_dropoff: false } : {}),
             }))
           }}
         >
@@ -215,8 +213,8 @@ function StandFormFields({
           <option value={AMR_STAND_LOCATION_TYPE_NON_STAND}>Non-stand waypoint</option>
         </select>
         <span className="mt-1 block text-[11px] text-foreground/55">
-          Waypoints are nodes with no pallet drop-off rack; pallets continue after the stop and Hyperion occupancy is not
-          used. Cannot be mission final destination; cannot belong to stand groups.
+          Waypoints skip Hyperion pallet presence in the picker unless &quot;Bypass pallet check&quot; is enabled. Use
+          block pickup / dropoff to forbid lift or lower at this node. Cannot belong to stand groups.
         </span>
       </label>
       <label className="text-sm">
@@ -289,19 +287,17 @@ function StandFormFields({
         <legend className="px-1 text-xs font-medium uppercase tracking-wide text-foreground/60">
           Special location restrictions
         </legend>
-        <label className={`flex items-center gap-2 ${waypoint ? 'opacity-50' : ''}`}>
+        <label className="flex items-center gap-2">
           <input
             type="checkbox"
-            disabled={waypoint}
             checked={form.block_pickup}
             onChange={(e) => setForm((f) => ({ ...f, block_pickup: e.target.checked }))}
           />
           Block pallet pickup (no lift)
         </label>
-        <label className={`flex items-center gap-2 ${waypoint ? 'opacity-50' : ''}`}>
+        <label className="flex items-center gap-2">
           <input
             type="checkbox"
-            disabled={waypoint}
             checked={form.block_dropoff}
             onChange={(e) => setForm((f) => ({ ...f, block_dropoff: e.target.checked }))}
           />
@@ -1002,7 +998,6 @@ export function AmrStands() {
                 </select>
                 <p className="mt-2 text-xs text-foreground/55">
                   Waypoints cannot be in stand groups. Stands still in a group will return an error until removed.
-                  Applying &quot;Non-stand waypoint&quot; clears block pickup / dropoff flags on the server.
                 </p>
               </div>
             ) : null}

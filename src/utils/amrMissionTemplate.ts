@@ -58,8 +58,7 @@ export function missionFormToTemplatePayload(
 
 /** Same rules as {@link validateNewMissionForm} in `AmrMissionNew.tsx` (locations + auto-release seconds). */
 export function validateMissionTemplatePayloadForCreate(
-  payload: AmrMissionTemplatePayloadV1,
-  opts?: { nonStandRefs?: Set<string> }
+  payload: AmrMissionTemplatePayloadV1
 ): { ok: true } | { ok: false; message: string } {
   const legs = payload.legs ?? []
   if (legs.length < 2) {
@@ -84,27 +83,6 @@ export function validateMissionTemplatePayloadForCreate(
         missingLoc.length === 1
           ? `Stop ${missingLoc[0] + 1} needs a location (External Ref) or stand group.`
           : `Every stop needs a location or stand group (where allowed). Missing: stops ${stops}.`,
-    }
-  }
-  if (opts?.nonStandRefs && legs.length >= 1) {
-    const first = legs[0]
-    const firstRef = first?.position?.trim() ?? ''
-    if (firstRef && !first?.groupId?.trim() && opts.nonStandRefs.has(firstRef)) {
-      return {
-        ok: false,
-        message:
-          'Stop 1 (pickup) cannot be a non-stand waypoint. Missions must start from a rack stand.',
-      }
-    }
-    const lastIdx = legs.length - 1
-    const last = legs[lastIdx]
-    const lastRef = last?.position?.trim() ?? ''
-    if (lastRef && !last?.groupId?.trim() && opts.nonStandRefs.has(lastRef)) {
-      return {
-        ok: false,
-        message:
-          'The final stop cannot be a non-stand waypoint. Choose a rack stand as the mission destination.',
-      }
     }
   }
   for (let idx = 0; idx < legs.length - 1; idx++) {

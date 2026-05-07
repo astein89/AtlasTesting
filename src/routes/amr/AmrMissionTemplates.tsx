@@ -120,8 +120,7 @@ export function AmrMissionTemplates() {
           getAmrMissionTemplate(templateId),
           getAmrSettings(),
         ])
-        const nonStandRefs = standRefsNonStandWaypoint(stands)
-        const v = validateMissionTemplatePayloadForCreate(t.payload, { nonStandRefs })
+        const v = validateMissionTemplatePayloadForCreate(t.payload)
         if (!v.ok) {
           setErr(v.message)
           return false

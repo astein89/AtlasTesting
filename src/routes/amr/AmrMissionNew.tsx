@@ -170,28 +170,8 @@ function normalizePutDown(prev: Leg[]): Leg[] {
   return changed ? next : prev
 }
 
-function coerceNonStandIntermediatePutDown(legs: Leg[], standRows: AmrStandPickerRow[]): Leg[] {
-  const byRef = new Map(standRows.map((s) => [s.external_ref.trim(), s]))
-  const n = legs.length
-  if (n < 2) return legs
-  let changed = false
-  const next = legs.map((leg, i) => {
-    const ref = leg.position.trim()
-    if (!ref || leg.groupId?.trim()) return leg
-    if (i === n - 1) return leg
-    const row = byRef.get(ref)
-    if (!row || normalizeAmrStandLocationType(row.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND) return leg
-    if (leg.putDown !== false) {
-      changed = true
-      return { ...leg, putDown: false }
-    }
-    return leg
-  })
-  return changed ? next : legs
-}
-
-function finalizeMissionLegUi(legs: Leg[], standRows: AmrStandPickerRow[]): Leg[] {
-  return coerceNonStandIntermediatePutDown(normalizePutDown(legs), standRows)
+function finalizeMissionLegUi(legs: Leg[], _standRows: AmrStandPickerRow[]): Leg[] {
+  return normalizePutDown(legs)
 }
 
 /**
@@ -300,10 +280,7 @@ type MissionFormFieldError =
   | { kind: 'location'; legIndices: number[] }
   | { kind: 'autoSeconds'; legIndex: number }
 
-function validateNewMissionForm(
-  legs: Leg[],
-  opts?: { nonStandRefs?: Set<string> }
-): { ok: true } | { ok: false; message: string; fieldError: MissionFormFieldError } {
+function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; message: string; fieldError: MissionFormFieldError } {
   if (legs[0]?.groupId?.trim()) {
     return {
       ok: false,
@@ -325,29 +302,6 @@ function validateNewMissionForm(
           ? `Stop ${missingLoc[0] + 1} needs a location (External Ref).`
           : `Every stop needs a location (External Ref). Missing: stops ${stops}.`,
       fieldError: { kind: 'location', legIndices: missingLoc },
-    }
-  }
-  if (opts?.nonStandRefs && legs.length >= 1) {
-    const firstLeg = legs[0]
-    const firstRef = firstLeg?.position?.trim() ?? ''
-    if (firstRef && !firstLeg?.groupId?.trim() && opts.nonStandRefs.has(firstRef)) {
-      return {
-        ok: false,
-        message:
-          'Stop 1 (pickup) cannot be a non-stand waypoint. Missions must start from a rack stand.',
-        fieldError: { kind: 'location', legIndices: [0] },
-      }
-    }
-    const lastIdx = legs.length - 1
-    const last = legs[lastIdx]
-    const lastRef = last?.position?.trim() ?? ''
-    if (lastRef && !last?.groupId?.trim() && opts.nonStandRefs.has(lastRef)) {
-      return {
-        ok: false,
-        message:
-          'The final stop cannot be a non-stand waypoint. Choose a rack stand as the mission destination.',
-        fieldError: { kind: 'location', legIndices: [lastIdx] },
-      }
     }
   }
   if (legs.length >= 2) {
@@ -514,7 +468,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   }, [clearMissionErrorsNonce])
 
   useEffect(() => {
-    const v = validateNewMissionForm(legs, { nonStandRefs })
+    const v = validateNewMissionForm(legs)
     if (v.ok) {
       if (validationErrorActiveRef.current) {
         validationErrorActiveRef.current = false
@@ -527,7 +481,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       setFieldError(v.fieldError)
       setError(v.message)
     }
-  }, [legs, nonStandRefs])
+  }, [legs])
   const [rackMoveDebugLastErrorJson, setRackMoveDebugLastErrorJson] = useState<unknown>(null)
   const [rackMoveDebugFleetSettings, setRackMoveDebugFleetSettings] = useState<AmrFleetSettings | null>(null)
   const [robotFleetRows, setRobotFleetRows] = useState<Record<string, unknown>[]>([])
@@ -1175,7 +1129,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       return
     }
 
-    const validation = validateNewMissionForm(legs, { nonStandRefs })
+    const validation = validateNewMissionForm(legs)
     if (!validation.ok) {
       validationErrorActiveRef.current = true
       setError(validation.message)
@@ -1573,7 +1527,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
 
   const openSaveTemplateModal = useCallback(() => {
     setTemplateErr(null)
-    const v = validateNewMissionForm(legs, { nonStandRefs })
+    const v = validateNewMissionForm(legs)
     if (!v.ok) {
       setError(v.message)
       setFieldError(v.fieldError)
@@ -1581,7 +1535,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     }
     setSaveTemplateName('')
     setSaveTemplateOpen(true)
-  }, [legs, nonStandRefs])
+  }, [legs])
 
   useImperativeHandle(
     ref,
@@ -1631,7 +1585,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       validationErrorActiveRef.current = true
       return
     }
-    const v = validateNewMissionForm(legs, { nonStandRefs })
+    const v = validateNewMissionForm(legs)
     if (!v.ok) {
       validationErrorActiveRef.current = true
       setError(v.message)
@@ -2359,12 +2313,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                       onClick={() => {
                         const i = openSuggestLegIdx
                         if (i === null) return
-                        const n = legs.length
-                        const isNon =
-                          normalizeAmrStandLocationType(s.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
                         updateLeg(i, {
                           position: s.external_ref,
-                          ...(isNon && i < n - 1 ? { putDown: false } : {}),
                         })
                         setOpenSuggestLegIdx(null)
                       }}
@@ -2549,14 +2499,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                 if (gid) {
                   updateLeg(idx, { position: '', groupId: gid })
                 } else {
-                  const row = stands.find((s) => s.external_ref.trim() === externalRef.trim())
-                  const isNon =
-                    row &&
-                    normalizeAmrStandLocationType(row.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
                   updateLeg(idx, {
                     position: externalRef,
                     groupId: undefined,
-                    ...(isNon && idx < total - 1 ? { putDown: false } : {}),
                   })
                 }
                 setPickerLegIdx(null)

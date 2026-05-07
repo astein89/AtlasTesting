@@ -1390,7 +1390,7 @@ function migrateAmrStandsActiveMissions(db: DbWrapper) {
   }
 }
 
-/** `stand` (default) vs `non_stand` waypoint — no pallet presence / cannot be final mission stop. */
+/** `stand` (default) vs `non_stand` waypoint — typically no Hyperion pallet presence; lift/lower use block flags like stands. */
 function migrateAmrStandsLocationType(db: DbWrapper) {
   try {
     const cols = tableColumnNames(db, 'amr_stands')
