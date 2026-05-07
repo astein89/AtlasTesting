@@ -14,6 +14,10 @@ import {
   AmrDestinationOccupiedConfirmBody,
   AmrDestinationOccupiedConfirmFooterRetry,
 } from '@/components/amr/AmrDestinationOccupiedConfirmBody'
+import {
+  AmrPickupAbsentConfirmBody,
+  AmrPickupAbsentConfirmFooterRetry,
+} from '@/components/amr/AmrPickupAbsentConfirmBody'
 import { AmrMissionTemplateEditorModal } from '@/components/amr/AmrMissionTemplateEditorModal'
 import { amrPath } from '@/lib/appPaths'
 import { useAuthStore } from '@/store/authStore'
@@ -22,8 +26,13 @@ import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
 import { templatePayloadToMultistopBody, validateMissionTemplatePayloadForCreate } from '@/utils/amrMissionTemplate'
 import {
   shouldWarnFirstSegmentDropOccupied,
-  standRefsBypassingPalletCheck,
+  shouldWarnFirstStopPickupAbsent,
 } from '@/utils/amrPalletPresenceSanity'
+import {
+  normalizeAmrStandLocationType,
+  standRefsNonStandWaypoint,
+  standRefsSkippingHyperionOccupancy,
+} from '@/utils/amrStandLocationType'
 
 function apiErrorMessage(e: unknown): string {
   const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -88,6 +97,7 @@ export function AmrMissionTemplates() {
       zone: r.zone != null ? String(r.zone) : '',
       location_label: String(r.location_label ?? ''),
       orientation: String(r.orientation ?? '0'),
+      location_type: normalizeAmrStandLocationType((r as { location_type?: unknown }).location_type),
     }))
     standsCacheRef.current = mapped
     return mapped
@@ -110,7 +120,8 @@ export function AmrMissionTemplates() {
           getAmrMissionTemplate(templateId),
           getAmrSettings(),
         ])
-        const v = validateMissionTemplatePayloadForCreate(t.payload)
+        const nonStandRefs = standRefsNonStandWaypoint(stands)
+        const v = validateMissionTemplatePayloadForCreate(t.payload, { nonStandRefs })
         if (!v.ok) {
           setErr(v.message)
           return false
@@ -125,8 +136,25 @@ export function AmrMissionTemplates() {
           ].sort()
           if (uniquePresenceRefs.length > 0) {
             try {
-              const presenceBatch = await postStandPresence(uniquePresenceRefs)
-              const bypassRefs = standRefsBypassingPalletCheck(stands)
+              const nonStand = standRefsNonStandWaypoint(stands)
+              const queryRefs = uniquePresenceRefs.filter((r) => !nonStand.has(r))
+              const presenceBatch =
+                queryRefs.length > 0 ? await postStandPresence(queryRefs) : ({} as Record<string, boolean>)
+              const bypassRefs = standRefsSkippingHyperionOccupancy(stands)
+              const pickupWarn = shouldWarnFirstStopPickupAbsent(legsForCheck, presenceBatch, bypassRefs)
+              if (pickupWarn.shouldWarn) {
+                const pr = pickupWarn.pickupRef.trim()
+                const okPickup = await showConfirm(
+                  <AmrPickupAbsentConfirmBody pickupRef={pickupWarn.pickupRef} />,
+                  {
+                    title: pr ? `No pallet at pickup — ${pr}` : 'No pallet at pickup',
+                    confirmLabel: 'Create mission anyway',
+                    footerExtra: <AmrPickupAbsentConfirmFooterRetry />,
+                    omitFooterCancel: true,
+                  }
+                )
+                if (!okPickup) return false
+              }
               const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(
                 legsForCheck,
                 presenceBatch,

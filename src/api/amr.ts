@@ -29,6 +29,8 @@ export type AmrStandRow = {
   bypass_pallet_check: number
   /** Max active queued/reserved dispatches for bypass-pallet-check stands (default 1). */
   active_missions: number
+  /** `stand` | `non_stand` waypoint — see AMR Positions docs / server `amr_stands.location_type`. */
+  location_type?: string
   created_at: string | null
   updated_at: string | null
   [extra: string]: unknown
@@ -57,13 +59,24 @@ export type AmrFleetSettings = {
    */
   missionCreateStandPresenceSanityCheck?: boolean
   missionQueueingEnabled?: boolean
+  /** Toast duration after a mission is created in queued state (ms). Server default 10000; clamped 2000–120000. */
+  missionQueuedToastDismissMs?: number
   palletDropConfirmTimeoutMs?: number
+  /**
+   * After a successful drop with queueing enabled, poll Hyperion and may surface presence warnings unless false (default true if omitted).
+   */
+  postDropPresenceWarningCheck?: boolean
   /** Hyperion API origin (e.g. http://host:1881). Used for stand presence and future Hyperion proxies. */
   hyperionBaseUrl?: string
   hyperionUsername?: string
   hyperionPasswordConfigured?: boolean
   /** Ordered zone categories used to group the stand picker zone list. */
   zoneCategories?: ZoneCategory[]
+  /**
+   * When omitted from stored settings: legacy behavior — exactly two-stand zones show both stands on the zone step.
+   * When set (including empty array): manual list — only those zone keys expand on the zone step for any stand count.
+   */
+  zonePickerInlineZones?: string[]
 }
 
 /** App mission records — match server mission worker cadence (`pollMsMissionWorker`, else `pollMsMissions`). */
@@ -82,7 +95,11 @@ export async function getAmrSettings() {
 }
 
 export async function putAmrSettings(
-  body: Partial<AmrFleetSettings> & { authKey?: string; hyperionPassword?: string }
+  body: Omit<Partial<AmrFleetSettings>, 'zonePickerInlineZones'> & {
+    authKey?: string
+    hyperionPassword?: string
+    zonePickerInlineZones?: string[] | null
+  }
 ) {
   const { data } = await api.put<AmrFleetSettings>('/amr/dc/settings', body)
   return data
@@ -224,6 +241,30 @@ export async function getAmrMissionRecords(options?: { signal?: AbortSignal }) {
     signal: options?.signal,
   })
   return data.records
+}
+
+/** Same shape as {@link AmrMissionTemplatePayloadV1}; used to prefill New Mission from a historical record. */
+export type AmrMissionReplayPayload = {
+  version: 1
+  legs: Array<{
+    position: string
+    groupId?: string
+    putDown: boolean
+    segmentStartPutDown?: boolean
+    continueMode?: 'manual' | 'auto'
+    autoContinueSeconds?: number
+  }>
+  persistentContainer: boolean
+  robotIds?: string[]
+  containerCode?: string
+}
+
+export async function getAmrMissionReplayPayload(missionRecordId: string, options?: { signal?: AbortSignal }) {
+  const { data } = await api.get<AmrMissionReplayPayload>(
+    `/amr/dc/mission-records/${encodeURIComponent(missionRecordId)}/replay`,
+    { signal: options?.signal }
+  )
+  return data
 }
 
 export type AmrMissionAttentionItem = {

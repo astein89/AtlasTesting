@@ -12,6 +12,7 @@ export function AmrStandPresenceRow({
   error,
   unconfigured,
   bypassRefs,
+  nonStandWaypointRefs,
   /** Fleet fork at this NODE: `lower` = putDown true, `lift` = false. Shown as `> LOWER >` / `> LIFT >` before presence. */
   forkAction,
 }: {
@@ -22,16 +23,20 @@ export function AmrStandPresenceRow({
   error: boolean
   unconfigured: boolean
   bypassRefs: Set<string>
+  /** When set, these fleet refs render as waypoint (no pallet presence). */
+  nonStandWaypointRefs?: Set<string>
   forkAction?: 'lift' | 'lower'
 }) {
   const ref = (standRef ?? '').trim()
   const hasRef = Boolean(ref) && ref !== '—'
   const bypassed = hasRef && bypassRefs.has(ref)
+  const waypoint = hasRef && Boolean(nonStandWaypointRefs?.has(ref))
   const present = hasRef ? presenceMap[ref] ?? null : null
   const kind = palletPresenceKindFromState({
+    nonStandWaypoint: waypoint,
     present,
-    loading: hasRef ? loading : false,
-    error: hasRef ? error : false,
+    loading: hasRef && !waypoint ? loading : false,
+    error: hasRef && !waypoint ? error : false,
     unconfigured: !hasRef || bypassed || unconfigured,
   })
   return (

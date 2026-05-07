@@ -45,17 +45,23 @@ import {
   type AmrStandGroupRow,
   getAmrMissionTemplate,
   getAmrSettings,
+  getAmrMissionReplayPayload,
   getAmrStands,
   listAmrMissionTemplates,
   listAmrRobotLocks,
   postStandPresence,
   updateAmrMissionTemplate,
+  type AmrMissionReplayPayload,
 } from '@/api/amr'
 import { getApiErrorMessage } from '@/api/client'
 import {
   AmrDestinationOccupiedConfirmBody,
   AmrDestinationOccupiedConfirmFooterRetry,
 } from '@/components/amr/AmrDestinationOccupiedConfirmBody'
+import {
+  AmrPickupAbsentConfirmBody,
+  AmrPickupAbsentConfirmFooterRetry,
+} from '@/components/amr/AmrPickupAbsentConfirmBody'
 import { AmrMissionNewDebugModal } from '@/components/amr/AmrMissionNewDebugModal'
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch'
 import { AmrRobotSelectModal, type AmrRobotPickRow } from '@/components/amr/AmrRobotSelectModal'
@@ -67,15 +73,22 @@ import {
 } from '@/components/amr/AmrStandPickerModal'
 import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
+import { useToast } from '@/contexts/ToastContext'
 import { amrPath } from '@/lib/appPaths'
 import { getBasePath } from '@/lib/basePath'
 import { useAuthStore } from '@/store/authStore'
-import { missionFormToTemplatePayload } from '@/utils/amrMissionTemplate'
+import { missionFormToTemplatePayload, type AmrMissionTemplatePayloadV1 } from '@/utils/amrMissionTemplate'
 import { previewRackMoveMissionCode } from '@/utils/amrDcaCode'
 import {
   shouldWarnFirstSegmentDropOccupied,
-  standRefsBypassingPalletCheck,
+  shouldWarnFirstStopPickupAbsent,
 } from '@/utils/amrPalletPresenceSanity'
+import {
+  AMR_STAND_LOCATION_TYPE_NON_STAND,
+  normalizeAmrStandLocationType,
+  standRefsNonStandWaypoint,
+  standRefsSkippingHyperionOccupancy,
+} from '@/utils/amrStandLocationType'
 import { buildMultistopFleetTimeline, buildRackMoveFleetForwardPreview } from '@/utils/amrRackMoveFleetPreview'
 import { isActiveRobotFleetStatus } from '@/utils/amrRobotStatus'
 
@@ -155,6 +168,30 @@ function normalizePutDown(prev: Leg[]): Leg[] {
     return l
   })
   return changed ? next : prev
+}
+
+function coerceNonStandIntermediatePutDown(legs: Leg[], standRows: AmrStandPickerRow[]): Leg[] {
+  const byRef = new Map(standRows.map((s) => [s.external_ref.trim(), s]))
+  const n = legs.length
+  if (n < 2) return legs
+  let changed = false
+  const next = legs.map((leg, i) => {
+    const ref = leg.position.trim()
+    if (!ref || leg.groupId?.trim()) return leg
+    if (i === n - 1) return leg
+    const row = byRef.get(ref)
+    if (!row || normalizeAmrStandLocationType(row.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND) return leg
+    if (leg.putDown !== false) {
+      changed = true
+      return { ...leg, putDown: false }
+    }
+    return leg
+  })
+  return changed ? next : legs
+}
+
+function finalizeMissionLegUi(legs: Leg[], standRows: AmrStandPickerRow[]): Leg[] {
+  return coerceNonStandIntermediatePutDown(normalizePutDown(legs), standRows)
 }
 
 /**
@@ -263,7 +300,10 @@ type MissionFormFieldError =
   | { kind: 'location'; legIndices: number[] }
   | { kind: 'autoSeconds'; legIndex: number }
 
-function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; message: string; fieldError: MissionFormFieldError } {
+function validateNewMissionForm(
+  legs: Leg[],
+  opts?: { nonStandRefs?: Set<string> }
+): { ok: true } | { ok: false; message: string; fieldError: MissionFormFieldError } {
   if (legs[0]?.groupId?.trim()) {
     return {
       ok: false,
@@ -287,6 +327,29 @@ function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; messag
       fieldError: { kind: 'location', legIndices: missingLoc },
     }
   }
+  if (opts?.nonStandRefs && legs.length >= 1) {
+    const firstLeg = legs[0]
+    const firstRef = firstLeg?.position?.trim() ?? ''
+    if (firstRef && !firstLeg?.groupId?.trim() && opts.nonStandRefs.has(firstRef)) {
+      return {
+        ok: false,
+        message:
+          'Stop 1 (pickup) cannot be a non-stand waypoint. Missions must start from a rack stand.',
+        fieldError: { kind: 'location', legIndices: [0] },
+      }
+    }
+    const lastIdx = legs.length - 1
+    const last = legs[lastIdx]
+    const lastRef = last?.position?.trim() ?? ''
+    if (lastRef && !last?.groupId?.trim() && opts.nonStandRefs.has(lastRef)) {
+      return {
+        ok: false,
+        message:
+          'The final stop cannot be a non-stand waypoint. Choose a rack stand as the mission destination.',
+        fieldError: { kind: 'location', legIndices: [lastIdx] },
+      }
+    }
+  }
   if (legs.length >= 2) {
     for (let idx = 0; idx < legs.length - 1; idx++) {
       const leg = legs[idx]
@@ -303,6 +366,22 @@ function validateNewMissionForm(legs: Leg[]): { ok: true } | { ok: false; messag
     }
   }
   return { ok: true }
+}
+
+/** Containers → Move sends `?container=` + `?from=`; server maps this to fleet `containerIn` with `isNew: false` when the submitted code still matches. */
+function shouldSendFleetContainerAlreadyRegistered(
+  searchRaw: string,
+  containerCodeTrimmed: string
+): boolean {
+  const cc = containerCodeTrimmed.trim()
+  const t = searchRaw.trim()
+  if (!cc || !t) return false
+  const q = t.startsWith('?') ? t.slice(1) : t
+  const params = new URLSearchParams(q)
+  const qc = params.get('container')?.trim()
+  const qFrom = params.get('from')?.trim()
+  if (!qc || !qFrom) return false
+  return qc === cc
 }
 
 export type AmrMissionNewFormHandle = {
@@ -393,9 +472,12 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
   const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
   const { showConfirm, showAlert } = useAlertConfirm()
+  const { pushToast } = useToast()
   const [stands, setStands] = useState<AmrStandPickerRow[]>([])
   const [standGroups, setStandGroups] = useState<AmrStandGroupRow[]>([])
   const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
+  const nonStandRefs = useMemo(() => standRefsNonStandWaypoint(stands), [stands])
+  const occupancySkipRefs = useMemo(() => standRefsSkippingHyperionOccupancy(stands), [stands])
   const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
   /** After opening the map picker for stop 1, deep-link `?from=` no longer overwrites the field (override / change start). */
   const [startLockReleased, setStartLockReleased] = useState(false)
@@ -432,7 +514,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   }, [clearMissionErrorsNonce])
 
   useEffect(() => {
-    const v = validateNewMissionForm(legs)
+    const v = validateNewMissionForm(legs, { nonStandRefs })
     if (v.ok) {
       if (validationErrorActiveRef.current) {
         validationErrorActiveRef.current = false
@@ -445,7 +527,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       setFieldError(v.fieldError)
       setError(v.message)
     }
-  }, [legs])
+  }, [legs, nonStandRefs])
   const [rackMoveDebugLastErrorJson, setRackMoveDebugLastErrorJson] = useState<unknown>(null)
   const [rackMoveDebugFleetSettings, setRackMoveDebugFleetSettings] = useState<AmrFleetSettings | null>(null)
   const [robotFleetRows, setRobotFleetRows] = useState<Record<string, unknown>[]>([])
@@ -457,6 +539,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   /** From fleet settings: optional Hyperion sanity confirm before create multistop mission. */
   const [missionCreateStandPresenceSanityCheck, setMissionCreateStandPresenceSanityCheck] = useState(true)
   const [missionQueueingEnabled, setMissionQueueingEnabled] = useState(true)
+  const [missionQueuedToastDismissMs, setMissionQueuedToastDismissMs] = useState(10000)
   const [robotSelectOpen, setRobotSelectOpen] = useState(false)
   const [debugModalOpen, setDebugModalOpen] = useState(false)
   const [selectedRobotIds, setSelectedRobotIds] = useState<string[]>([])
@@ -487,16 +570,22 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const loadPresenceForRefs = useCallback(async (refs: string[], opts?: { silent?: boolean }) => {
     if (refs.length === 0) return
     const silent = opts?.silent === true
+    const skip = standRefsNonStandWaypoint(stands)
+    const query = refs.map((r) => r.trim()).filter((r) => r && !skip.has(r))
+    if (query.length === 0) {
+      if (!silent) setStandPresenceLoading(false)
+      return
+    }
     if (!silent) {
       setStandPresenceLoading(true)
       setStandPresenceError(false)
       setStandPresenceUnconfig(false)
     }
     try {
-      const map = await postStandPresence(refs)
+      const map = await postStandPresence(query)
       setStandPresenceMap((prev) => {
         const next = { ...prev }
-        for (const r of refs) {
+        for (const r of query) {
           next[r] = Object.prototype.hasOwnProperty.call(map, r) ? map[r] : null
         }
         return next
@@ -511,9 +600,13 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     } finally {
       if (!silent) setStandPresenceLoading(false)
     }
-  }, [])
+  }, [stands])
 
   const uniqueStandKey = uniqueStandRefs.join('\0')
+  const hasHyperionQueryableStands = useMemo(
+    () => uniqueStandRefs.some((r) => !nonStandRefs.has(r)),
+    [uniqueStandRefs, nonStandRefs]
+  )
   useEffect(() => {
     if (uniqueStandRefs.length === 0) return
     const t = window.setTimeout(() => {
@@ -533,10 +626,10 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   useEffect(() => {
     if (variant !== 'modal' || !onMissionStandsRefreshState) return
     onMissionStandsRefreshState({
-      canRefresh: uniqueStandRefs.length > 0,
+      canRefresh: hasHyperionQueryableStands,
       loading: standPresenceLoading,
     })
-  }, [variant, onMissionStandsRefreshState, uniqueStandKey, standPresenceLoading])
+  }, [variant, onMissionStandsRefreshState, uniqueStandKey, standPresenceLoading, hasHyperionQueryableStands])
 
   const containerInputRef = useRef<HTMLInputElement | null>(null)
   const legPositionInputRefs = useRef<(HTMLInputElement | null)[]>([])
@@ -552,7 +645,15 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const suggestedStands = useMemo(() => {
     if (openSuggestLegIdx === null) return []
     const q = legs[openSuggestLegIdx]?.position ?? ''
-    return filterStandsForSuggest(stands, q)
+    let list = filterStandsForSuggest(stands, q)
+    const n = legs.length
+    const idx = openSuggestLegIdx
+    if (n >= 1 && (idx === 0 || idx === n - 1)) {
+      list = list.filter(
+        (s) => normalizeAmrStandLocationType(s.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND
+      )
+    }
+    return list
   }, [openSuggestLegIdx, legs, stands])
 
   useEffect(() => {
@@ -585,6 +686,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
           block_pickup: Number(r.block_pickup ?? 0),
           block_dropoff: Number(r.block_dropoff ?? 0),
           bypass_pallet_check: Number(r.bypass_pallet_check ?? 0),
+          location_type: normalizeAmrStandLocationType((r as { location_type?: unknown }).location_type),
         }))
       )
     )
@@ -592,8 +694,6 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       .then(setStandGroups)
       .catch(() => setStandGroups([]))
   }, [])
-
-  const palletPresenceBypassRefs = useMemo(() => standRefsBypassingPalletCheck(stands), [stands])
 
   useEffect(() => {
     robotFleetMountedRef.current = true
@@ -608,6 +708,11 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       setPollMsContainers(Math.max(3000, s.pollMsContainers))
       setMissionCreateStandPresenceSanityCheck(s.missionCreateStandPresenceSanityCheck !== false)
       setMissionQueueingEnabled(s.missionQueueingEnabled !== false)
+      const qToast =
+        typeof s.missionQueuedToastDismissMs === 'number' && Number.isFinite(s.missionQueuedToastDismissMs)
+          ? s.missionQueuedToastDismissMs
+          : 10000
+      setMissionQueuedToastDismissMs(Math.max(2000, Math.min(120000, Math.floor(qToast))))
       setZoneCategories(Array.isArray(s.zoneCategories) ? s.zoneCategories : [])
     })
   }, [])
@@ -741,10 +846,10 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         if (!prev.length) return prev
         const next = [...prev]
         next[0] = { ...next[0], position: from }
-        return normalizePutDown(next)
+        return finalizeMissionLegUi(next, stands)
       })
     }
-  }, [effectiveSearch, startLockReleased])
+  }, [effectiveSearch, startLockReleased, stands])
 
   /** Keep first stop aligned with `from` while that query param is present (locked start). */
   useEffect(() => {
@@ -754,9 +859,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       if (prev[0].position === lockStartLocation) return prev
       const next = [...prev]
       next[0] = { ...next[0], position: lockStartLocation }
-      return normalizePutDown(next)
+      return finalizeMissionLegUi(next, stands)
     })
-  }, [lockStartLocation, startLockReleased])
+  }, [lockStartLocation, startLockReleased, stands])
 
   const updateStandSuggestLayout = useCallback(() => {
     const idx = openSuggestLegIdx
@@ -822,8 +927,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const legsOrderKey = useMemo(() => legs.map((l) => l.id).join('|'), [legs])
 
   useEffect(() => {
-    setLegs((prev) => normalizePutDown(prev))
-  }, [legsOrderKey, legs.length])
+    setLegs((prev) => finalizeMissionLegUi(prev, stands))
+  }, [legsOrderKey, legs.length, stands])
 
   useEffect(() => {
     if (!canManage || variant === 'templateEditor') return
@@ -911,7 +1016,11 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       persistentContainer: persistent,
       enterOrientation,
     }
-    if (containerCode.trim()) payload.containerCode = containerCode.trim()
+    const ccTrim = containerCode.trim()
+    if (ccTrim) payload.containerCode = ccTrim
+    if (ccTrim && shouldSendFleetContainerAlreadyRegistered(effectiveSearch, ccTrim)) {
+      payload.containerFleetAlreadyRegistered = true
+    }
     if (selectedRobotIds.length > 0) payload.robotIds = selectedRobotIds
     if (overrideSpecialLocations) payload.override = true
     const segmentFirstNodePutDown = legs.slice(0, -1).map((l) => l.segmentStartPutDown === true)
@@ -1066,7 +1175,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       return
     }
 
-    const validation = validateNewMissionForm(legs)
+    const validation = validateNewMissionForm(legs, { nonStandRefs })
     if (!validation.ok) {
       validationErrorActiveRef.current = true
       setError(validation.message)
@@ -1090,15 +1199,29 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       return
     }
 
-    if (missionCreateStandPresenceSanityCheck && !missionQueueingEnabled) {
+    if (missionCreateStandPresenceSanityCheck) {
       const uniquePresenceRefs = [...new Set(legs.map((l) => l.position.trim()).filter(Boolean))].sort()
       if (uniquePresenceRefs.length > 0) {
         try {
           const presenceBatch = await postStandPresence(uniquePresenceRefs)
+          const pickupWarn = shouldWarnFirstStopPickupAbsent(legs, presenceBatch, occupancySkipRefs)
+          if (pickupWarn.shouldWarn) {
+            const pr = pickupWarn.pickupRef.trim()
+            const okPickup = await showConfirm(
+              <AmrPickupAbsentConfirmBody pickupRef={pickupWarn.pickupRef} />,
+              {
+                title: pr ? `No pallet at pickup — ${pr}` : 'No pallet at pickup',
+                confirmLabel: 'Create mission anyway',
+                footerExtra: <AmrPickupAbsentConfirmFooterRetry />,
+                omitFooterCancel: true,
+              }
+            )
+            if (!okPickup) return
+          }
           const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(
             legs,
             presenceBatch,
-            palletPresenceBypassRefs
+            occupancySkipRefs
           )
           if (shouldWarn) {
             const destTitle = destinationRef.trim()
@@ -1131,43 +1254,6 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       const queuedInitial = data.queued === true
       const queuedDest =
         typeof data.destinationRef === 'string' ? data.destinationRef.trim() : ''
-      if (queuedInitial && sid) {
-        if (canForceRelease) {
-          const force = await showConfirm(
-            <span>
-              First segment is <strong className="font-medium">queued</strong> until the drop stand clears
-              {queuedDest ? (
-                <>
-                  {' '}(<span className="font-mono">{queuedDest}</span>)
-                </>
-              ) : null}
-              . Auto-dispatch resumes when Hyperion reports the stand empty. Force dispatch now and skip that check?
-            </span>,
-            {
-              title: 'Mission queued',
-              confirmLabel: 'Force dispatch',
-              cancelLabel: 'Wait for queue',
-              variant: 'danger',
-            }
-          )
-          if (force) {
-            try {
-              await continueAmrMultistopSession(sid, { forceRelease: true })
-            } catch (forceErr: unknown) {
-              validationErrorActiveRef.current = false
-              setError(getApiErrorMessage(forceErr, 'Force dispatch failed'))
-              return
-            }
-          }
-        } else {
-          showAlert(
-            queuedDest
-              ? `Mission is queued until stand ${queuedDest} clears; DC will dispatch the first segment automatically.`
-              : 'Mission is queued until the drop stand clears; DC will dispatch the first segment automatically.',
-            'Queued'
-          )
-        }
-      }
       if (openOverviewAfter && sid) {
         navigate(
           `${amrPath('missions')}?${new URLSearchParams({ multistopSummary: sid }).toString()}`
@@ -1176,6 +1262,51 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         navigate(amrPath('missions'))
       }
       onRequestClose?.()
+      if (queuedInitial && sid) {
+        const overviewUrl = `${amrPath('missions')}?${new URLSearchParams({ multistopSummary: sid }).toString()}`
+        const queuedBody = queuedDest
+          ? `The first segment is queued until ${queuedDest} clears; DC dispatches automatically when Hyperion reports the stand empty.`
+          : 'The first segment is queued until the drop stand clears; DC dispatches automatically when Hyperion reports the stand empty.'
+        pushToast({
+          durationMs: missionQueuedToastDismissMs,
+          render: ({ dismiss }) => (
+            <div className="space-y-2">
+              <p className="font-medium text-foreground">Mission queued</p>
+              <p className="text-xs text-foreground/80">{queuedBody}</p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {canForceRelease ? (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-destructive/50 bg-background px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          await continueAmrMultistopSession(sid, { forceRelease: true })
+                          dismiss()
+                        } catch (forceErr: unknown) {
+                          showAlert(getApiErrorMessage(forceErr, 'Force dispatch failed'), 'Force dispatch')
+                        }
+                      })()
+                    }}
+                  >
+                    Force dispatch
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="rounded-lg border border-border bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                  onClick={() => {
+                    navigate(overviewUrl)
+                    dismiss()
+                  }}
+                >
+                  Open mission
+                </button>
+              </div>
+            </div>
+          ),
+        })
+      }
     } catch (e: unknown) {
       const ax = e as { response?: { data?: unknown } }
       if (canAmrApiDebug) setRackMoveDebugLastErrorJson(ax?.response?.data ?? { message: String(e) })
@@ -1200,13 +1331,13 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       if (idx === 0 && lockStartLocation && !startLockReleased && 'position' in patch) return prev
       const n = prev.length
       if ('putDown' in patch && n >= 2 && (idx === 0 || idx === n - 1)) return prev
-      return normalizePutDown(prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)))
+      return finalizeMissionLegUi(prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)), stands)
     })
   }
 
   /** Adds another stop; three or more stops use chained fleet missions and Continue on Missions. */
   const addLeg = () => {
-    setLegs((prev) => normalizePutDown([...prev, newLeg()]))
+    setLegs((prev) => finalizeMissionLegUi([...prev, newLeg()], stands))
   }
 
   const sensors = useSensors(
@@ -1223,10 +1354,10 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         const newIndex = prev.findIndex((l) => l.id === over.id)
         if (oldIndex < 0 || newIndex < 0) return prev
         if (lockStartLocation && !startLockReleased && (oldIndex === 0 || newIndex === 0)) return prev
-        return normalizePutDown(arrayMove(prev, oldIndex, newIndex))
+        return finalizeMissionLegUi(arrayMove(prev, oldIndex, newIndex), stands)
       })
     },
-    [lockStartLocation, startLockReleased]
+    [lockStartLocation, startLockReleased, stands]
   )
 
   const removeLeg = (idx: number) => {
@@ -1235,7 +1366,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     setLegs((prev) => {
       if (prev.length <= 2) return prev
       if (lockStartLocation && !startLockReleased && idx === 0) return prev
-      return normalizePutDown(prev.filter((_, i) => i !== idx))
+      return finalizeMissionLegUi(prev.filter((_, i) => i !== idx), stands)
     })
   }
 
@@ -1257,14 +1388,13 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     createMissionButtonRef.current?.focus()
   }
 
-  const applyMissionTemplate = useCallback(async (templateId: string): Promise<boolean> => {
-    if (!templateId.trim()) return false
-    setTemplateErr(null)
-    setTemplateLoadBusy(true)
-    try {
-      const t = await getAmrMissionTemplate(templateId)
-      const mapped = normalizePutDown(
-        t.payload.legs.map((leg) =>
+  const hydrateFormFromMissionTemplatePayload = useCallback(
+    (
+      payload: AmrMissionTemplatePayloadV1 | AmrMissionReplayPayload,
+      opts?: { preserveTemplateDropdown?: boolean }
+    ) => {
+      const mapped = finalizeMissionLegUi(
+        payload.legs.map((leg) =>
           newLeg({
             position: leg.position,
             ...(leg.groupId?.trim() ? { groupId: leg.groupId.trim() } : {}),
@@ -1273,20 +1403,32 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
             continueMode: leg.continueMode ?? 'manual',
             autoContinueSeconds: leg.autoContinueSeconds ?? 0,
           })
-        )
+        ),
+        stands
       )
       const locked = lockStartLocation.trim()
       if (locked && !startLockReleased) {
         const copy = [...mapped]
         if (copy[0]) copy[0] = { ...copy[0], position: locked }
-        setLegs(normalizePutDown(copy))
+        setLegs(finalizeMissionLegUi(copy, stands))
       } else {
         setLegs(mapped)
       }
-      setPersistent(t.payload.persistentContainer)
-      setSelectedRobotIds(t.payload.robotIds ?? [])
-      setContainerCode(t.payload.containerCode ?? '')
-      setTemplateSelectValue('')
+      setPersistent(Boolean(payload.persistentContainer))
+      setSelectedRobotIds(Array.isArray(payload.robotIds) ? payload.robotIds : [])
+      setContainerCode(payload.containerCode ?? '')
+      if (opts?.preserveTemplateDropdown !== true) setTemplateSelectValue('')
+    },
+    [lockStartLocation, startLockReleased, stands]
+  )
+
+  const applyMissionTemplate = useCallback(async (templateId: string): Promise<boolean> => {
+    if (!templateId.trim()) return false
+    setTemplateErr(null)
+    setTemplateLoadBusy(true)
+    try {
+      const t = await getAmrMissionTemplate(templateId)
+      hydrateFormFromMissionTemplatePayload(t.payload)
       return true
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { error?: string } } }
@@ -1295,7 +1437,28 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     } finally {
       setTemplateLoadBusy(false)
     }
-  }, [lockStartLocation, startLockReleased])
+  }, [hydrateFormFromMissionTemplatePayload])
+
+  const applyMissionReplayPayload = useCallback(
+    async (missionRecordId: string): Promise<boolean> => {
+      const id = missionRecordId.trim()
+      if (!id) return false
+      setTemplateErr(null)
+      setTemplateLoadBusy(true)
+      try {
+        const p = await getAmrMissionReplayPayload(id)
+        hydrateFormFromMissionTemplatePayload(p)
+        return true
+      } catch (e: unknown) {
+        const ax = e as { response?: { data?: { error?: string } } }
+        setTemplateErr(ax?.response?.data?.error ?? 'Could not load mission replay data')
+        return false
+      } finally {
+        setTemplateLoadBusy(false)
+      }
+    },
+    [hydrateFormFromMissionTemplatePayload]
+  )
 
   const templateIdFromSearch = useMemo(() => {
     const raw = effectiveSearch.trim()
@@ -1304,10 +1467,22 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     return params.get('template')?.trim() ?? ''
   }, [effectiveSearch])
 
+  const replayMissionIdFromSearch = useMemo(() => {
+    const raw = effectiveSearch.trim()
+    if (!raw) return ''
+    const params = new URLSearchParams(raw.startsWith('?') ? raw : `?${raw}`)
+    return params.get('replay')?.trim() ?? ''
+  }, [effectiveSearch])
+
   const autoLoadedTemplateIdRef = useRef<string | null>(null)
+  const autoLoadedReplayMissionIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (variant === 'templateEditor') return
+    if (replayMissionIdFromSearch) {
+      autoLoadedTemplateIdRef.current = null
+      return
+    }
     const tid = templateIdFromSearch
     if (!tid) {
       autoLoadedTemplateIdRef.current = null
@@ -1321,7 +1496,24 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     return () => {
       cancelled = true
     }
-  }, [variant, templateIdFromSearch, applyMissionTemplate])
+  }, [variant, templateIdFromSearch, replayMissionIdFromSearch, applyMissionTemplate])
+
+  useEffect(() => {
+    if (variant === 'templateEditor') return
+    const rid = replayMissionIdFromSearch
+    if (!rid) {
+      autoLoadedReplayMissionIdRef.current = null
+      return
+    }
+    if (autoLoadedReplayMissionIdRef.current === rid) return
+    let cancelled = false
+    void applyMissionReplayPayload(rid).then((ok) => {
+      if (!cancelled && ok) autoLoadedReplayMissionIdRef.current = rid
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [variant, replayMissionIdFromSearch, applyMissionReplayPayload])
 
   useEffect(() => {
     if (variant !== 'templateEditor') return
@@ -1347,7 +1539,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       .then((t) => {
         if (cancelled) return
         setTemplateEditorName(t.name)
-        const mapped = normalizePutDown(
+        const mapped = finalizeMissionLegUi(
           t.payload.legs.map((leg) =>
             newLeg({
               position: leg.position,
@@ -1357,7 +1549,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               continueMode: leg.continueMode ?? 'manual',
               autoContinueSeconds: leg.autoContinueSeconds ?? 0,
             })
-          )
+          ),
+          stands
         )
         setLegs(mapped)
         setPersistent(t.payload.persistentContainer)
@@ -1376,11 +1569,11 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     return () => {
       cancelled = true
     }
-  }, [variant, templateEditorId])
+  }, [variant, templateEditorId, stands])
 
   const openSaveTemplateModal = useCallback(() => {
     setTemplateErr(null)
-    const v = validateNewMissionForm(legs)
+    const v = validateNewMissionForm(legs, { nonStandRefs })
     if (!v.ok) {
       setError(v.message)
       setFieldError(v.fieldError)
@@ -1388,7 +1581,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     }
     setSaveTemplateName('')
     setSaveTemplateOpen(true)
-  }, [legs])
+  }, [legs, nonStandRefs])
 
   useImperativeHandle(
     ref,
@@ -1438,7 +1631,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       validationErrorActiveRef.current = true
       return
     }
-    const v = validateNewMissionForm(legs)
+    const v = validateNewMissionForm(legs, { nonStandRefs })
     if (!v.ok) {
       validationErrorActiveRef.current = true
       setError(v.message)
@@ -1665,7 +1858,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="min-w-0 text-sm font-medium">Mission stops</h2>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            {variant !== 'modal' && uniqueStandRefs.length > 0 ? (
+            {variant !== 'modal' && hasHyperionQueryableStands ? (
               <button
                 type="button"
                 className="shrink-0 text-sm text-primary hover:underline disabled:opacity-50"
@@ -1833,6 +2026,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                       <span className="flex shrink-0 items-center gap-1 bg-muted/15 px-1.5 py-1 sm:px-2">
                         <PalletPresenceGlyph
                           kind={palletPresenceKindFromState({
+                            nonStandWaypoint: nonStandRefs.has(leg.position.trim()),
                             present: Object.prototype.hasOwnProperty.call(
                               standPresenceMap,
                               leg.position.trim()
@@ -2165,7 +2359,13 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                       onClick={() => {
                         const i = openSuggestLegIdx
                         if (i === null) return
-                        updateLeg(i, { position: s.external_ref })
+                        const n = legs.length
+                        const isNon =
+                          normalizeAmrStandLocationType(s.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
+                        updateLeg(i, {
+                          position: s.external_ref,
+                          ...(isNon && i < n - 1 ? { putDown: false } : {}),
+                        })
                         setOpenSuggestLegIdx(null)
                       }}
                     >
@@ -2340,6 +2540,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               zoneCategories={zoneCategories}
               canOverride={canOverrideSpecial}
               allowGroups={idx > 0}
+              omitNonStandWaypoints={idx === 0 || idx === total - 1}
               onClose={() => setPickerLegIdx(null)}
               onSelect={(externalRef, opts) => {
                 if (idx === null) return
@@ -2348,7 +2549,15 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                 if (gid) {
                   updateLeg(idx, { position: '', groupId: gid })
                 } else {
-                  updateLeg(idx, { position: externalRef, groupId: undefined })
+                  const row = stands.find((s) => s.external_ref.trim() === externalRef.trim())
+                  const isNon =
+                    row &&
+                    normalizeAmrStandLocationType(row.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
+                  updateLeg(idx, {
+                    position: externalRef,
+                    groupId: undefined,
+                    ...(isNon && idx < total - 1 ? { putDown: false } : {}),
+                  })
                 }
                 setPickerLegIdx(null)
               }}

@@ -44,6 +44,7 @@ import {
 import { AmrStandOccupiedContinueModal } from '@/components/amr/AmrStandOccupiedContinueModal'
 import { AmrStandPresenceRow } from '@/components/amr/AmrStandPresenceRow'
 import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
+import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
 import { amrPath } from '@/lib/appPaths'
 import { friendlyMultistopSessionStatus } from '@/utils/amrMultistopDisplay'
 
@@ -54,9 +55,13 @@ import {
   multistopStandOccupiedContinueMessage,
   parseMultistopReleasePlanDestinations,
   refBypassesPalletCheck,
-  standRefsBypassingPalletCheck,
   type MultistopReleasePlanDest,
 } from '@/utils/amrPalletPresenceSanity'
+import {
+  normalizeAmrStandLocationType,
+  standRefsNonStandWaypoint,
+  standRefsSkippingHyperionOccupancy,
+} from '@/utils/amrStandLocationType'
 import { formatRemainingMmSs, remainingMsUntilIso } from '@/utils/amrContinueCountdown'
 import {
   MISSION_QUEUED_CALLOUT_CLASS,
@@ -445,6 +450,7 @@ type RouteStandPresenceSlice = {
   error: boolean
   unconfigured: boolean
   bypassRefs: Set<string>
+  nonStandWaypointRefs: Set<string>
 }
 
 /** Hyperion reports a pallet at the leg destination (To) — matches stand-occupied modal emphasis. */
@@ -452,6 +458,7 @@ function destinationStandReadsOccupied(legEnd: string, standPresence?: RouteStan
   if (!standPresence) return false
   const ref = legEnd.trim()
   if (!ref || ref === '—') return false
+  if (standPresence.nonStandWaypointRefs.has(ref)) return false
   if (standPresence.unconfigured || standPresence.error) return false
   if (refBypassesPalletCheck(ref, standPresence.bypassRefs)) return false
   return standPresence.map[ref] === true
@@ -546,6 +553,7 @@ function SortableTailDestCard({
                 error={standPresence.error}
                 unconfigured={standPresence.unconfigured}
                 bypassRefs={standPresence.bypassRefs}
+                nonStandWaypointRefs={standPresence.nonStandWaypointRefs}
                 forkAction={fromFork}
               />
               <AmrStandPresenceRow
@@ -556,6 +564,7 @@ function SortableTailDestCard({
                 error={standPresence.error}
                 unconfigured={standPresence.unconfigured}
                 bypassRefs={standPresence.bypassRefs}
+                nonStandWaypointRefs={standPresence.nonStandWaypointRefs}
                 forkAction={toFork}
               />
             </div>
@@ -682,6 +691,7 @@ export interface AmrMissionDetailModalProps {
 }
 
 export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: AmrMissionDetailModalProps) {
+  const openNewMissionModal = useAmrMissionNewModal()
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
   const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
   const [msRefresh, setMsRefresh] = useState(0)
@@ -724,7 +734,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [standPresenceSanityOn, setStandPresenceSanityOn] = useState(true)
 
   const [standRows, setStandRows] = useState<AmrStandPickerRow[]>([])
-  const palletPresenceBypassRefs = useMemo(() => standRefsBypassingPalletCheck(standRows), [standRows])
+  const nonStandWaypointRefs = useMemo(() => standRefsNonStandWaypoint(standRows), [standRows])
+  const palletPresenceBypassRefs = useMemo(() => standRefsSkippingHyperionOccupancy(standRows), [standRows])
   const [zoneCategories, setZoneCategories] = useState<ZoneCategory[]>([])
   const [overrideSpecialLocations, setOverrideSpecialLocations] = useState(false)
   const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
@@ -807,6 +818,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           block_pickup: Number(r.block_pickup ?? 0),
           block_dropoff: Number(r.block_dropoff ?? 0),
           bypass_pallet_check: Number(r.bypass_pallet_check ?? 0),
+          location_type: normalizeAmrStandLocationType((r as { location_type?: unknown }).location_type),
         }))
       )
     )
@@ -991,8 +1003,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
 
   const nextContinueOccupiedCheckRef = useMemo(() => {
     if (!planForContinueOccupiedRef?.length || !Number.isFinite(nextSegmentIndex)) return null
-    return multistopContinueOccupiedDestinationRef(planForContinueOccupiedRef, nextSegmentIndex)
-  }, [planForContinueOccupiedRef, nextSegmentIndex])
+    return multistopContinueOccupiedDestinationRef(
+      planForContinueOccupiedRef,
+      nextSegmentIndex,
+      nonStandWaypointRefs
+    )
+  }, [planForContinueOccupiedRef, nextSegmentIndex, nonStandWaypointRefs])
 
   /** Includes next Continue drop + blocked stand so release gating and maps stay fresh while polling. */
   const presencePollStandRefs = useMemo(() => {
@@ -1032,7 +1048,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
 
   const loadRoutePlanPresence = useCallback(
     async (refs: string[], opts?: { silent?: boolean }) => {
-      if (refs.length === 0) return
+      const query = refs.map((r) => r.trim()).filter((r) => r && !nonStandWaypointRefs.has(r))
+      if (query.length === 0) {
+        const silent = opts?.silent === true
+        if (!silent) setRouteStandPresenceLoading(false)
+        return
+      }
       const silent = opts?.silent === true
       if (!silent) {
         setRouteStandPresenceLoading(true)
@@ -1040,10 +1061,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         setRouteStandPresenceUnconfig(false)
       }
       try {
-        const map = await postStandPresence(refs)
+        const map = await postStandPresence(query)
         setRouteStandPresenceMap((prev) => {
           const next = { ...prev }
-          for (const r of refs) {
+          for (const r of query) {
             next[r] = Object.prototype.hasOwnProperty.call(map, r) ? map[r] : null
           }
           return next
@@ -1059,7 +1080,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         if (!silent) setRouteStandPresenceLoading(false)
       }
     },
-    []
+    [nonStandWaypointRefs]
   )
 
   useEffect(() => {
@@ -1094,6 +1115,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
             error: routeStandPresenceError,
             unconfigured: routeStandPresenceUnconfig,
             bypassRefs: palletPresenceBypassRefs,
+            nonStandWaypointRefs,
           }
         : undefined,
     [
@@ -1105,6 +1127,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       routeStandPresenceError,
       routeStandPresenceUnconfig,
       palletPresenceBypassRefs,
+      nonStandWaypointRefs,
     ]
   )
 
@@ -1434,6 +1457,16 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const loadBlockedDestinationPresence = useCallback(async (opts?: { silent?: boolean }) => {
     const ref = continueBlockedStandRef?.trim()
     if (!ref) return
+    if (nonStandWaypointRefs.has(ref)) {
+      const silent = opts?.silent === true
+      setBlockedDestPresence(null)
+      if (!silent) {
+        setBlockedDestPresenceLoading(false)
+        setBlockedDestPresenceError(false)
+        setBlockedDestPresenceUnconfig(false)
+      }
+      return
+    }
     const silent = opts?.silent === true
     if (!silent) {
       setBlockedDestPresenceLoading(true)
@@ -1458,7 +1491,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     } finally {
       if (!silent) setBlockedDestPresenceLoading(false)
     }
-  }, [continueBlockedStandRef])
+  }, [continueBlockedStandRef, nonStandWaypointRefs])
 
   useEffect(() => {
     if (!continueBlockedStandRef) {
@@ -1574,7 +1607,11 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           position: r.position.trim(),
           putDown: r.putDown === true,
         }))
-        const ref = multistopContinueOccupiedDestinationRef(planFromDraft, nextSegmentIndex)
+        const ref = multistopContinueOccupiedDestinationRef(
+          planFromDraft,
+          nextSegmentIndex,
+          nonStandWaypointRefs
+        )
         if (ref && !refBypassesPalletCheck(ref, palletPresenceBypassRefs)) {
           const presence = await postStandPresence([ref])
           if (presence[ref] === true) {
@@ -1657,6 +1694,11 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     (continueBlockedStandRef ?? nextContinueOccupiedCheckRef)?.trim() || null
 
   const missionRecordPk = record ? String(record.id ?? '').trim() : ''
+  const replayAsNewMissionEnabled =
+    canManage &&
+    Boolean(missionRecordPk) &&
+    !missionRecordPk.startsWith('__pending_first__') &&
+    Number(record?.worker_closed) === 1
   const isQueuedMission = Number(record?.queued) === 1
   const queuedDestRef =
     typeof record?.queued_destination_ref === 'string' ? record.queued_destination_ref.trim() : ''
@@ -1851,26 +1893,29 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               </div>
             ) : null}
             {presenceWarnIso && missionRecordPk ? (
-              <div className="mt-3 rounded-lg border border-amber-500/35 bg-amber-500/8 px-3 py-2.5 text-sm leading-snug text-foreground">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-amber-950 dark:text-amber-100">
+              <div className="mt-3 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2.5 text-sm leading-snug text-foreground dark:border-red-500/28 dark:bg-red-950/35">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-red-800 dark:text-red-200">
                   Drop presence warning
                 </p>
-                <p className="mt-1 text-xs text-foreground/80">
-                  Hyperion still reports a pallet at{' '}
-                  {presenceDestRef ? <span className="font-mono">{presenceDestRef}</span> : 'the drop stand'} after the
-                  post-drop check window (warned at {formatDateTime(presenceWarnIso)}).
+                <p className="mt-1 text-xs text-red-950/90 dark:text-red-100/90">
+                  Hyperion never reported a pallet at{' '}
+                  {presenceDestRef ? <span className="font-mono">{presenceDestRef}</span> : 'the drop stand'} within the
+                  post-drop confirmation window. The mission row is flagged and may still hold a stand reservation (
+                  warned {formatDateTime(presenceWarnIso)}).
                 </p>
                 {canForceRelease ? (
                   <button
                     type="button"
                     disabled={ackPresenceBusy}
-                    className="mt-2 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+                    className="mt-2 rounded-md border border-red-600/35 bg-background px-2.5 py-1 text-[11px] font-medium text-red-900 hover:bg-red-500/10 disabled:opacity-50 dark:border-red-500/40 dark:text-red-100"
                     onClick={() => void onAckPresenceWarning()}
                   >
-                    {ackPresenceBusy ? 'Acknowledging…' : 'Acknowledge (clear warning)'}
+                    {ackPresenceBusy ? 'Releasing…' : 'Acknowledge and release reservation'}
                   </button>
                 ) : (
-                  <p className="mt-2 text-xs text-foreground/55">Operators with mission force-release permission can acknowledge.</p>
+                  <p className="mt-2 text-xs text-foreground/60">
+                    Operators with mission force-release permission can acknowledge and release the reservation.
+                  </p>
                 )}
               </div>
             ) : null}
@@ -1962,6 +2007,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                           <span className="inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-background/80 px-2 py-1">
                             <PalletPresenceGlyph
                               kind={palletPresenceKindFromState({
+                                nonStandWaypoint:
+                                  !!continueBlockedStandRef &&
+                                  nonStandWaypointRefs.has(continueBlockedStandRef.trim()),
                                 present: blockedDestPresence,
                                 loading: blockedDestPresenceLoading,
                                 error: blockedDestPresenceError,
@@ -2136,6 +2184,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     error={routeStandPresenceUi.error}
                                     unconfigured={routeStandPresenceUi.unconfigured}
                                     bypassRefs={routeStandPresenceUi.bypassRefs}
+                                    nonStandWaypointRefs={routeStandPresenceUi.nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
                                         ? completedDepart
@@ -2152,6 +2201,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     error={routeStandPresenceUi.error}
                                     unconfigured={routeStandPresenceUi.unconfigured}
                                     bypassRefs={routeStandPresenceUi.bypassRefs}
+                                    nonStandWaypointRefs={routeStandPresenceUi.nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
                                         ? Boolean(completedArriveLower)
@@ -2171,6 +2221,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     error={false}
                                     unconfigured={false}
                                     bypassRefs={emptyStandPresenceBypass}
+                                    nonStandWaypointRefs={nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
                                         ? completedDepart
@@ -2187,6 +2238,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     error={false}
                                     unconfigured={false}
                                     bypassRefs={emptyStandPresenceBypass}
+                                    nonStandWaypointRefs={nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
                                         ? Boolean(completedArriveLower)
@@ -2429,6 +2481,30 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           >
             Mission log
           </Link>
+          {replayAsNewMissionEnabled ? (
+            openNewMissionModal ? (
+              <button
+                type="button"
+                className="inline-flex min-h-[44px] items-center rounded-lg border border-primary/40 bg-primary/10 px-4 text-sm font-medium text-primary hover:bg-primary/15"
+                onClick={() => {
+                  openNewMissionModal.openNewMission({
+                    search: `?replay=${encodeURIComponent(missionRecordPk)}`,
+                  })
+                  onClose()
+                }}
+              >
+                New mission from this route
+              </button>
+            ) : (
+              <Link
+                to={`${amrPath('missions', 'new')}?replay=${encodeURIComponent(missionRecordPk)}`}
+                className="inline-flex min-h-[44px] items-center rounded-lg border border-primary/40 bg-primary/10 px-4 text-sm font-medium text-primary hover:bg-primary/15"
+                onClick={onClose}
+              >
+                New mission from this route
+              </Link>
+            )
+          ) : null}
           <button
             type="button"
             className="min-h-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"

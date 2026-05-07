@@ -37,6 +37,7 @@ import {
   continueNotBeforeDeferredFirstSegment,
   continueNotBeforeForAwaitingSession,
   multistopPlanFromTemplateLegs,
+  multistopPlanToReplayLegs,
   multistopPlanToStandLegPairs,
   multistopSegmentDropDestinationRef,
   multistopSegmentDropGate,
@@ -71,6 +72,15 @@ import {
   templateListCardFieldsFromPayloadJson,
   type AmrMissionTemplatePayloadV1,
 } from '../lib/amrMissionTemplate.js'
+import {
+  AMR_STAND_LOCATION_TYPE_NON_STAND,
+  AMR_STAND_LOCATION_TYPE_STAND,
+  externalRefUsesNonStandRow,
+  externalRefsNonStandLocation,
+  normalizeAmrStandLocationType,
+  standIdIsAssignedToStandGroup,
+} from '../lib/amrStandLocationType.js'
+import { applyMultistopNonStandRules } from '../lib/amrStandNonStandPlan.js'
 
 function jsonMissionTemplatePayload(p: AmrMissionTemplatePayloadV1): string {
   return JSON.stringify(p)
@@ -120,6 +130,23 @@ function coerceBoolFlag(v: unknown, fallback: 0 | 1): 0 | 1 {
   return fallback
 }
 
+/**
+ * Fleet `containerIn.isNew`: `false` when moving a pallet already registered on the map.
+ * Caller must send explicit `containerCode` (clients that omit it get server-generated IDs and always use `isNew: true`).
+ */
+function containerInIsNewForMissionBody(body: Record<string, unknown>): boolean {
+  const hasExplicitContainer =
+    typeof body.containerCode === 'string' && body.containerCode.trim().length > 0
+  if (!hasExplicitContainer) return true
+  if (
+    body.containerFleetAlreadyRegistered === true ||
+    body.containerFleetAlreadyRegistered === 'true'
+  ) {
+    return false
+  }
+  return true
+}
+
 async function standIdWithExternalRef(externalRef: string, excludeId?: string): Promise<string | undefined> {
   const row = excludeId
     ? ((await db.prepare('SELECT id FROM amr_stands WHERE external_ref = ? AND id != ?').get(externalRef, excludeId)) as
@@ -145,6 +172,9 @@ async function destinationAvailableForDispatch(
 ): Promise<{ available: boolean; standKnown: boolean; palletPresent: boolean }> {
   const ref = destinationRef.trim()
   if (!ref) return { available: true, standKnown: false, palletPresent: false }
+  if (await externalRefUsesNonStandRow(db, ref)) {
+    return { available: true, standKnown: true, palletPresent: false }
+  }
   const policy = await getStandQueuePolicy(db, ref)
   if (!policy) return { available: true, standKnown: false, palletPresent: false }
   let palletPresent = false
@@ -306,9 +336,16 @@ async function validateStandBlocksForLegs(
   const placeholders = refs.map(() => '?').join(', ')
   const rows = (await db
     .prepare(
-      `SELECT external_ref, block_pickup, block_dropoff FROM amr_stands WHERE external_ref IN (${placeholders})`
+      `SELECT external_ref, block_pickup, block_dropoff,
+              COALESCE(location_type, 'stand') AS location_type
+       FROM amr_stands WHERE external_ref IN (${placeholders})`
     )
-    .all(...refs)) as Array<{ external_ref: string; block_pickup: number; block_dropoff: number }>
+    .all(...refs)) as Array<{
+    external_ref: string
+    block_pickup: number
+    block_dropoff: number
+    location_type?: string | null
+  }>
   const byRef = new Map(rows.map((r) => [r.external_ref, r]))
   const violations: string[] = []
   for (const leg of legs) {
@@ -316,6 +353,7 @@ async function validateStandBlocksForLegs(
     if (!p) continue
     const stand = byRef.get(p)
     if (!stand) continue
+    if (normalizeAmrStandLocationType(stand.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND) continue
     if (!leg.putDown && Number(stand.block_pickup) === 1) {
       violations.push(`Location "${p}" does not allow pallet pickup (no lift).`)
     }
@@ -333,6 +371,27 @@ async function validateStandBlocksForLegs(
     }
   }
   return { ok: false, status: 400, error: violations.join(' ') }
+}
+
+async function assertStandGroupMembersAreRackStands(
+  standIds: string[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  for (const sid of standIds) {
+    const tid = sid.trim()
+    if (!tid) continue
+    const row = (await db
+      .prepare(`SELECT COALESCE(location_type, 'stand') AS lt FROM amr_stands WHERE id = ?`)
+      .get(tid)) as { lt?: string | null } | undefined
+    if (!row) continue
+    if (normalizeAmrStandLocationType(row.lt) === AMR_STAND_LOCATION_TYPE_NON_STAND) {
+      return {
+        ok: false,
+        error:
+          'Stand groups may only include rack stands. Remove non-stand (waypoint) locations from the member list.',
+      }
+    }
+  }
+  return { ok: true }
 }
 
 router.get(
@@ -376,10 +435,23 @@ router.put(
     if (typeof body.missionCreateStandPresenceSanityCheck === 'boolean')
       patch.missionCreateStandPresenceSanityCheck = body.missionCreateStandPresenceSanityCheck
     if (typeof body.missionQueueingEnabled === 'boolean') patch.missionQueueingEnabled = body.missionQueueingEnabled
+    if (typeof body.missionQueuedToastDismissMs === 'number')
+      patch.missionQueuedToastDismissMs = body.missionQueuedToastDismissMs
     if (typeof body.palletDropConfirmTimeoutMs === 'number')
       patch.palletDropConfirmTimeoutMs = body.palletDropConfirmTimeoutMs
+    if (typeof body.postDropPresenceWarningCheck === 'boolean')
+      patch.postDropPresenceWarningCheck = body.postDropPresenceWarningCheck
     if ('zoneCategories' in body) {
       patch.zoneCategories = normalizeZoneCategories(body.zoneCategories)
+    }
+    if ('zonePickerInlineZones' in body) {
+      if (body.zonePickerInlineZones === null) {
+        patch.zonePickerInlineZones = null
+      } else if (Array.isArray(body.zonePickerInlineZones)) {
+        patch.zonePickerInlineZones = body.zonePickerInlineZones.filter(
+          (x): x is string => typeof x === 'string'
+        )
+      }
     }
     if (typeof body.authKey === 'string') patch.authKey = body.authKey
 
@@ -690,6 +762,11 @@ router.post(
     const standIds = Array.isArray(rawIds)
       ? rawIds.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
       : []
+    const memberCheck = await assertStandGroupMembersAreRackStands(standIds)
+    if (!memberCheck.ok) {
+      res.status(400).json({ error: memberCheck.error })
+      return
+    }
     let pos = 0
     for (const sid of standIds) {
       const exists = (await db.prepare('SELECT id FROM amr_stands WHERE id = ?').get(sid)) as { id?: string } | undefined
@@ -755,6 +832,11 @@ router.patch(
     const rawIds = b.memberStandIds ?? b.member_stand_ids
     if (Array.isArray(rawIds)) {
       const standIds = rawIds.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+      const memberCheckPatch = await assertStandGroupMembersAreRackStands(standIds)
+      if (!memberCheckPatch.ok) {
+        res.status(400).json({ error: memberCheckPatch.error })
+        return
+      }
       await db.prepare(`DELETE FROM amr_stand_group_members WHERE group_id = ?`).run(id)
       let pos = 0
       for (const sid of standIds) {
@@ -828,11 +910,19 @@ router.post(
     const x = typeof b.x === 'number' ? b.x : 0
     const y = typeof b.y === 'number' ? b.y : 0
     const enabled = b.enabled === false ? 0 : 1
-    const block_pickup = coerceBoolFlag(b.block_pickup, 0)
-    const block_dropoff = coerceBoolFlag(b.block_dropoff, 0)
+    let block_pickup = coerceBoolFlag(b.block_pickup, 0)
+    let block_dropoff = coerceBoolFlag(b.block_dropoff, 0)
     const bypass_pallet_check = coerceBoolFlag(b.bypass_pallet_check, 0)
     const active_missions_raw = Number(b.active_missions)
     const active_missions = Number.isFinite(active_missions_raw) && active_missions_raw >= 1 ? Math.floor(active_missions_raw) : 1
+    const location_type =
+      normalizeAmrStandLocationType(b.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
+        ? AMR_STAND_LOCATION_TYPE_NON_STAND
+        : AMR_STAND_LOCATION_TYPE_STAND
+    if (location_type === AMR_STAND_LOCATION_TYPE_NON_STAND) {
+      block_pickup = 0
+      block_dropoff = 0
+    }
     const ts = nowTs()
 
     if (await standIdWithExternalRef(external_ref)) {
@@ -850,8 +940,8 @@ router.post(
 
     await db
       .prepare(
-        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, active_missions, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO amr_stands (id, zone, location_label, external_ref, dwg_ref, orientation, x, y, enabled, block_pickup, block_dropoff, bypass_pallet_check, active_missions, location_type, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -867,6 +957,7 @@ router.post(
         block_dropoff,
         bypass_pallet_check,
         active_missions,
+        location_type,
         ts,
         ts
       )
@@ -911,11 +1002,11 @@ router.patch(
     const x = typeof b.x === 'number' ? b.x : Number(existing.x ?? 0)
     const y = typeof b.y === 'number' ? b.y : Number(existing.y ?? 0)
     const enabled = b.enabled === false ? 0 : b.enabled === true ? 1 : Number(existing.enabled ?? 1)
-    const block_pickup =
+    let block_pickup =
       'block_pickup' in b
         ? coerceBoolFlag(b.block_pickup, 0)
         : (Number(existing.block_pickup ?? 0) ? 1 : 0)
-    const block_dropoff =
+    let block_dropoff =
       'block_dropoff' in b
         ? coerceBoolFlag(b.block_dropoff, 0)
         : (Number(existing.block_dropoff ?? 0) ? 1 : 0)
@@ -932,6 +1023,36 @@ router.patch(
       const n = Number(existing.active_missions ?? 1)
       return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1
     })()
+    const location_type =
+      'location_type' in b
+        ? normalizeAmrStandLocationType(b.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
+          ? AMR_STAND_LOCATION_TYPE_NON_STAND
+          : AMR_STAND_LOCATION_TYPE_STAND
+        : normalizeAmrStandLocationType((existing as { location_type?: unknown }).location_type) ===
+            AMR_STAND_LOCATION_TYPE_NON_STAND
+          ? AMR_STAND_LOCATION_TYPE_NON_STAND
+          : AMR_STAND_LOCATION_TYPE_STAND
+
+    const prevLt =
+      normalizeAmrStandLocationType((existing as { location_type?: unknown }).location_type) ===
+      AMR_STAND_LOCATION_TYPE_NON_STAND
+        ? AMR_STAND_LOCATION_TYPE_NON_STAND
+        : AMR_STAND_LOCATION_TYPE_STAND
+    if (
+      location_type === AMR_STAND_LOCATION_TYPE_NON_STAND &&
+      prevLt !== AMR_STAND_LOCATION_TYPE_NON_STAND &&
+      (await standIdIsAssignedToStandGroup(db, id))
+    ) {
+      res.status(400).json({
+        error:
+          'Remove this location from stand groups before marking it as a non-stand (waypoint) location.',
+      })
+      return
+    }
+    if (location_type === AMR_STAND_LOCATION_TYPE_NON_STAND) {
+      block_pickup = 0
+      block_dropoff = 0
+    }
 
     const conflictLoc = await standIdWithExternalRef(external_ref, id)
     if (conflictLoc) {
@@ -949,7 +1070,7 @@ router.patch(
 
     await db
       .prepare(
-        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, active_missions = ?, updated_at = ? WHERE id = ?`
+        `UPDATE amr_stands SET zone = ?, location_label = ?, external_ref = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, active_missions = ?, location_type = ?, updated_at = ? WHERE id = ?`
       )
       .run(
         zone,
@@ -964,6 +1085,7 @@ router.patch(
         block_dropoff,
         bypass_pallet_check,
         active_missions,
+        location_type,
         nowTs(),
         id
       )
@@ -1267,6 +1389,163 @@ router.get(
 )
 
 router.get(
+  '/dc/mission-records/:id/replay',
+  authMiddleware,
+  requirePermission('amr.missions.manage'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : ''
+    if (!id) {
+      res.status(400).json({ error: 'Mission record id required' })
+      return
+    }
+    if (id.startsWith('__pending_first__')) {
+      res.status(400).json({ error: 'This mission placeholder cannot be replayed.' })
+      return
+    }
+
+    type RowShape = Record<string, unknown> & {
+      multistop_session_id?: string | null
+      mission_payload_json?: string | null
+      persistent_container?: number | string | null
+    }
+    const row = (await db.prepare('SELECT * FROM amr_mission_records WHERE id = ?').get(id)) as RowShape | undefined
+    if (!row?.id) {
+      res.status(404).json({ error: 'Mission not found' })
+      return
+    }
+
+    /** Multistop: rebuild from session `plan_json` (canonical). */
+    const sessionId = typeof row.multistop_session_id === 'string' ? row.multistop_session_id.trim() : ''
+    if (sessionId) {
+      const sess = (await db
+        .prepare(
+          `SELECT plan_json, pickup_position, persistent_container, container_code, robot_ids_json
+           FROM amr_multistop_sessions WHERE id = ?`
+        )
+        .get(sessionId)) as
+        | {
+            plan_json?: string | null
+            pickup_position?: string | null
+            persistent_container?: number | string | null
+            container_code?: string | null
+            robot_ids_json?: string | null
+          }
+        | undefined
+      if (!sess) {
+        res.status(404).json({ error: 'Multi-stop session for this mission is no longer in the database.' })
+        return
+      }
+      const pickupRaw = typeof sess.pickup_position === 'string' ? sess.pickup_position.trim() : ''
+      let planParsed: MultistopPlan | null = null
+      try {
+        const rawPlan = sess.plan_json != null ? String(sess.plan_json) : ''
+        planParsed = rawPlan.trim() ? parseMultistopPlan(JSON.parse(rawPlan)) : null
+      } catch {
+        planParsed = null
+      }
+      if (!pickupRaw || !planParsed) {
+        res.status(422).json({ error: 'Could not read saved route plan for replay.' })
+        return
+      }
+      const replayLegs = multistopPlanToReplayLegs(pickupRaw, planParsed)
+      if (!replayLegs || replayLegs.length < 2) {
+        res.status(422).json({ error: 'Saved route plan is incomplete for replay.' })
+        return
+      }
+      const persistent = Number(sess.persistent_container ?? 0) === 1
+      const robotIds: string[] = []
+      try {
+        const rawRj = typeof sess.robot_ids_json === 'string' ? sess.robot_ids_json.trim() : ''
+        if (rawRj) {
+          const arr = JSON.parse(rawRj) as unknown
+          if (Array.isArray(arr))
+            robotIds.push(
+              ...arr
+                .map((x) => (typeof x === 'string' ? x.trim() : ''))
+                .filter(Boolean)
+                .slice(0, 32)
+            )
+        }
+      } catch {
+        /* ignore */
+      }
+      const cc = typeof sess.container_code === 'string' ? sess.container_code.trim() : ''
+      res.json({
+        version: 1 as const,
+        legs: replayLegs,
+        persistentContainer: persistent,
+        ...(robotIds.length > 0 ? { robotIds } : {}),
+        ...(cc ? { containerCode: cc } : {}),
+      })
+      return
+    }
+
+    /** Single-segment missions: reconstruct from stored submit payload (`missionData` two NODE_POINT legs). */
+    const payloadRaw = typeof row.mission_payload_json === 'string' ? row.mission_payload_json.trim() : ''
+    if (!payloadRaw) {
+      res.status(422).json({ error: 'No stored mission payload to replay for this row.' })
+      return
+    }
+    let wrapped: Record<string, unknown>
+    try {
+      wrapped = JSON.parse(payloadRaw) as Record<string, unknown>
+    } catch {
+      res.status(422).json({ error: 'Stored mission payload is not valid JSON.' })
+      return
+    }
+    const submit = wrapped.submit as Record<string, unknown> | undefined
+    const md = submit?.missionData
+    if (!Array.isArray(md) || md.length < 2) {
+      res.status(422).json({ error: 'Replay is available for multi-stop sessions or two-node submissions only.' })
+      return
+    }
+    const n0 = md[0] as Record<string, unknown>
+    const n1 = md[1] as Record<string, unknown>
+    const pos0 = typeof n0.position === 'string' ? n0.position.trim() : ''
+    const pos1 = typeof n1.position === 'string' ? n1.position.trim() : ''
+    if (!pos0 || !pos1) {
+      res.status(422).json({ error: 'Stored NODE_POINT legs are missing position.' })
+      return
+    }
+    const put0 = n0.putDown === true || n0.putDown === 'true'
+    const put1 = n1.putDown === true || n1.putDown === 'true'
+    const robotIdsSubmit = submit?.robotIds
+    const robotIds: string[] = Array.isArray(robotIdsSubmit)
+      ? robotIdsSubmit
+          .map((x) => (typeof x === 'string' ? x.trim() : ''))
+          .filter(Boolean)
+          .slice(0, 32)
+      : []
+    const persistent = Number(row.persistent_container ?? 0) === 1
+    const cc =
+      typeof submit?.containerCode === 'string'
+        ? submit.containerCode.trim()
+        : typeof row.container_code === 'string'
+          ? row.container_code.trim()
+          : ''
+    res.json({
+      version: 1 as const,
+      legs: [
+        {
+          position: pos0,
+          putDown: false,
+          continueMode: 'manual' as const,
+          ...(put0 ? { segmentStartPutDown: true } : {}),
+        },
+        {
+          position: pos1,
+          putDown: put1,
+          continueMode: 'manual' as const,
+        },
+      ],
+      persistentContainer: persistent,
+      ...(robotIds.length > 0 ? { robotIds } : {}),
+      ...(cc ? { containerCode: cc } : {}),
+    })
+  })
+)
+
+router.get(
   '/dc/missions/attention',
   authMiddleware,
   requirePermission('module.amr'),
@@ -1418,6 +1697,15 @@ router.post(
       return
     }
 
+    const nonStandRm = await externalRefsNonStandLocation(db, [dest1Pos])
+    if (nonStandRm.has(dest1Pos)) {
+      res.status(400).json({
+        error:
+          'A non-stand (waypoint) location cannot be the final stop in a mission. Choose a rack stand as the destination.',
+      })
+      return
+    }
+
     const legsToValidate: StandLegToValidate[] = sortedForSubmit.map((step) => {
       const s = step as Record<string, unknown>
       const pos = s.position
@@ -1457,7 +1745,7 @@ router.post(
       position: first.position,
       containerCode,
       enterOrientation,
-      isNew: true,
+      isNew: containerInIsNewForMissionBody(b),
     }
 
     const robotIdsResolution = await resolveSubmitRobotIds(cfg, db, b.robotIds, {
@@ -1608,7 +1896,7 @@ router.post(
         ts,
         ts
       )
-    if (destinationRef) {
+    if (destinationRef && !(await externalRefUsesNonStandRow(db, destinationRef))) {
       await reserveStandForRecord(db, destinationRef, missionRecordId)
     }
 
@@ -1836,6 +2124,15 @@ router.patch(
 
     const pickupPosPatch =
       typeof row.pickup_position === 'string' ? row.pickup_position.trim() : ''
+
+    const nsPatchRules = await applyMultistopNonStandRules(db, newPlan, {
+      pickupPosition: pickupPosPatch,
+    })
+    if (!nsPatchRules.ok) {
+      res.status(400).json({ error: nsPatchRules.error })
+      return
+    }
+
     const editLegsToValidate = multistopPlanToStandLegPairs(pickupPosPatch, newPlan)
     const editOverrideRequested = body.override === true || body.override === 'true'
     const editHasOverridePerm = roleHasPermission(
@@ -2207,6 +2504,12 @@ router.post(
       plan.segmentFirstNodePutDown = segIn.map((x) => x === true || x === 'true')
     }
 
+    const nsRules = await applyMultistopNonStandRules(db, plan, { pickupPosition: pickupRaw })
+    if (!nsRules.ok) {
+      res.status(400).json({ error: nsRules.error })
+      return
+    }
+
     const multistopLegsToValidate = multistopPlanToStandLegPairs(pickupRaw, plan)
     const overrideRequested = b.override === true || b.override === 'true'
     const hasOverridePerm = roleHasPermission(req.user?.permissions ?? [], 'amr.stands.override-special')
@@ -2263,7 +2566,7 @@ router.post(
       position: pickupRaw,
       containerCode,
       enterOrientation,
-      isNew: true,
+      isNew: containerInIsNewForMissionBody(b),
     }
 
     const robotIdsJson = JSON.stringify(robotIds)
@@ -2510,7 +2813,7 @@ router.post(
         ts,
         ts
       )
-    if (firstSegmentDropRef) {
+    if (firstSegmentDropRef && !(await externalRefUsesNonStandRow(db, firstSegmentDropRef))) {
       await reserveStandForRecord(db, firstSegmentDropRef, missionRecordId, {
         multistopSessionId: sessionId,
         multistopStepIndex: 0,
@@ -2653,6 +2956,11 @@ router.post(
         return
       }
       const pickupT = v.payload.legs[0]?.position?.trim() ?? ''
+      const nsTplRules = await applyMultistopNonStandRules(db, tmplPlan, { pickupPosition: pickupT })
+      if (!nsTplRules.ok) {
+        res.status(400).json({ error: nsTplRules.error })
+        return
+      }
       const tmplLegs = multistopPlanToStandLegPairs(pickupT, tmplPlan)
       const overrideRequested = b.override === true || b.override === 'true'
       const hasOverridePerm = roleHasPermission(
@@ -2759,6 +3067,11 @@ router.put(
         return
       }
       const pickupT = nextPayload.legs[0]?.position?.trim() ?? ''
+      const nsTplPutRules = await applyMultistopNonStandRules(db, tmplPlan, { pickupPosition: pickupT })
+      if (!nsTplPutRules.ok) {
+        res.status(400).json({ error: nsTplPutRules.error })
+        return
+      }
       const tmplLegs = multistopPlanToStandLegPairs(pickupT, tmplPlan)
       const overrideRequested = b.override === true || b.override === 'true'
       const hasOverridePerm = roleHasPermission(

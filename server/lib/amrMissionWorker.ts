@@ -15,6 +15,7 @@ import {
 import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
 import { resolveGroupDestination } from './amrStandGroups.js'
+import { externalRefUsesNonStandRow } from './amrStandLocationType.js'
 
 /** Synthetic chip when drop presence deadline passes without confirming pallet cleared (stored in DB, not fleet). */
 const PRESENCE_WARNING_STATUS_CODE = 93
@@ -268,11 +269,23 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           }
           const endMeta = parseMissionEndDropMeta(missionPayloadToString(row.mission_payload_json))
           const queueingEnabled = cfg.missionQueueingEnabled !== false
+          const dropDestRef = typeof endMeta.destinationRef === 'string' ? endMeta.destinationRef.trim() : ''
+          const dropPolicy =
+            queueingEnabled && FINALIZED_SUCCESS_STATUS.has(status) && endMeta.isDrop && dropDestRef
+              ? await getStandQueuePolicy(db, dropDestRef)
+              : null
+          const bypassFinalPresence = dropPolicy?.bypassPalletCheck === true
+          const postDropPresenceOn = cfg.postDropPresenceWarningCheck !== false
+          const skipNonStandDropPres =
+            Boolean(dropDestRef) && (await externalRefUsesNonStandRow(db, dropDestRef))
           if (
             queueingEnabled &&
+            postDropPresenceOn &&
             FINALIZED_SUCCESS_STATUS.has(status) &&
             endMeta.isDrop &&
-            endMeta.destinationRef
+            dropDestRef &&
+            !bypassFinalPresence &&
+            !skipNonStandDropPres
           ) {
             const timeoutMs = Math.max(1000, Math.min(600000, Number(cfg.palletDropConfirmTimeoutMs || 10000)))
             const deadline = new Date(Date.now() + timeoutMs).toISOString()
@@ -282,7 +295,7 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
                  SET presence_dest_ref = ?, presence_check_until = ?, updated_at = ?
                  WHERE id = ?`
               )
-              .run(endMeta.destinationRef, deadline, ts, row.id)
+              .run(dropDestRef, deadline, ts, row.id)
           } else {
             await releaseReservationsForRecord(db, row.id)
           }
@@ -327,7 +340,7 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           const policy = await getStandQueuePolicy(db, ref)
           if (!policy) continue
           let palletPresent = false
-          if (!policy.bypassPalletCheck) {
+          if (!policy.bypassPalletCheck && !(await externalRefUsesNonStandRow(db, ref))) {
             if (!hyperionConfigured(hcfg)) continue
             if (!(ref in presenceCache)) {
               const pr = await fetchStandPresenceFromHyperion(hcfg, [ref], {
@@ -473,6 +486,20 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           for (const row of checks) {
             const ref = typeof row.presence_dest_ref === 'string' ? row.presence_dest_ref.trim() : ''
             if (!ref) continue
+            const finalizePolicy = await getStandQueuePolicy(db, ref)
+            const nonStandPres = await externalRefUsesNonStandRow(db, ref)
+            if (finalizePolicy?.bypassPalletCheck === true || nonStandPres) {
+              const tsBypass = new Date().toISOString()
+              await db
+                .prepare(
+                  `UPDATE amr_mission_records
+                   SET presence_seen_at = ?, presence_check_until = NULL, updated_at = ?
+                   WHERE id = ?`
+                )
+                .run(tsBypass, tsBypass, row.id)
+              await releaseReservationsForRecord(db, row.id)
+              continue
+            }
             const pr = await fetchStandPresenceFromHyperion(hcfgChecks, [ref], {
               db,
               source: 'mission-worker-presence-confirm',

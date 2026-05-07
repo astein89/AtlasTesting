@@ -17,6 +17,7 @@ import { AdminIndexRedirect } from './routes/AdminIndexRedirect'
 import { useAuthStore } from './store/authStore'
 import { api, ensureAccessToken } from './api/client'
 import { AlertConfirmProvider } from './contexts/AlertConfirmContext'
+import { ToastProvider } from './contexts/ToastContext'
 import { AmrMissionNewModalProvider } from './contexts/AmrMissionNewModalContext'
 import { DateTimeConfigProvider } from './contexts/DateTimeConfigContext'
 import { ConditionalFormatPresetsProvider } from './contexts/ConditionalFormatPresetsContext'
@@ -180,10 +181,12 @@ function LegacyBookmarkToTesting() {
 function RootShell() {
   return (
     <AlertConfirmProvider>
-      <SiteBrandingHead />
-      <AuthInit />
-      <ForcedPasswordChangeModal />
-      <Outlet />
+      <ToastProvider>
+        <SiteBrandingHead />
+        <AuthInit />
+        <ForcedPasswordChangeModal />
+        <Outlet />
+      </ToastProvider>
     </AlertConfirmProvider>
   )
 }

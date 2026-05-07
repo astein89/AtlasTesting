@@ -2,6 +2,7 @@ import { Suspense, useState, useEffect } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { LoginModal } from '../auth/LoginModal'
 import { AmrAttentionBanner } from '../amr/AmrAttentionBanner'
+import { AmrPresenceWarningBanner } from '../amr/AmrPresenceWarningBanner'
 import { Navbar } from './Navbar'
 import { Sidebar } from './Sidebar'
 import { AdminModuleSidebar } from './AdminModuleSidebar'
@@ -56,6 +57,7 @@ export function Layout({ showSidebar = true }: LayoutProps) {
   return (
     <div className="flex h-screen min-h-0 w-full min-w-0 max-w-[100%] flex-col overflow-x-hidden bg-background text-foreground">
       <Navbar onMenuClick={showSidebar ? () => setSidebarOpen((o) => !o) : undefined} />
+      <AmrPresenceWarningBanner />
       <AmrAttentionBanner />
       <FilesModuleHostProvider>
         <div className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden">

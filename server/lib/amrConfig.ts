@@ -10,6 +10,21 @@ export type ZoneCategory = {
   zones: string[]
 }
 
+/** Trim/dedupe/sort zone keys for `zonePickerInlineZones`. */
+export function normalizeZonePickerInlineZones(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const x of raw) {
+    if (typeof x !== 'string') continue
+    const t = x.trim()
+    if (!t || seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out.sort((a, b) => a.localeCompare(b))
+}
+
 export type AmrFleetConfig = {
   serverIp: string
   serverPort: number
@@ -38,10 +53,23 @@ export type AmrFleetConfig = {
   missionCreateStandPresenceSanityCheck: boolean
   /** Master switch for queued mission dispatch / stand reservation flow. */
   missionQueueingEnabled: boolean
+  /** How long the “mission queued” toast stays visible after create (ms). */
+  missionQueuedToastDismissMs: number
   /** Deadline window for post-lower pallet confirmation polling. */
   palletDropConfirmTimeoutMs: number
+  /**
+   * When true (default), after a successful queued drop the worker polls Hyperion for pallet presence until timeout,
+   * may set synthetic status 93 and presence warnings when no pallet is detected. When false, reservations release
+   * immediately after fleet success (same as disabling queueing for this pathway).
+   */
+  postDropPresenceWarningCheck: boolean
   /** Ordered zone categories (managed via Categories modal on the Stands screen). Empty by default. */
   zoneCategories: ZoneCategory[]
+  /**
+   * When omitted: stand picker shows stands on the zone step only for zones with 1–2 stands (legacy).
+   * When set (including empty array): only these zone keys expand on the zone step; any stand count.
+   */
+  zonePickerInlineZones?: string[]
 }
 
 export const DEFAULT_AMR_FLEET_CONFIG: AmrFleetConfig = {
@@ -62,7 +90,9 @@ export const DEFAULT_AMR_FLEET_CONFIG: AmrFleetConfig = {
   hideFleetCompleteAfterMinutesDefault: null,
   missionCreateStandPresenceSanityCheck: true,
   missionQueueingEnabled: true,
+  missionQueuedToastDismissMs: 10000,
   palletDropConfirmTimeoutMs: 10000,
+  postDropPresenceWarningCheck: true,
   zoneCategories: [],
 }
 
@@ -138,12 +168,20 @@ function mergeConfig(raw: unknown): AmrFleetConfig {
   if (typeof o.missionCreateStandPresenceSanityCheck === 'boolean')
     base.missionCreateStandPresenceSanityCheck = o.missionCreateStandPresenceSanityCheck
   if (typeof o.missionQueueingEnabled === 'boolean') base.missionQueueingEnabled = o.missionQueueingEnabled
+  if (typeof o.missionQueuedToastDismissMs === 'number' && Number.isFinite(o.missionQueuedToastDismissMs)) {
+    const n = Math.floor(o.missionQueuedToastDismissMs)
+    base.missionQueuedToastDismissMs = Math.max(2000, Math.min(120000, n))
+  }
   if (typeof o.palletDropConfirmTimeoutMs === 'number' && Number.isFinite(o.palletDropConfirmTimeoutMs)) {
     const n = Math.floor(o.palletDropConfirmTimeoutMs)
     base.palletDropConfirmTimeoutMs = Math.max(1000, Math.min(600000, n))
   }
+  if (typeof o.postDropPresenceWarningCheck === 'boolean') base.postDropPresenceWarningCheck = o.postDropPresenceWarningCheck
   if ('zoneCategories' in o) {
     base.zoneCategories = normalizeZoneCategories(o.zoneCategories)
+  }
+  if ('zonePickerInlineZones' in o && o.zonePickerInlineZones !== null && o.zonePickerInlineZones !== undefined) {
+    base.zonePickerInlineZones = normalizeZonePickerInlineZones(o.zonePickerInlineZones)
   }
   return base
 }
@@ -163,12 +201,20 @@ export async function getAmrFleetConfig(db: AsyncDbWrapper): Promise<AmrFleetCon
 /** Persist config; omit or empty authKey leaves existing key unchanged. */
 export async function saveAmrFleetConfig(
   db: AsyncDbWrapper,
-  patch: Partial<AmrFleetConfig> & { authKey?: string }
+  patch: Partial<AmrFleetConfig> & { authKey?: string; zonePickerInlineZones?: string[] | null }
 ): Promise<AmrFleetConfig> {
   const current = await getAmrFleetConfig(db)
-  const next: AmrFleetConfig = { ...current, ...patch }
+  const { zonePickerInlineZones: zpiPatch, ...patchRest } = patch
+  const next: AmrFleetConfig = { ...current, ...patchRest }
   if (patch.authKey === undefined || patch.authKey === '') {
     next.authKey = current.authKey
+  }
+  if ('zonePickerInlineZones' in patch) {
+    if (zpiPatch === null) {
+      delete next.zonePickerInlineZones
+    } else if (zpiPatch !== undefined) {
+      next.zonePickerInlineZones = normalizeZonePickerInlineZones(zpiPatch)
+    }
   }
   await db
     .prepare(

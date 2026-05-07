@@ -234,6 +234,71 @@ export function continueNotBeforeForAwaitingSession(plan: MultistopPlan, nextSeg
 }
 
 /** Build {@link MultistopPlan} from mission-template legs (pickup + destinations). */
+/** Server → New Mission replay (same coarse shape as client template legs). */
+export type ReplayMissionTemplateLeg = {
+  position: string
+  groupId?: string
+  putDown: boolean
+  segmentStartPutDown?: boolean
+  continueMode?: ContinueMode
+  autoContinueSeconds?: number
+}
+
+/**
+ * Turn a persisted multistop `plan_json` + pickup stand into editable legs for the New Mission screen.
+ */
+export function multistopPlanToReplayLegs(pickupRaw: string, plan: MultistopPlan): ReplayMissionTemplateLeg[] | null {
+  const pickup = pickupRaw.trim()
+  if (!pickup) return null
+  const dests = plan.destinations
+  if (!Array.isArray(dests) || dests.length === 0) return null
+  const pc = plan.pickupContinue
+  const pickupMode: ContinueMode = pc?.continueMode === 'auto' ? 'auto' : 'manual'
+  const pickupAuto =
+    pickupMode === 'auto'
+      ? Math.max(0, Math.min(MAX_AUTO_CONTINUE_SECONDS, Math.floor(pc?.autoContinueSeconds ?? 0)))
+      : undefined
+  const seg = plan.segmentFirstNodePutDown
+
+  const legs: ReplayMissionTemplateLeg[] = [
+    {
+      position: pickup,
+      putDown: false,
+      continueMode: pickupMode,
+      ...(pickupMode === 'auto' ? { autoContinueSeconds: pickupAuto ?? 0 } : {}),
+      ...(Array.isArray(seg) && seg[0] === true ? { segmentStartPutDown: true } : {}),
+    },
+  ]
+
+  for (let i = 0; i < dests.length; i++) {
+    const d = dests[i]
+    const isLast = i === dests.length - 1
+    const gid = typeof d.groupId === 'string' ? d.groupId.trim() : ''
+    const pos = typeof d.position === 'string' ? d.position.trim() : ''
+    if (!pos && !gid) return null
+    const destMode: ContinueMode = isLast ? 'manual' : d.continueMode === 'auto' ? 'auto' : 'manual'
+    const leg: ReplayMissionTemplateLeg = {
+      ...(gid ? { groupId: gid, position: pos } : { position: pos }),
+      putDown: isLast ? true : Boolean(d.putDown),
+      continueMode: destMode,
+      ...(destMode === 'auto' && !isLast
+        ? {
+            autoContinueSeconds: Math.max(
+              0,
+              Math.min(MAX_AUTO_CONTINUE_SECONDS, Math.floor(d.autoContinueSeconds ?? 0))
+            ),
+          }
+        : {}),
+    }
+    const destLegIdx = i + 1
+    if (destLegIdx < dests.length && Array.isArray(seg) && seg[destLegIdx] === true) {
+      leg.segmentStartPutDown = true
+    }
+    legs.push(leg)
+  }
+  return legs
+}
+
 export function multistopPlanFromTemplateLegs(
   legs: ReadonlyArray<{ position: string; putDown: boolean; segmentStartPutDown?: boolean }>
 ): MultistopPlan | null {

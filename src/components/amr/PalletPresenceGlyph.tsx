@@ -1,4 +1,29 @@
-export type PalletPresenceKind = 'empty' | 'full' | 'loading' | 'unknown' | 'error' | 'unconfigured'
+export type PalletPresenceKind =
+  | 'empty'
+  | 'full'
+  | 'loading'
+  | 'unknown'
+  | 'error'
+  | 'unconfigured'
+  | 'non_stand'
+
+/** Octagon “stop” style — non-rack waypoint (no pallet presence check). */
+function NonStandWaypointGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        fill="currentColor"
+        d="M10.2 2.5h3.6L21 7.7v8.6l-7.2 5.2h-3.6L3 16.3V7.7L10.2 2.5z"
+        opacity="0.92"
+      />
+      <path
+        fill="white"
+        d="M7.2 9.2h9.6v1.7H7.2V9.2zm0 3.4h9.6v1.7H7.2v-1.7z"
+        opacity="0.95"
+      />
+    </svg>
+  )
+}
 
 /** Heroicons outline cube — cargo / pallet metaphor; stroke uses currentColor. */
 export function CubeGlyph({ className }: { className?: string }) {
@@ -22,6 +47,7 @@ const kindClasses: Record<PalletPresenceKind, string> = {
   unknown: 'text-foreground/45',
   error: 'text-amber-600 dark:text-amber-400',
   unconfigured: 'text-amber-600 dark:text-amber-400',
+  non_stand: 'text-red-600 dark:text-red-400',
 }
 
 const kindAria: Record<PalletPresenceKind, string> = {
@@ -31,6 +57,7 @@ const kindAria: Record<PalletPresenceKind, string> = {
   unknown: 'Stand status unknown',
   error: 'Could not load stand status',
   unconfigured: 'Hyperion stand presence not configured',
+  non_stand: 'Non-stand waypoint — no rack pallet presence',
 }
 
 const kindLabel: Record<PalletPresenceKind, string> = {
@@ -40,6 +67,7 @@ const kindLabel: Record<PalletPresenceKind, string> = {
   unknown: '—',
   error: 'Error',
   unconfigured: 'N/A',
+  non_stand: 'Waypoint',
 }
 
 function LoadingSpinner({ className }: { className?: string }) {
@@ -76,7 +104,13 @@ export function PalletPresenceGlyph({
       title={aria}
       aria-label={aria}
     >
-      {kind === 'loading' ? <LoadingSpinner className={className} /> : <CubeGlyph className={className} />}
+      {kind === 'loading' ? (
+        <LoadingSpinner className={className} />
+      ) : kind === 'non_stand' ? (
+        <NonStandWaypointGlyph className={className} />
+      ) : (
+        <CubeGlyph className={className} />
+      )}
       {showLabel ? (
         <span className={['text-xs font-medium', labelClassName].filter(Boolean).join(' ')}>{label}</span>
       ) : null}
@@ -89,7 +123,10 @@ export function palletPresenceKindFromState(opts: {
   loading: boolean
   error: boolean
   unconfigured: boolean
+  /** Fleet node is a non-rack waypoint — no Hyperion pallet presence. */
+  nonStandWaypoint?: boolean
 }): PalletPresenceKind {
+  if (opts.nonStandWaypoint) return 'non_stand'
   if (opts.unconfigured) return 'unconfigured'
   if (opts.loading) return 'loading'
   if (opts.error) return 'error'

@@ -10,6 +10,7 @@ import {
 } from './amrMultistop.js'
 import { resolveGroupDestination } from './amrStandGroups.js'
 import { externalRefsBypassingPalletCheck } from './amrStandBypass.js'
+import { externalRefsNonStandLocation } from './amrStandLocationType.js'
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
 import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
 import { getLockedRobotIds, resolveActiveUnlockedRobotIds } from './amrRobots.js'
@@ -195,7 +196,11 @@ export async function executeMultistopContinue(params: {
     if (destRef) {
       const policy = await getStandQueuePolicy(db, destRef)
       const bypassSet = await externalRefsBypassingPalletCheck(db, [destRef])
-      const bypass = bypassSet.has(destRef) || policy?.bypassPalletCheck === true
+      const nonStandSet = await externalRefsNonStandLocation(db, [destRef])
+      const bypass =
+        bypassSet.has(destRef) ||
+        policy?.bypassPalletCheck === true ||
+        nonStandSet.has(destRef)
       let palletPresent = false
       if (!bypass) {
         const hcfg = await getAmrHyperionConfig(db)

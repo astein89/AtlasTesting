@@ -267,6 +267,7 @@ export function initSchema(db: DbWrapper) {
   migrateAmrStandsSpecialLocationFlags(db)
   migrateAmrStandsBypassPalletCheck(db)
   migrateAmrStandsActiveMissions(db)
+  migrateAmrStandsLocationType(db)
   migrateAmrMissionQueueing(db)
   migrateAmrStandGroups(db)
   migrateAmrRobots(db)
@@ -1383,6 +1384,19 @@ function migrateAmrStandsActiveMissions(db: DbWrapper) {
     if (cols.length === 0) return
     if (!cols.includes('active_missions')) {
       db.run('ALTER TABLE amr_stands ADD COLUMN active_missions INTEGER NOT NULL DEFAULT 1')
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/** `stand` (default) vs `non_stand` waypoint — no pallet presence / cannot be final mission stop. */
+function migrateAmrStandsLocationType(db: DbWrapper) {
+  try {
+    const cols = tableColumnNames(db, 'amr_stands')
+    if (cols.length === 0) return
+    if (!cols.includes('location_type')) {
+      db.run(`ALTER TABLE amr_stands ADD COLUMN location_type TEXT NOT NULL DEFAULT 'stand'`)
     }
   } catch {
     // Ignore

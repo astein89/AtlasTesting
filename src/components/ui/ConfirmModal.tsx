@@ -26,6 +26,8 @@ interface ConfirmModalProps {
   omitFooterCancel?: boolean
   /** When true, the primary confirm button is non-interactive. */
   confirmDisabled?: boolean
+  /** Overlay z-index; raise when opening a confirm above another fullscreen dialog (Tailwind z-* class). */
+  overlayClassName?: string
   onConfirm: () => void
   onCancel: () => void
 }
@@ -49,6 +51,7 @@ export function ConfirmModal({
   footerExtra,
   omitFooterCancel = false,
   confirmDisabled = false,
+  overlayClassName,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -86,7 +89,7 @@ export function ConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
+      className={`fixed inset-0 flex items-center justify-center bg-black/60 p-4 ${overlayClassName ?? 'z-[100]'}`}
       onClick={closeOnBackdropClick ? onCancel : undefined}
       role="dialog"
       aria-modal="true"

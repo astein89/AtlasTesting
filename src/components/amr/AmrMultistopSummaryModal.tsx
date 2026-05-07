@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import {
+  ackPresenceWarning,
   cancelAmrMultistopSession,
   continueAmrMultistopSession,
   getAmrMultistopSession,
@@ -23,6 +25,8 @@ import {
   type GroupedMissionMultistop,
 } from '@/utils/amrMultistopDisplay'
 import { getApiErrorMessage, parseMultistopContinueStandOccupied } from '@/api/client'
+import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
+import { amrPath } from '@/lib/appPaths'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmModal } from '@/components/ui/ConfirmModal'
@@ -39,6 +43,7 @@ import {
   sessionNextSegmentIndex,
   standRefsBypassingPalletCheck,
 } from '@/utils/amrPalletPresenceSanity'
+import { standRefsNonStandWaypoint } from '@/utils/amrStandLocationType'
 
 type MissionRecordRow = Record<string, unknown>
 
@@ -318,6 +323,7 @@ export function AmrMultistopSummaryModal({
   onSessionUpdated,
   onOpenFullMission,
 }: AmrMultistopSummaryModalProps) {
+  const openNewMissionModal = useAmrMissionNewModal()
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
   const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
   const [msRefresh, setMsRefresh] = useState(0)
@@ -338,9 +344,11 @@ export function AmrMultistopSummaryModal({
   const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
   const [terminateStuckConfirmOpen, setTerminateStuckConfirmOpen] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
+  const [presenceAckBusyId, setPresenceAckBusyId] = useState<string | null>(null)
   /** Only show session loading when switching sessions; silent refetch when list polling bumps the head record. */
   const prevFetchedMultistopSessionIdRef = useRef<string | null>(null)
   const [palletPresenceBypassRefs, setPalletPresenceBypassRefs] = useState(() => new Set<string>())
+  const [nonStandWaypointRefs, setNonStandWaypointRefs] = useState(() => new Set<string>())
   const [standPresenceMap, setStandPresenceMap] = useState<Record<string, boolean | null>>({})
   const [standPresenceLoading, setStandPresenceLoading] = useState(false)
   const [standPresenceError, setStandPresenceError] = useState(false)
@@ -351,7 +359,10 @@ export function AmrMultistopSummaryModal({
   const [standGroupNameById, setStandGroupNameById] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    void getAmrStands().then((rows) => setPalletPresenceBypassRefs(standRefsBypassingPalletCheck(rows)))
+    void getAmrStands().then((rows) => {
+      setPalletPresenceBypassRefs(standRefsBypassingPalletCheck(rows))
+      setNonStandWaypointRefs(standRefsNonStandWaypoint(rows))
+    })
     void getAmrStandGroups().then((groups) => {
       const m: Record<string, string> = {}
       for (const g of groups) {
@@ -400,12 +411,12 @@ export function AmrMultistopSummaryModal({
       return
     }
     const sessionIdChanged = prevFetchedMultistopSessionIdRef.current !== sessionId
-    prevFetchedMultistopSessionIdRef.current = sessionId
     if (sessionIdChanged) {
+      prevFetchedMultistopSessionIdRef.current = sessionId
       setMsLoading(true)
+      setMsErr(null)
+      setContinueBlockedStandRef(null)
     }
-    setMsErr(null)
-    setContinueBlockedStandRef(null)
     let cancelled = false
     void getAmrMultistopSession(sessionId)
       .then((d) => {
@@ -482,8 +493,23 @@ export function AmrMultistopSummaryModal({
 
   const nextContinueOccupiedCheckRef = useMemo(() => {
     if (!continuePlanForOccupiedRef || !Number.isFinite(nextSeg)) return null
-    return multistopContinueOccupiedDestinationRef(continuePlanForOccupiedRef, nextSeg)
-  }, [continuePlanForOccupiedRef, nextSeg])
+    return multistopContinueOccupiedDestinationRef(
+      continuePlanForOccupiedRef,
+      nextSeg,
+      nonStandWaypointRefs
+    )
+  }, [continuePlanForOccupiedRef, nextSeg, nonStandWaypointRefs])
+
+  /** First segment waiting on DC queue worker (stand occupied, deferred containerIn, or stand-group resolution). */
+  const sessionHeldForQueuedDispatch = useMemo(() => {
+    const s = msData?.session as Record<string, unknown> | undefined
+    if (!s) return false
+    const qb = typeof s.queue_blocked_until === 'string' && s.queue_blocked_until.trim().length > 0
+    const qg = typeof s.queue_blocked_group_id === 'string' && s.queue_blocked_group_id.trim().length > 0
+    const ci =
+      typeof s.container_in_payload_json === 'string' && s.container_in_payload_json.trim().length > 0
+    return qb || qg || ci
+  }, [msData?.session])
 
   const continueReleaseDisabledUntilStandEmpty = useMemo(
     () =>
@@ -553,7 +579,12 @@ export function AmrMultistopSummaryModal({
 
   const loadPresenceForRefs = useCallback(
     async (refs: string[], opts?: { silent?: boolean }) => {
-      if (refs.length === 0) return
+      const query = refs.map((r) => r.trim()).filter((r) => r && !nonStandWaypointRefs.has(r))
+      if (query.length === 0) {
+        const silent = opts?.silent === true
+        if (!silent) setStandPresenceLoading(false)
+        return
+      }
       const silent = opts?.silent === true
       if (!silent) {
         setStandPresenceLoading(true)
@@ -561,10 +592,10 @@ export function AmrMultistopSummaryModal({
         setStandPresenceUnconfig(false)
       }
       try {
-        const map = await postStandPresence(refs)
+        const map = await postStandPresence(query)
         setStandPresenceMap((prev) => {
           const next = { ...prev }
-          for (const r of refs) {
+          for (const r of query) {
             next[r] = Object.prototype.hasOwnProperty.call(map, r) ? map[r] : null
           }
           return next
@@ -580,7 +611,7 @@ export function AmrMultistopSummaryModal({
         if (!silent) setStandPresenceLoading(false)
       }
     },
-    []
+    [nonStandWaypointRefs]
   )
 
   useEffect(() => {
@@ -642,7 +673,9 @@ export function AmrMultistopSummaryModal({
         const planRaw = session.plan_json ?? session.planJson
         const plan = parseMultistopReleasePlanDestinations(planRaw)
         const ref =
-          Number.isFinite(nextSeg) && plan ? multistopContinueOccupiedDestinationRef(plan, nextSeg) : null
+          Number.isFinite(nextSeg) && plan
+            ? multistopContinueOccupiedDestinationRef(plan, nextSeg, nonStandWaypointRefs)
+            : null
         if (ref && !refBypassesPalletCheck(ref, palletPresenceBypassRefs)) {
           const presence = await postStandPresence([ref])
           if (presence[ref] === true) {
@@ -673,7 +706,7 @@ export function AmrMultistopSummaryModal({
   }
 
   const onConfirmForceRelease = async () => {
-    if (!sessionId || !continueBlockedStandRef) return
+    if (!sessionId) return
     setForceReleaseConfirmOpen(false)
     setContinueBusy(true)
     setMsErr(null)
@@ -683,10 +716,26 @@ export function AmrMultistopSummaryModal({
       setMsRefresh((n) => n + 1)
       onSessionUpdated?.()
     } catch (e: unknown) {
-      setMsErr(getApiErrorMessage(e, 'Force release failed'))
+      setMsErr(getApiErrorMessage(e, 'Force dispatch failed'))
       setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
     } finally {
       setContinueBusy(false)
+    }
+  }
+
+  const onAckLegPresenceWarning = async (missionRecordId: string) => {
+    const id = missionRecordId.trim()
+    if (!id) return
+    setPresenceAckBusyId(id)
+    setMsErr(null)
+    try {
+      await ackPresenceWarning(id)
+      setMsRefresh((n) => n + 1)
+      onSessionUpdated?.()
+    } catch (e: unknown) {
+      setMsErr(getApiErrorMessage(e, 'Could not acknowledge presence warning'))
+    } finally {
+      setPresenceAckBusyId(null)
     }
   }
 
@@ -733,6 +782,16 @@ export function AmrMultistopSummaryModal({
   const loadBlockedDestinationPresence = useCallback(async (opts?: { silent?: boolean }) => {
     const ref = continueBlockedStandRef?.trim()
     if (!ref) return
+    if (nonStandWaypointRefs.has(ref)) {
+      const silent = opts?.silent === true
+      setBlockedDestPresence(null)
+      if (!silent) {
+        setBlockedDestPresenceLoading(false)
+        setBlockedDestPresenceError(false)
+        setBlockedDestPresenceUnconfig(false)
+      }
+      return
+    }
     const silent = opts?.silent === true
     if (!silent) {
       setBlockedDestPresenceLoading(true)
@@ -757,7 +816,7 @@ export function AmrMultistopSummaryModal({
     } finally {
       if (!silent) setBlockedDestPresenceLoading(false)
     }
-  }, [continueBlockedStandRef])
+  }, [continueBlockedStandRef, nonStandWaypointRefs])
 
   useEffect(() => {
     if (!continueBlockedStandRef) {
@@ -797,6 +856,20 @@ export function AmrMultistopSummaryModal({
   const standOccupiedReleaseRetryLabel = continueNotBeforeIso ? 'Release now' : 'Release Mission'
 
   if (!group || !rolledUp) return null
+
+  const headMissionRec = headRecordForMissionDetail(group)
+  const headMissionRecordId = String(headMissionRec.id ?? '').trim()
+  const terminalSessionForReplay =
+    sessionStatus === 'completed' ||
+    sessionStatus === 'cancelled' ||
+    stForBuckets === 'completed' ||
+    stForBuckets === 'cancelled'
+  const replayFromOverviewEnabled =
+    canManage &&
+    terminalSessionForReplay &&
+    Boolean(headMissionRecordId) &&
+    !headMissionRecordId.startsWith('__pending_first__') &&
+    Number(rolledUp.worker_closed) === 1
 
   const hideStandOccupiedInlineAlert =
     Boolean(continueBlockedStandRef) && !standOccupiedModalDismissed
@@ -1063,6 +1136,7 @@ export function AmrMultistopSummaryModal({
                             error={standPresenceError}
                             unconfigured={standPresenceUnconfig}
                             bypassRefs={palletPresenceBypassRefs}
+                            nonStandWaypointRefs={nonStandWaypointRefs}
                             forkAction={departLower ? 'lower' : 'lift'}
                           />
                           <AmrStandPresenceRow
@@ -1073,11 +1147,45 @@ export function AmrMultistopSummaryModal({
                             error={standPresenceError}
                             unconfigured={standPresenceUnconfig}
                             bypassRefs={palletPresenceBypassRefs}
+                            nonStandWaypointRefs={nonStandWaypointRefs}
                             forkAction={arriveLower ? 'lower' : 'lift'}
                           />
                         </div>
                         {rec?.job_code ? (
                           <p className="font-mono text-[10px] text-foreground/55">{String(rec.job_code)}</p>
+                        ) : null}
+                        {rec &&
+                        typeof rec.presence_warning_at === 'string' &&
+                        rec.presence_warning_at.trim() &&
+                        typeof rec.id === 'string' &&
+                        rec.id.trim() ? (
+                          <div className="mt-2 rounded-md border border-red-500/35 bg-red-500/10 px-2.5 py-2 text-xs leading-snug dark:border-red-500/28 dark:bg-red-950/35">
+                            <p className="font-medium text-red-900 dark:text-red-100">
+                              Drop presence warning: Hyperion never reported a pallet at{' '}
+                              {typeof rec.presence_dest_ref === 'string' && rec.presence_dest_ref.trim() ? (
+                                <span className="font-mono">{rec.presence_dest_ref.trim()}</span>
+                              ) : (
+                                <span>the drop stand</span>
+                              )}{' '}
+                              within the confirmation window (warned {formatDateTime(rec.presence_warning_at.trim())}).
+                            </p>
+                            {canForceRelease ? (
+                              <button
+                                type="button"
+                                disabled={presenceAckBusyId === String(rec.id).trim()}
+                                className="mt-2 rounded border border-red-600/40 bg-background px-2 py-1 text-[11px] font-medium text-red-800 hover:bg-red-500/10 disabled:opacity-50 dark:border-red-500/35 dark:text-red-100"
+                                onClick={() => void onAckLegPresenceWarning(String(rec.id))}
+                              >
+                                {presenceAckBusyId === String(rec.id).trim()
+                                  ? 'Releasing…'
+                                  : 'Acknowledge and release reservation'}
+                              </button>
+                            ) : (
+                              <p className="mt-1 text-[11px] text-foreground/55">
+                                Force-release permission required to acknowledge.
+                              </p>
+                            )}
+                          </div>
                         ) : null}
                         {bucket === 'upcoming' ? (
                           <p className="text-xs text-foreground/65">
@@ -1130,6 +1238,9 @@ export function AmrMultistopSummaryModal({
                       <span className="inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-background/80 px-2 py-1">
                         <PalletPresenceGlyph
                           kind={palletPresenceKindFromState({
+                            nonStandWaypoint:
+                              !!continueBlockedStandRef &&
+                              nonStandWaypointRefs.has(continueBlockedStandRef.trim()),
                             present: blockedDestPresence,
                             loading: blockedDestPresenceLoading,
                             error: blockedDestPresenceError,
@@ -1169,35 +1280,47 @@ export function AmrMultistopSummaryModal({
                       className="min-h-[40px] w-full rounded-md border border-red-600/50 bg-background px-3 text-sm font-medium text-red-700 hover:bg-red-500/15 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/50 sm:w-auto"
                       onClick={() => setForceReleaseConfirmOpen(true)}
                     >
-                      Force release anyway
+                      Force dispatch…
                     </button>
                   ) : null}
                 </div>
               ) : null}
             </div>
           ) : null}
-          <ConfirmModal
-            open={forceReleaseConfirmOpen}
-            title="Force release"
-            variant="amber"
-            message={
-              continueBlockedStandRef ? (
-                <span>
-                  Hyperion still reports a pallet at stand{' '}
-                  <span className="font-mono">{continueBlockedStandRef}</span>. Force only if the stand is actually
-                  clear or you accept the risk of a fleet conflict.
-                </span>
-              ) : (
-                'Force dispatch without a stand-empty check? Only continue if the stand is clear or you accept the risk.'
+          {typeof document !== 'undefined'
+            ? createPortal(
+                <ConfirmModal
+                  open={forceReleaseConfirmOpen}
+                  overlayClassName="z-[210]"
+                  title="Force dispatch queued mission"
+                  variant="amber"
+                  message={
+                    continueBlockedStandRef ? (
+                      <span>
+                        Hyperion still reports a pallet at stand{' '}
+                        <span className="font-mono">{continueBlockedStandRef}</span>. Force only if the stand is actually
+                        clear or you accept the risk of a fleet conflict.
+                      </span>
+                    ) : sessionHeldForQueuedDispatch ? (
+                      <span>
+                        This session is waiting in the mission queue before the next fleet dispatch (stand not empty yet,
+                        deferred container registration, or stand-group routing). Dispatch anyway only if the situation
+                        is safe or you accept fleet-side risk.
+                      </span>
+                    ) : (
+                      'Force dispatch without a stand-empty check? Only continue if the stand is clear or you accept the risk.'
+                    )
+                  }
+                  confirmLabel={continueBusy ? 'Dispatching…' : 'Force dispatch'}
+                  cancelLabel="Cancel"
+                  onCancel={() => {
+                    if (!continueBusy) setForceReleaseConfirmOpen(false)
+                  }}
+                  onConfirm={() => void onConfirmForceRelease()}
+                />,
+                document.body
               )
-            }
-            confirmLabel={continueBusy ? 'Releasing…' : 'Force release'}
-            cancelLabel="Cancel"
-            onCancel={() => {
-              if (!continueBusy) setForceReleaseConfirmOpen(false)
-            }}
-            onConfirm={() => void onConfirmForceRelease()}
-          />
+            : null}
           <ConfirmModal
             open={cancelConfirmOpen}
             title="Cancel mission"
@@ -1277,18 +1400,59 @@ export function AmrMultistopSummaryModal({
                     ? 'Release now'
                     : 'Release Mission'}
               </button>
+              {canForceRelease &&
+              awaitingContinue &&
+              sessionHeldForQueuedDispatch &&
+              !continueBlockedStandRef ? (
+                <button
+                  type="button"
+                  disabled={continueBusy || cancelBusy || terminateStuckBusy}
+                  title="Skip queue checks and dispatch the next segment now (requires permission)"
+                  className="min-h-[44px] w-full rounded-lg border border-red-600/45 bg-background px-4 text-sm font-medium text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300 sm:w-auto"
+                  onClick={() => setForceReleaseConfirmOpen(true)}
+                >
+                  Force dispatch queued…
+                </button>
+              ) : null}
             </div>
-            <button
-              type="button"
-              disabled={cancelBusy || continueBusy || terminateStuckBusy}
-              className="min-h-[44px] w-full rounded-lg border border-border bg-background px-4 text-sm font-medium hover:bg-muted disabled:opacity-50 sm:w-auto"
-              onClick={() => {
-                onOpenFullMission(headRecordForMissionDetail(group))
-                onClose()
-              }}
-            >
-              Open full mission editor
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+              {replayFromOverviewEnabled ? (
+                openNewMissionModal ? (
+                  <button
+                    type="button"
+                    disabled={cancelBusy || continueBusy || terminateStuckBusy}
+                    className="min-h-[44px] w-full rounded-lg border border-primary/40 bg-primary/10 px-4 text-sm font-medium text-primary hover:bg-primary/15 disabled:opacity-50 sm:w-auto"
+                    onClick={() => {
+                      openNewMissionModal.openNewMission({
+                        search: `?replay=${encodeURIComponent(headMissionRecordId)}`,
+                      })
+                      onClose()
+                    }}
+                  >
+                    New mission from route
+                  </button>
+                ) : (
+                  <Link
+                    to={`${amrPath('missions', 'new')}?replay=${encodeURIComponent(headMissionRecordId)}`}
+                    className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-primary/40 bg-primary/10 px-4 text-sm font-medium text-primary hover:bg-primary/15 sm:w-auto"
+                    onClick={onClose}
+                  >
+                    New mission from route
+                  </Link>
+                )
+              ) : null}
+              <button
+                type="button"
+                disabled={cancelBusy || continueBusy || terminateStuckBusy}
+                className="min-h-[44px] w-full rounded-lg border border-border bg-background px-4 text-sm font-medium hover:bg-muted disabled:opacity-50 sm:w-auto"
+                onClick={() => {
+                  onOpenFullMission(headMissionRec)
+                  onClose()
+                }}
+              >
+                Open full mission editor
+              </button>
+            </div>
           </div>
         </div>
       </div>

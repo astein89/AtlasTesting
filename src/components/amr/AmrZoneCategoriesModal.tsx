@@ -4,17 +4,20 @@ import {
   DragOverlay,
   KeyboardSensor,
   PointerSensor,
+  closestCenter,
   closestCorners,
   pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
   type CollisionDetection,
+  MeasuringStrategy,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
 import {
   arrayMove,
+  rectSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -56,10 +59,17 @@ type Bucket = {
   uncategorized: boolean
 }
 
-/** Prefer the bucket under the pointer so drops match intent; fall back for reorder collisions. */
+/**
+ * Zone chips use flex-wrap (2D layout). Prefer pointer hits, then closest-center for wrapped rows;
+ * category cards keep closest-corners for vertical category reorder.
+ */
 const zoneBucketCollisionDetection: CollisionDetection = (args) => {
   const pointerHits = pointerWithin(args)
   if (pointerHits.length > 0) return pointerHits
+  const activeId = String(args.active.id)
+  if (activeId.startsWith(ZONE_PREFIX)) {
+    return closestCenter(args)
+  }
   return closestCorners(args)
 }
 
@@ -198,11 +208,18 @@ function SortableZoneChip({
   isOrphan,
   onRemove,
   groupLabels,
+  manualExpandPicker,
+  expandOnZoneStep,
+  onToggleExpandOnZoneStep,
 }: {
   zone: string
   isOrphan: boolean
   onRemove: () => void
   groupLabels?: Record<string, string>
+  /** Manual mode: show checkbox to list stands on the stand-picker zone step. */
+  manualExpandPicker?: boolean
+  expandOnZoneStep?: boolean
+  onToggleExpandOnZoneStep?: () => void
 }) {
   const groupZoneLocked = isStandGroupSyntheticZone(zone)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -254,6 +271,27 @@ function SortableZoneChip({
             no stands
           </span>
         ) : null}
+        {manualExpandPicker === true &&
+        !groupZoneLocked &&
+        zone.trim() !== '' &&
+        onToggleExpandOnZoneStep &&
+        expandOnZoneStep !== undefined ? (
+          <label
+            className="ml-0.5 flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground/65 hover:bg-background hover:text-foreground"
+            title="Show all stands on the zone step in the stand picker (no drill-in)."
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              className="h-3 w-3 rounded border-border"
+              checked={expandOnZoneStep}
+              onChange={() => onToggleExpandOnZoneStep()}
+              aria-label={`Expand ${zoneChipDisplayText(zone, groupLabels)} on stand picker zone step`}
+            />
+            <span>Expand</span>
+          </label>
+        ) : null}
         {groupZoneLocked ? null : (
           <button
             type="button"
@@ -279,6 +317,9 @@ function ZoneBucketArea({
   orphanZones,
   onRemoveZoneFromCategory,
   groupLabels,
+  manualExpandPicker,
+  expandedPickerZones,
+  onToggleExpandedPickerZone,
 }: {
   bucketId: string
   zones: string[]
@@ -286,13 +327,13 @@ function ZoneBucketArea({
   /** Removes the zone from its category (returns it to Uncategorized). Only called from category cards. */
   onRemoveZoneFromCategory?: (zone: string) => void
   groupLabels?: Record<string, string>
+  manualExpandPicker?: boolean
+  expandedPickerZones?: Set<string>
+  onToggleExpandedPickerZone?: (zone: string) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `${BUCKET_DROP_PREFIX}${bucketId}` })
   return (
-    <SortableContext
-      items={zones.map((z) => `${ZONE_PREFIX}${z}`)}
-      strategy={verticalListSortingStrategy}
-    >
+    <SortableContext items={zones.map((z) => `${ZONE_PREFIX}${z}`)} strategy={rectSortingStrategy}>
       <ul
         ref={setNodeRef}
         className={`m-0 flex min-h-[6rem] list-none flex-wrap content-start gap-2 rounded-lg border-2 border-dashed p-3 transition-colors sm:min-h-[7rem] ${
@@ -311,6 +352,13 @@ function ZoneBucketArea({
               isOrphan={orphanZones.has(zone)}
               onRemove={() => onRemoveZoneFromCategory?.(zone)}
               groupLabels={groupLabels}
+              manualExpandPicker={manualExpandPicker}
+              expandOnZoneStep={expandedPickerZones?.has(zone.trim())}
+              onToggleExpandOnZoneStep={
+                manualExpandPicker && onToggleExpandedPickerZone
+                  ? () => onToggleExpandedPickerZone(zone.trim())
+                  : undefined
+              }
             />
           ))
         )}
@@ -322,12 +370,14 @@ function ZoneBucketArea({
 interface AmrZoneCategoriesModalProps {
   /** Distinct trimmed zone names from the loaded stands list — used to derive uncategorized + orphan info. */
   allZones: string[]
+  /** Stand count per trimmed zone — used when switching stand picker expansion to Manual (prefill two-stand zones). */
+  zoneStandCounts: Record<string, number>
   onClose: () => void
   /** Called after a successful save so the parent can refresh dependent data (the picker reads zoneCategories from settings). */
   onSaved: () => void
 }
 
-export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCategoriesModalProps) {
+export function AmrZoneCategoriesModal({ allZones, zoneStandCounts, onClose, onSaved }: AmrZoneCategoriesModalProps) {
   const { showAlert } = useAlertConfirm()
   const [categories, setCategories] = useState<LocalCategory[]>([])
   /** Synthetic zone keys from stand groups — merged into catalog so “Groups” chips are not orphaned. */
@@ -338,6 +388,9 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
   /** Drag overlay preview — source chip fades but stays outlined; cursor carries full-opacity clone. */
   const [activeDragZone, setActiveDragZone] = useState<string | null>(null)
   const [activeDragCategoryId, setActiveDragCategoryId] = useState<string | null>(null)
+  /** Legacy: picker auto-expands only zones with exactly 2 stands. Manual: `manualExpandedPickerZones` controls expansion. */
+  const [pickerExpandMode, setPickerExpandMode] = useState<'legacy' | 'manual'>('legacy')
+  const [manualExpandedPickerZones, setManualExpandedPickerZones] = useState<Set<string>>(() => new Set())
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -357,6 +410,15 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
             zones: Array.isArray(c.zones) ? [...c.zones] : [],
           }))
         )
+        if (Array.isArray(s.zonePickerInlineZones)) {
+          setPickerExpandMode('manual')
+          setManualExpandedPickerZones(
+            new Set(s.zonePickerInlineZones.map((x) => String(x).trim()).filter(Boolean))
+          )
+        } else {
+          setPickerExpandMode('legacy')
+          setManualExpandedPickerZones(new Set())
+        }
       })
       .catch(() => {
         if (!cancelled) showAlert('Could not load zone categories.')
@@ -413,6 +475,37 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
     }
     return [...keys].sort((a, b) => a.localeCompare(b))
   }, [allZones, standGroupZoneLabels, hasAnyStandGroups])
+
+  const selectPickerExpandLegacy = useCallback(() => {
+    setPickerExpandMode('legacy')
+    setManualExpandedPickerZones(new Set())
+  }, [])
+
+  const selectPickerExpandManual = useCallback(() => {
+    setPickerExpandMode('manual')
+    setManualExpandedPickerZones((prev) => {
+      if (prev.size > 0) return prev
+      const next = new Set<string>()
+      for (const z of mergedAllZones) {
+        if (isStandGroupSyntheticZone(z)) continue
+        const t = z.trim()
+        if (!t) continue
+        if (zoneStandCounts[t] === 2) next.add(t)
+      }
+      return next
+    })
+  }, [mergedAllZones, zoneStandCounts])
+
+  const toggleManualExpandedZone = useCallback((zoneKey: string) => {
+    const k = zoneKey.trim()
+    if (!k) return
+    setManualExpandedPickerZones((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  }, [])
 
   const allZonesSet = useMemo(() => new Set(mergedAllZones), [mergedAllZones])
 
@@ -605,7 +698,13 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
         name: c.name.trim(),
         zones: [...c.zones],
       }))
-      await putAmrSettings({ zoneCategories: payload })
+      await putAmrSettings({
+        zoneCategories: payload,
+        zonePickerInlineZones:
+          pickerExpandMode === 'manual'
+            ? [...manualExpandedPickerZones].sort((a, b) => a.localeCompare(b))
+            : null,
+      })
       onSaved()
       onClose()
     } catch {
@@ -613,7 +712,15 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
     } finally {
       setSaving(false)
     }
-  }, [categories, validate, showAlert, onSaved, onClose])
+  }, [
+    categories,
+    validate,
+    showAlert,
+    onSaved,
+    onClose,
+    pickerExpandMode,
+    manualExpandedPickerZones,
+  ])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -642,9 +749,48 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
               Manage zone categories
             </h2>
             <p className="text-xs text-foreground/60">
-              Group zones for the stand picker. Drag zones onto the dashed bucket — it grows when you hover. The chip
-              follows your pointer while dragging. Drag category handles to reorder categories.
+              Group zones for the stand picker. Drag zones within a category to reorder (wraps in rows). Drop on
+              another zone to insert before it, or on empty bucket space to append. Drag category handles to reorder
+              categories.
             </p>
+            <fieldset className="mt-3 space-y-2 rounded-lg border border-border bg-muted/20 p-3 text-left">
+              <legend className="px-1 text-xs font-semibold text-foreground">Stand picker zone step</legend>
+              <p className="text-xs text-foreground/60">
+                Decide whether selecting a zone shows its stands immediately, or opens a zone page first.
+              </p>
+              <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+                <input
+                  type="radio"
+                  className="mt-1 shrink-0"
+                  name="amr-picker-zone-expand-mode"
+                  checked={pickerExpandMode === 'legacy'}
+                  onChange={selectPickerExpandLegacy}
+                />
+                <span>
+                  <span className="font-medium">Automatic (legacy)</span>
+                  <span className="mt-0.5 block text-xs text-foreground/60">
+                    Zones with exactly two stands list both stands on the zone step. All other zones require a
+                    drill-in.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+                <input
+                  type="radio"
+                  className="mt-1 shrink-0"
+                  name="amr-picker-zone-expand-mode"
+                  checked={pickerExpandMode === 'manual'}
+                  onChange={selectPickerExpandManual}
+                />
+                <span>
+                  <span className="font-medium">Manual per zone</span>
+                  <span className="mt-0.5 block text-xs text-foreground/60">
+                    Turn on Expand on each zone chip (below). Turning this on fills two-stand zones by default — adjust
+                    as needed before saving.
+                  </span>
+                </span>
+              </label>
+            </fieldset>
           </div>
           <button
             type="button"
@@ -665,6 +811,7 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
             <DndContext
               sensors={sensors}
               collisionDetection={zoneBucketCollisionDetection}
+              measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
               onDragStart={handleDragStart}
               onDragCancel={() => {
                 setActiveDragZone(null)
@@ -696,6 +843,9 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
                           orphanZones={orphanZones}
                           onRemoveZoneFromCategory={(z) => removeZoneFromCategory(c.id, z)}
                           groupLabels={standGroupZoneLabels}
+                          manualExpandPicker={pickerExpandMode === 'manual'}
+                          expandedPickerZones={manualExpandedPickerZones}
+                          onToggleExpandedPickerZone={toggleManualExpandedZone}
                         />
                       </SortableCategoryCard>
                     )
@@ -723,6 +873,9 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
                   zones={buckets[buckets.length - 1]?.zones ?? []}
                   orphanZones={orphanZones}
                   groupLabels={standGroupZoneLabels}
+                  manualExpandPicker={pickerExpandMode === 'manual'}
+                  expandedPickerZones={manualExpandedPickerZones}
+                  onToggleExpandedPickerZone={toggleManualExpandedZone}
                 />
               </div>
 

@@ -48,7 +48,8 @@ export function multistopStandOccupiedContinueMessage(destinationRef: string): s
  */
 export function multistopContinueOccupiedDestinationRef(
   plan: MultistopReleasePlanDest[],
-  nextSeg: number
+  nextSeg: number,
+  nonStandWaypointRefs?: Set<string>
 ): string | null {
   if (!plan.length || !Number.isFinite(nextSeg) || nextSeg < 0 || nextSeg >= plan.length) return null
   const dest = plan[nextSeg]
@@ -56,7 +57,9 @@ export function multistopContinueOccupiedDestinationRef(
   const movingPalletToDestination = isFinal || dest.putDown === true
   if (!movingPalletToDestination) return null
   const ref = dest.position.trim()
-  return ref || null
+  if (!ref) return null
+  if (nonStandWaypointRefs?.has(ref)) return null
+  return ref
 }
 
 /**
@@ -113,4 +116,20 @@ export function shouldWarnFirstSegmentDropOccupied(
   if (!destinationRef) return { shouldWarn: false, destinationRef: '' }
   if (bypassRefs?.has(destinationRef)) return { shouldWarn: false, destinationRef }
   return { shouldWarn: presence[destinationRef] === true, destinationRef }
+}
+
+/**
+ * Create-time sanity: stop 1 (pickup / first NODE) must report a pallet if Hyperion says the stand is empty (`false`).
+ * Unknown / missing entries do not warn (same caution as elsewhere).
+ */
+export function shouldWarnFirstStopPickupAbsent(
+  legs: Array<{ position: string }>,
+  presence: Record<string, boolean>,
+  bypassRefs?: Set<string>
+): { shouldWarn: boolean; pickupRef: string } {
+  if (legs.length < 2) return { shouldWarn: false, pickupRef: '' }
+  const pickupRef = legs[0].position.trim()
+  if (!pickupRef) return { shouldWarn: false, pickupRef: '' }
+  if (bypassRefs?.has(pickupRef)) return { shouldWarn: false, pickupRef }
+  return { shouldWarn: presence[pickupRef] === false, pickupRef }
 }

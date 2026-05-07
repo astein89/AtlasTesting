@@ -56,8 +56,10 @@ const SUMMARY_ONLY_KEYS = new Set(['batteryLevel', 'status'])
 
 const NUMERIC_KEYS = new Set(['x', 'y', 'nodeNumber', 'robotOrientation', 'occupyStatus', 'liftStatus', 'batteryLevel', 'reliability'])
 
-/** Categories on the grid: attention first, then less available, then working states. Offline is last among fleet statuses so it sits just above Locked. */
+/** Categories on the grid: attention first, then less available, then working states. Offline (2) is rendered after “Locked from missions”. */
 const STATUS_GRID_SECTION_ORDER = [7, 6, 4, 5, 3] as const
+/** Fleet “offline map” status code — grouped last on the Robots grid. */
+const OFFLINE_STATUS_CODE = 2
 
 function statusCategoryKey(status: unknown): number | 'none' {
   if (status === null || status === undefined || status === '') return 'none'
@@ -76,19 +78,17 @@ function compareRobotsByName(a: RobotRow, b: RobotRow): number {
 
 function sortedStatusCategoryKeys(keys: Set<number | 'none'>): (number | 'none')[] {
   const orderNums = STATUS_GRID_SECTION_ORDER as readonly number[]
-  const OFFLINE_CODE = 2
   const out: (number | 'none')[] = []
   for (const c of STATUS_GRID_SECTION_ORDER) {
     if (keys.has(c)) out.push(c)
   }
   const extras = [...keys].filter(
     (k): k is number =>
-      k !== 'none' && typeof k === 'number' && !orderNums.includes(k) && k !== OFFLINE_CODE
+      k !== 'none' && typeof k === 'number' && !orderNums.includes(k) && k !== OFFLINE_STATUS_CODE
   )
   extras.sort((a, b) => a - b)
   out.push(...extras)
   if (keys.has('none')) out.push('none')
-  if (keys.has(OFFLINE_CODE)) out.push(OFFLINE_CODE)
   return out
 }
 
@@ -549,8 +549,7 @@ export function AmrRobots() {
   )
 
   /**
-   * Unlocked robots are grouped by fleet status first; locked robots render last in “Locked from missions”
-   * so live status sections stay primary when scanning the page.
+   * Unlocked robots are grouped by fleet status first; “Locked from missions” follows; offline (status 2) is last.
    */
   const statusSections = useMemo(() => {
     const lockedSection: RobotRow[] = []
@@ -568,11 +567,22 @@ export function AmrRobots() {
     }
     for (const list of byKey.values()) list.sort(compareRobotsByName)
     lockedSection.sort(compareRobotsByName)
-    const keys = sortedStatusCategoryKeys(new Set(byKey.keys()))
+    const unlockedKeysNoOffline = new Set(
+      [...byKey.keys()].filter((k) => k !== OFFLINE_STATUS_CODE)
+    )
+    const keys = sortedStatusCategoryKeys(unlockedKeysNoOffline)
     const out: { key: number | 'none' | 'locked'; heading: string; rows: RobotRow[] }[] = []
     for (const k of keys) out.push({ key: k, heading: categoryHeading(k), rows: byKey.get(k)! })
     if (lockedSection.length > 0) {
       out.push({ key: 'locked', heading: 'Locked from missions', rows: lockedSection })
+    }
+    const offlineRows = byKey.get(OFFLINE_STATUS_CODE)
+    if (offlineRows && offlineRows.length > 0) {
+      out.push({
+        key: OFFLINE_STATUS_CODE,
+        heading: categoryHeading(OFFLINE_STATUS_CODE),
+        rows: offlineRows,
+      })
     }
     return out
   }, [visibleRows, lockedSet])

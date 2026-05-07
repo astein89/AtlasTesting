@@ -21,6 +21,19 @@ function coercePresenceMap(raw: unknown): Record<string, boolean> {
   return out
 }
 
+/** Hyperion may return HTTP 200 with `{ ok: false, error?, raw? }` instead of a presence map */
+function hyperionStandPresenceRejectedMessage(parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const o = parsed as Record<string, unknown>
+  if (o.ok !== false) return null
+  const err = typeof o.error === 'string' ? o.error.trim() : ''
+  const raw = typeof o.raw === 'string' ? o.raw.trim() : ''
+  if (err && raw) return `${err}: ${raw.slice(0, 2000)}`
+  if (err) return err
+  if (raw) return raw.slice(0, 2000)
+  return 'Hyperion stand-presence reported failure.'
+}
+
 export async function fetchStandPresenceFromHyperion(
   cfg: AmrHyperionConfig,
   standIds?: string[],
@@ -39,6 +52,10 @@ export async function fetchStandPresenceFromHyperion(
       message: res.text,
       status: res.status || 503,
     }
+  }
+  const rej = hyperionStandPresenceRejectedMessage(res.json)
+  if (rej) {
+    return { ok: false, message: rej, status: 502 }
   }
   return { ok: true, presence: coercePresenceMap(res.json) }
 }

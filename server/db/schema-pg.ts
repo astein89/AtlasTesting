@@ -286,6 +286,7 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS block_dropoff INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS bypass_pallet_check INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS active_missions INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE amr_stands ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'stand'`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_amr_stands_external ON amr_stands(external_ref)`,
   `CREATE TABLE IF NOT EXISTS amr_mission_records (
     id TEXT PRIMARY KEY,

@@ -7,6 +7,10 @@ import {
   type ZoneCategory,
   type AmrStandPickerMode,
 } from '@/api/amr'
+import {
+  AMR_STAND_LOCATION_TYPE_NON_STAND,
+  normalizeAmrStandLocationType,
+} from '@/utils/amrStandLocationType'
 import { PalletPresenceGlyph, palletPresenceKindFromState, type PalletPresenceKind } from '@/components/amr/PalletPresenceGlyph'
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch'
 
@@ -23,6 +27,8 @@ export type AmrStandPickerRow = {
   bypass_pallet_check?: number
   /** Special-location flag: 1 = no pallet dropoff at this stand (no lower). Optional for backward compat. */
   block_dropoff?: number
+  /** `non_stand` = waypoint with no pallet presence / cannot be mission final rack drop. */
+  location_type?: string
 }
 
 /** Orientation string to send with containerIn / first mission stop from a stand external ref. */
@@ -77,17 +83,121 @@ function soleStandZoneButtonLabel(s: AmrStandPickerRow): string {
   return lab || ref || '—'
 }
 
+/**
+ * Multi-card stand grid on zone step 1. Legacy: only when the zone has exactly 2 stands.
+ * Explicit (`zonePickerInlineZones` in settings): listed zone keys use the grid for any stand count (including 1 or many).
+ */
+function zoneShowsExpandedStandGridOnZonesStep(
+  zoneKey: string,
+  standsInZoneCount: number,
+  explicitInlineSet: Set<string> | null
+): boolean {
+  if (standsInZoneCount <= 0) return false
+  const z = zoneKey.trim()
+  if (!z) return false
+  if (explicitInlineSet === null) {
+    return standsInZoneCount === 2
+  }
+  return explicitInlineSet.has(z)
+}
+
+/** Sole-stand shortcut on zone step 1 uses Hyperion presence polling (compact tile, not expanded grid). */
+function zoneEligibleForZonesStepSoleChip(
+  zoneKey: string,
+  standsInZoneCount: number,
+  explicitInlineSet: Set<string> | null
+): boolean {
+  if (standsInZoneCount !== 1) return false
+  const z = zoneKey.trim()
+  if (!z) return false
+  if (explicitInlineSet !== null && explicitInlineSet.has(z)) {
+    return false
+  }
+  return true
+}
+
 type ZoneGroup = { categoryName: string | null; categoryKey: string; zones: string[] }
+
+type StandGroupOrderRow = { zone: string }
+
+/**
+ * Align synthetic `__group:` zone chips with `GET /stand-groups` order (`sort_order`), matching Stand groups page +
+ * `buildGroupsCategoryZones`: live groups in API order, then stale group keys, then non-group keys (relative order kept
+ * for the last two buckets).
+ */
+function reorderZonesUsingStandGroupApiOrder(zones: string[], standGroupsOrdered: StandGroupOrderRow[]): string[] {
+  if (standGroupsOrdered.length === 0) return zones
+  const liveOrder = standGroupsOrdered.map((g) => g.zone.trim()).filter(Boolean)
+  const liveSet = new Set(liveOrder)
+  const inCat = new Set(zones.map((z) => z.trim()))
+  const live = liveOrder.filter((k) => inCat.has(k))
+  const stale: string[] = []
+  const rest: string[] = []
+  for (const z of zones) {
+    const t = z.trim()
+    if (!t.startsWith(AMR_STAND_GROUP_PREFIX)) {
+      rest.push(z)
+      continue
+    }
+    if (liveSet.has(t)) continue
+    stale.push(z)
+  }
+  return [...live, ...stale, ...rest]
+}
+
+/** Uncategorized bucket: stand-group tiles first (API order), then other zones alphabetically (empty zone last). */
+function sortUncategorizedZoneKeysForPicker(
+  keys: string[],
+  standGroupsOrdered: StandGroupOrderRow[]
+): string[] {
+  if (standGroupsOrdered.length === 0) {
+    const copy = [...keys]
+    copy.sort((a, b) => {
+      if (a === '' && b !== '') return 1
+      if (b === '' && a !== '') return -1
+      return a.localeCompare(b)
+    })
+    return copy
+  }
+  const keySet = new Set(keys)
+  const liveOrder = standGroupsOrdered.map((g) => g.zone.trim()).filter(Boolean)
+  const liveSet = new Set(liveOrder)
+  const live = liveOrder.filter((k) => keySet.has(k))
+  const staleGroups: string[] = []
+  const normal: string[] = []
+  for (const z of keys) {
+    const t = z.trim()
+    if (t.startsWith(AMR_STAND_GROUP_PREFIX)) {
+      if (liveSet.has(t)) continue
+      staleGroups.push(z)
+    } else {
+      normal.push(z)
+    }
+  }
+  staleGroups.sort((a, b) => {
+    if (a === '' && b !== '') return 1
+    if (b === '' && a !== '') return -1
+    return a.localeCompare(b)
+  })
+  normal.sort((a, b) => {
+    if (a === '' && b !== '') return 1
+    if (b === '' && a !== '') return -1
+    return a.localeCompare(b)
+  })
+  return [...live, ...staleGroups, ...normal]
+}
 
 /**
  * Build the step-1 zone list grouped under category headers from `zoneCategories`. Zones not listed in any category
  * (or with no current stand) flow into the synthetic "Uncategorized" group rendered last. Within each group, zones are
- * shown in the user-configured order; the Uncategorized group sorts alphabetically.
+ * shown in the user-configured order; the Uncategorized group sorts alphabetically. Stand-group entries follow API
+ * `sort_order` when `standGroupsOrdered` is passed (same order as the Stand groups page).
  */
 function buildZoneGroups(
   visibleStands: AmrStandPickerRow[],
   zoneCategories: ZoneCategory[],
-  extraZoneKeys: string[] = []
+  extraZoneKeys: string[] = [],
+  standGroupsOrdered?: StandGroupOrderRow[]
 ): ZoneGroup[] {
   const visibleZoneSet = new Set<string>()
   for (const s of visibleStands) visibleZoneSet.add((s.zone ?? '').trim())
@@ -97,18 +207,22 @@ function buildZoneGroups(
   }
   const groups: ZoneGroup[] = []
   const claimed = new Set<string>()
+  const applyGroupOrder =
+    standGroupsOrdered !== undefined && standGroupsOrdered.length > 0 ? standGroupsOrdered : null
   for (const cat of zoneCategories) {
-    const zones = cat.zones.filter((z) => visibleZoneSet.has(z))
+    let zones = cat.zones.filter((z) => visibleZoneSet.has(z))
+    if (applyGroupOrder) zones = reorderZonesUsingStandGroupApiOrder(zones, applyGroupOrder)
     for (const z of zones) claimed.add(z)
     if (zones.length === 0) continue
     groups.push({ categoryName: cat.name, categoryKey: `cat:${cat.name}`, zones })
   }
-  const remaining = [...visibleZoneSet].filter((z) => !claimed.has(z))
-  remaining.sort((a, b) => {
-    if (a === '' && b !== '') return 1
-    if (b === '' && a !== '') return -1
-    return a.localeCompare(b)
-  })
+  let remaining = [...visibleZoneSet].filter((z) => !claimed.has(z))
+  remaining =
+    applyGroupOrder != null ? sortUncategorizedZoneKeysForPicker(remaining, applyGroupOrder) : [...remaining].sort((a, b) => {
+        if (a === '' && b !== '') return 1
+        if (b === '' && a !== '') return -1
+        return a.localeCompare(b)
+      })
   if (remaining.length > 0) {
     groups.push({ categoryName: null, categoryKey: 'uncategorized', zones: remaining })
   }
@@ -117,6 +231,7 @@ function buildZoneGroups(
 
 function rowPresenceKind(
   ref: string,
+  stand: AmrStandPickerRow | undefined,
   ctx: {
     presence: Record<string, boolean | null>
     presLoading: boolean
@@ -126,7 +241,11 @@ function rowPresenceKind(
 ): PalletPresenceKind {
   const { presence, presLoading, presError, presUnconfig } = ctx
   const present = Object.prototype.hasOwnProperty.call(presence, ref) ? presence[ref] : null
+  const nonStandWaypoint =
+    !!stand &&
+    normalizeAmrStandLocationType(stand.location_type) === AMR_STAND_LOCATION_TYPE_NON_STAND
   return palletPresenceKindFromState({
+    nonStandWaypoint,
     present,
     loading: presLoading,
     error: presError,
@@ -150,6 +269,8 @@ export function AmrStandPickerModal({
   zoneCategories,
   canOverride = false,
   allowGroups = false,
+  /** When true, hide non-stand waypoints from the stand list (e.g. rack drop as final destination). */
+  omitNonStandWaypoints = false,
   multiSelect,
 }: {
   stands: AmrStandPickerRow[]
@@ -165,6 +286,8 @@ export function AmrStandPickerModal({
   canOverride?: boolean
   /** When true (stop 2+), load stand groups and allow picking a group pool from the zone list. */
   allowGroups?: boolean
+  /** When true, hide non-stand waypoints from the stand list (e.g. rack drop as final destination). */
+  omitNonStandWaypoints?: boolean
   /**
    * When set, switches the picker into multi-select mode: zones step still drills into a zone, but the stands
    * step renders checkboxes and a Done footer. Stand-group entries are hidden (groups can't be members of groups).
@@ -174,6 +297,8 @@ export function AmrStandPickerModal({
   const [step, setStep] = useState<Step>({ kind: 'zones' })
   const [showRestricted, setShowRestricted] = useState(false)
   const [resolvedCategories, setResolvedCategories] = useState<ZoneCategory[]>(zoneCategories ?? [])
+  /** `null` = legacy inline for zones with only 1–2 stands; else only those zone keys expand on step 1. */
+  const [pickerInlineZonesExplicit, setPickerInlineZonesExplicit] = useState<Set<string> | null>(null)
   const [standGroups, setStandGroups] = useState<Array<{ id: string; name: string; zone: string }>>([])
   const bodyScrollRef = useRef<HTMLDivElement>(null)
   const zClass = stackOrder === 'aboveDialogs' ? 'z-[80]' : 'z-50'
@@ -188,8 +313,12 @@ export function AmrStandPickerModal({
   const restrictionToggleVisible = canOverride && mode !== 'any'
 
   const visibleStands = useMemo(() => {
-    return visibleStandsForMode(stands, mode, restrictionToggleVisible && showRestricted)
-  }, [stands, mode, restrictionToggleVisible, showRestricted])
+    let v = visibleStandsForMode(stands, mode, restrictionToggleVisible && showRestricted)
+    if (omitNonStandWaypoints) {
+      v = v.filter((s) => normalizeAmrStandLocationType(s.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND)
+    }
+    return v
+  }, [stands, mode, restrictionToggleVisible, showRestricted, omitNonStandWaypoints])
 
   /** Stand groups are not nestable — hide the synthetic group entries when picking members for a group. */
   const extraGroupZones = useMemo(
@@ -198,8 +327,14 @@ export function AmrStandPickerModal({
   )
 
   const zoneGroups = useMemo(
-    () => buildZoneGroups(visibleStands, resolvedCategories, extraGroupZones),
-    [visibleStands, resolvedCategories, extraGroupZones]
+    () =>
+      buildZoneGroups(
+        visibleStands,
+        resolvedCategories,
+        extraGroupZones,
+        allowGroups && !isMultiSelect && standGroups.length > 0 ? standGroups : undefined
+      ),
+    [visibleStands, resolvedCategories, extraGroupZones, allowGroups, isMultiSelect, standGroups]
   )
 
   const standsForStep = useMemo(() => {
@@ -213,7 +348,7 @@ export function AmrStandPickerModal({
   }, [standsForStep, step.kind])
 
   /**
-   * Stand refs that appear on the zones step itself (sole-stand zone tiles + zones with ≤2 stands inlined).
+   * Stand refs that appear on the zones step itself (expanded grid, or sole-stand compact tile with presence).
    * Group synthetic zones excluded — they never list member stands here.
    */
   const zonesStepInlinePresenceIds = useMemo(() => {
@@ -223,7 +358,22 @@ export function AmrStandPickerModal({
       for (const z of g.zones) {
         if (parseStandGroupZoneKey(z)) continue
         const inZone = standsInZone(visibleStands, z)
-        if (inZone.length !== 1 && inZone.length !== 2) continue
+        if (
+          !zoneShowsExpandedStandGridOnZonesStep(z, inZone.length, pickerInlineZonesExplicit) &&
+          !zoneEligibleForZonesStepSoleChip(z, inZone.length, pickerInlineZonesExplicit)
+        ) {
+          continue
+        }
+        if (zoneShowsExpandedStandGridOnZonesStep(z, inZone.length, pickerInlineZonesExplicit)) {
+          for (const s of inZone) {
+            const ref = s.external_ref.trim()
+            if (ref && !seen.has(ref)) {
+              seen.add(ref)
+              ids.push(ref)
+            }
+          }
+          continue
+        }
         for (const s of inZone) {
           const ref = s.external_ref.trim()
           if (ref && !seen.has(ref)) {
@@ -234,13 +384,29 @@ export function AmrStandPickerModal({
       }
     }
     return ids
-  }, [zoneGroups, visibleStands])
+  }, [zoneGroups, visibleStands, pickerInlineZonesExplicit])
 
   const standIdsForPresence = useMemo(() => {
     if (step.kind === 'stands') return standIdsForZone
     if (step.kind === 'zones') return zonesStepInlinePresenceIds
     return []
   }, [step.kind, standIdsForZone, zonesStepInlinePresenceIds])
+
+  const standsByExternalRef = useMemo(
+    () => new Map(stands.map((s) => [s.external_ref.trim(), s])),
+    [stands]
+  )
+
+  const standIdsForPresenceQuery = useMemo(
+    () =>
+      standIdsForPresence.filter((id) => {
+        const row = standsByExternalRef.get(id.trim())
+        return (
+          !row || normalizeAmrStandLocationType(row.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND
+        )
+      }),
+    [standIdsForPresence, standsByExternalRef]
+  )
 
   const [presence, setPresence] = useState<Record<string, boolean | null>>({})
   const [presLoading, setPresLoading] = useState(false)
@@ -278,7 +444,7 @@ export function AmrStandPickerModal({
     }
   }, [])
 
-  const idsKey = standIdsForPresence.join('\0')
+  const idsKey = standIdsForPresenceQuery.join('\0')
 
   useEffect(() => {
     let cancelled = false
@@ -287,6 +453,13 @@ export function AmrStandPickerModal({
       setPollMsContainers(Math.max(3000, s.pollMsContainers))
       if (zoneCategories === undefined && Array.isArray(s.zoneCategories)) {
         setResolvedCategories(s.zoneCategories)
+      }
+      if (s.zonePickerInlineZones !== undefined) {
+        setPickerInlineZonesExplicit(
+          new Set(s.zonePickerInlineZones.map((x) => String(x).trim()).filter(Boolean))
+        )
+      } else {
+        setPickerInlineZonesExplicit(null)
       }
     })
     return () => {
@@ -344,17 +517,17 @@ export function AmrStandPickerModal({
   }, [step])
 
   useEffect(() => {
-    if (standIdsForPresence.length === 0) return
-    void loadPresence(standIdsForPresence, { silent: true })
-  }, [step.kind, idsKey, loadPresence, standIdsForPresence])
+    if (standIdsForPresenceQuery.length === 0) return
+    void loadPresence(standIdsForPresenceQuery, { silent: true })
+  }, [step.kind, idsKey, loadPresence, standIdsForPresenceQuery])
 
   useEffect(() => {
-    if (standIdsForPresence.length === 0) return
+    if (standIdsForPresenceQuery.length === 0) return
     const tid = window.setInterval(() => {
-      void loadPresence(standIdsForPresence, { silent: true })
+      void loadPresence(standIdsForPresenceQuery, { silent: true })
     }, pollMsContainers)
     return () => clearInterval(tid)
-  }, [step.kind, idsKey, loadPresence, pollMsContainers, standIdsForPresence])
+  }, [step.kind, idsKey, loadPresence, pollMsContainers, standIdsForPresenceQuery])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -390,14 +563,14 @@ export function AmrStandPickerModal({
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {standIdsForPresence.length > 0 ? (
+            {standIdsForPresenceQuery.length > 0 ? (
               <button
                 type="button"
                 disabled={presLoading}
                 className="rounded-lg px-2 py-1.5 text-xs font-medium text-primary hover:bg-muted disabled:opacity-50"
                 title="Refresh pallet status"
                 aria-label="Refresh pallet status"
-                onClick={() => void loadPresence(standIdsForPresence)}
+                onClick={() => void loadPresence(standIdsForPresenceQuery)}
               >
                 {presLoading ? '…' : 'Refresh'}
               </button>
@@ -443,7 +616,10 @@ export function AmrStandPickerModal({
                           ? standGroups.find((sg) => sg.id === groupPickId)?.name ?? 'Stand group'
                           : null
 
-                        if (!groupPickId && inZone.length === 2) {
+                        const expandGrid =
+                          !groupPickId &&
+                          zoneShowsExpandedStandGridOnZonesStep(z, inZone.length, pickerInlineZonesExplicit)
+                        if (expandGrid && inZone.length > 0) {
                           const zn = zoneLabel(z)
                           return (
                             <Fragment key={z === '' ? '__no_zone__' : z}>
@@ -452,7 +628,7 @@ export function AmrStandPickerModal({
                                 const lab = s.location_label.trim()
                                 const sub = lab && lab !== ref ? lab : ''
                                 const restrictedRow = isStandRestricted(s, mode)
-                                const pk = rowPresenceKind(ref, {
+                                const pk = rowPresenceKind(ref, s, {
                                   presence,
                                   presLoading,
                                   presError,
@@ -510,7 +686,10 @@ export function AmrStandPickerModal({
                           )
                         }
 
-                        const sole = !groupPickId && inZone.length === 1 ? inZone[0] : null
+                        const sole =
+                          !groupPickId && zoneEligibleForZonesStepSoleChip(z, inZone.length, pickerInlineZonesExplicit)
+                            ? inZone[0]
+                            : null
                         const restricted = sole ? isStandRestricted(sole, mode) : false
                         return (
                           <button
@@ -561,7 +740,7 @@ export function AmrStandPickerModal({
                                   {soleStandZoneButtonLabel(sole)}
                                 </span>
                                 <PalletPresenceGlyph
-                                  kind={rowPresenceKind(sole.external_ref.trim(), {
+                                  kind={rowPresenceKind(sole.external_ref.trim(), sole, {
                                     presence,
                                     presLoading,
                                     presError,
@@ -598,7 +777,7 @@ export function AmrStandPickerModal({
                 const label = s.location_label.trim()
                 const sub = label && label !== ref ? label : ''
                 const restricted = isStandRestricted(s, mode)
-                const pk = rowPresenceKind(ref, {
+                const pk = rowPresenceKind(ref, s, {
                   presence,
                   presLoading,
                   presError,

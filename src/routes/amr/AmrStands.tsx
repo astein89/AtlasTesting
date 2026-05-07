@@ -15,9 +15,17 @@ import { PopupSelect } from '@/components/ui/PopupSelect'
 import { useSortableHeader } from '@/hooks/useSortableHeader'
 import { amrPath } from '@/lib/appPaths'
 import { useAuthStore } from '@/store/authStore'
+import {
+  AMR_STAND_LOCATION_TYPE_NON_STAND,
+  AMR_STAND_LOCATION_TYPE_STAND,
+  type AmrStandLocationType,
+  normalizeAmrStandLocationType,
+} from '@/utils/amrStandLocationType'
 
 const STAND_BULK_FIELDS = [
+  { value: 'location_type', label: 'Location type' },
   { value: 'zone', label: 'Zone' },
+  { value: 'external_ref', label: 'Location (External Ref)' },
   { value: 'dwg_ref', label: 'DWG ref' },
   { value: 'orientation', label: 'Orientation' },
   { value: 'x', label: 'X (m)' },
@@ -26,6 +34,7 @@ const STAND_BULK_FIELDS = [
   { value: 'block_pickup', label: 'Block pickup (no lift)' },
   { value: 'block_dropoff', label: 'Block dropoff (no lower)' },
   { value: 'bypass_pallet_check', label: 'Bypass pallet check' },
+  { value: 'active_missions', label: 'Active missions (bypass cap)' },
 ] as const
 
 type StandBulkFieldKey = (typeof STAND_BULK_FIELDS)[number]['value']
@@ -134,6 +143,7 @@ type StandFormState = {
   block_dropoff: boolean
   bypass_pallet_check: boolean
   active_missions: number
+  location_type: AmrStandLocationType
 }
 
 const defaultStandForm = (): StandFormState => ({
@@ -148,6 +158,7 @@ const defaultStandForm = (): StandFormState => ({
   block_dropoff: false,
   bypass_pallet_check: false,
   active_missions: 1,
+  location_type: AMR_STAND_LOCATION_TYPE_STAND,
 })
 
 function rowToForm(row: Record<string, unknown>): StandFormState {
@@ -163,6 +174,11 @@ function rowToForm(row: Record<string, unknown>): StandFormState {
     block_dropoff: Number(row.block_dropoff) === 1,
     bypass_pallet_check: Number(row.bypass_pallet_check) === 1,
     active_missions: Math.max(1, Number(row.active_missions ?? 1)),
+    location_type:
+      normalizeAmrStandLocationType((row as { location_type?: unknown }).location_type) ===
+      AMR_STAND_LOCATION_TYPE_NON_STAND
+        ? AMR_STAND_LOCATION_TYPE_NON_STAND
+        : AMR_STAND_LOCATION_TYPE_STAND,
   }
 }
 
@@ -175,8 +191,34 @@ function StandFormFields({
   setForm: Dispatch<SetStateAction<StandFormState>>
   queueingEnabled: boolean
 }) {
+  const waypoint = form.location_type === AMR_STAND_LOCATION_TYPE_NON_STAND
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <label className="col-span-full text-sm">
+        Location type
+        <select
+          className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+          value={form.location_type}
+          onChange={(e) => {
+            const v =
+              e.target.value === AMR_STAND_LOCATION_TYPE_NON_STAND
+                ? AMR_STAND_LOCATION_TYPE_NON_STAND
+                : AMR_STAND_LOCATION_TYPE_STAND
+            setForm((f) => ({
+              ...f,
+              location_type: v,
+              ...(v === AMR_STAND_LOCATION_TYPE_NON_STAND ? { block_pickup: false, block_dropoff: false } : {}),
+            }))
+          }}
+        >
+          <option value={AMR_STAND_LOCATION_TYPE_STAND}>Rack stand</option>
+          <option value={AMR_STAND_LOCATION_TYPE_NON_STAND}>Non-stand waypoint</option>
+        </select>
+        <span className="mt-1 block text-[11px] text-foreground/55">
+          Waypoints are nodes with no pallet drop-off rack; pallets continue after the stop and Hyperion occupancy is not
+          used. Cannot be mission final destination; cannot belong to stand groups.
+        </span>
+      </label>
       <label className="text-sm">
         Zone
         <input
@@ -247,17 +289,19 @@ function StandFormFields({
         <legend className="px-1 text-xs font-medium uppercase tracking-wide text-foreground/60">
           Special location restrictions
         </legend>
-        <label className="flex items-center gap-2">
+        <label className={`flex items-center gap-2 ${waypoint ? 'opacity-50' : ''}`}>
           <input
             type="checkbox"
+            disabled={waypoint}
             checked={form.block_pickup}
             onChange={(e) => setForm((f) => ({ ...f, block_pickup: e.target.checked }))}
           />
           Block pallet pickup (no lift)
         </label>
-        <label className="flex items-center gap-2">
+        <label className={`flex items-center gap-2 ${waypoint ? 'opacity-50' : ''}`}>
           <input
             type="checkbox"
+            disabled={waypoint}
             checked={form.block_dropoff}
             onChange={(e) => setForm((f) => ({ ...f, block_dropoff: e.target.checked }))}
           />
@@ -312,6 +356,9 @@ export function AmrStands() {
   const [bulkEditStr, setBulkEditStr] = useState('')
   const [bulkEditNum, setBulkEditNum] = useState(0)
   const [bulkEditEnabled, setBulkEditEnabled] = useState(true)
+  const [bulkEditLocationType, setBulkEditLocationType] = useState<AmrStandLocationType>(
+    AMR_STAND_LOCATION_TYPE_STAND
+  )
   const [bulkEditSubmitting, setBulkEditSubmitting] = useState(false)
   const [bulkEditError, setBulkEditError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -368,6 +415,7 @@ export function AmrStands() {
     setBulkEditOpen(false)
     setBulkEditField(null)
     setBulkEditError(null)
+    setBulkEditLocationType(AMR_STAND_LOCATION_TYPE_STAND)
   }, [])
 
   useEffect(() => {
@@ -419,6 +467,7 @@ export function AmrStands() {
         block_dropoff: form.block_dropoff,
         bypass_pallet_check: form.bypass_pallet_check,
         active_missions: form.active_missions,
+        location_type: form.location_type,
       })
       closeAddModal()
       load()
@@ -445,6 +494,7 @@ export function AmrStands() {
         block_dropoff: editForm.block_dropoff,
         bypass_pallet_check: editForm.bypass_pallet_check,
         active_missions: editForm.active_missions,
+        location_type: editForm.location_type,
       })
       closeEditModal()
       load()
@@ -466,6 +516,16 @@ export function AmrStands() {
 
   const getColumnValues = useCallback((key: StandTableKey): string[] => {
     return rows.map((r) => standFilterValue(r, key))
+  }, [rows])
+
+  const zoneStandCounts = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const r of rows) {
+      const z = String(r.zone ?? '').trim()
+      if (!z) continue
+      m[z] = (m[z] ?? 0) + 1
+    }
+    return m
   }, [rows])
 
   const filteredRows = useMemo(() => {
@@ -521,8 +581,19 @@ export function AmrStands() {
       const row = rows.find((r) => String(r.id) === firstId)
       if (!row) return
       switch (key) {
+        case 'location_type':
+          setBulkEditLocationType(
+            normalizeAmrStandLocationType((row as { location_type?: unknown }).location_type) ===
+              AMR_STAND_LOCATION_TYPE_NON_STAND
+              ? AMR_STAND_LOCATION_TYPE_NON_STAND
+              : AMR_STAND_LOCATION_TYPE_STAND
+          )
+          break
         case 'zone':
           setBulkEditStr(String(row.zone ?? ''))
+          break
+        case 'external_ref':
+          setBulkEditStr(String(row.external_ref ?? ''))
           break
         case 'dwg_ref':
           setBulkEditStr(String(row.dwg_ref ?? ''))
@@ -548,6 +619,9 @@ export function AmrStands() {
         case 'bypass_pallet_check':
           setBulkEditEnabled(Number(row.bypass_pallet_check) === 1)
           break
+        case 'active_missions':
+          setBulkEditNum(Math.max(1, Number(row.active_missions ?? 1)))
+          break
         default:
           break
       }
@@ -558,8 +632,14 @@ export function AmrStands() {
   const buildBulkEditPatch = useCallback((): Record<string, unknown> | null => {
     if (!bulkEditField) return null
     switch (bulkEditField) {
+      case 'location_type':
+        return { location_type: bulkEditLocationType }
       case 'zone':
         return { zone: bulkEditStr }
+      case 'external_ref': {
+        const ref = bulkEditStr.trim()
+        return ref ? { external_ref: ref, location_label: ref } : null
+      }
       case 'dwg_ref':
         return { dwg_ref: bulkEditStr.trim() === '' ? null : bulkEditStr.trim() }
       case 'orientation':
@@ -576,14 +656,16 @@ export function AmrStands() {
         return { block_dropoff: bulkEditEnabled }
       case 'bypass_pallet_check':
         return { bypass_pallet_check: bulkEditEnabled }
+      case 'active_missions':
+        return { active_missions: Math.max(1, Math.floor(Number(bulkEditNum) || 1)) }
       default:
         return null
     }
-  }, [bulkEditField, bulkEditStr, bulkEditNum, bulkEditEnabled])
+  }, [bulkEditField, bulkEditStr, bulkEditNum, bulkEditEnabled, bulkEditLocationType])
 
   const applyBulkEdit = useCallback(async () => {
     const patch = buildBulkEditPatch()
-    if (!patch || selectedIds.size === 0) return
+    if (patch == null || selectedIds.size === 0) return
     setBulkEditSubmitting(true)
     setBulkEditError(null)
     try {
@@ -855,6 +937,7 @@ export function AmrStands() {
                 .filter((z): z is string => z !== '')
             )
           ).sort((a, b) => a.localeCompare(b))}
+          zoneStandCounts={zoneStandCounts}
           onClose={() => setCategoriesOpen(false)}
           onSaved={() => {
             setCategoriesOpen(false)
@@ -900,6 +983,29 @@ export function AmrStands() {
                 usePortal
               />
             </div>
+            {bulkEditField === 'location_type' ? (
+              <div className="mb-4">
+                <label className="mb-1 block text-sm font-medium text-foreground">New value</label>
+                <select
+                  className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+                  value={bulkEditLocationType}
+                  onChange={(e) =>
+                    setBulkEditLocationType(
+                      e.target.value === AMR_STAND_LOCATION_TYPE_NON_STAND
+                        ? AMR_STAND_LOCATION_TYPE_NON_STAND
+                        : AMR_STAND_LOCATION_TYPE_STAND
+                    )
+                  }
+                >
+                  <option value={AMR_STAND_LOCATION_TYPE_STAND}>Rack stand</option>
+                  <option value={AMR_STAND_LOCATION_TYPE_NON_STAND}>Non-stand waypoint</option>
+                </select>
+                <p className="mt-2 text-xs text-foreground/55">
+                  Waypoints cannot be in stand groups. Stands still in a group will return an error until removed.
+                  Applying &quot;Non-stand waypoint&quot; clears block pickup / dropoff flags on the server.
+                </p>
+              </div>
+            ) : null}
             {bulkEditField === 'orientation' ? (
               <div className="mb-4">
                 <label className="mb-1 block text-sm font-medium text-foreground">New value</label>
@@ -973,10 +1079,14 @@ export function AmrStands() {
                 />
               </div>
             ) : null}
-            {bulkEditField === 'zone' || bulkEditField === 'dwg_ref' ? (
+            {bulkEditField === 'zone' || bulkEditField === 'dwg_ref' || bulkEditField === 'external_ref' ? (
               <div className="mb-4">
                 <label className="mb-1 block text-sm font-medium text-foreground">
-                  {bulkEditField === 'dwg_ref' ? 'DWG ref' : 'Zone'}
+                  {bulkEditField === 'dwg_ref'
+                    ? 'DWG ref'
+                    : bulkEditField === 'external_ref'
+                      ? 'Location (External Ref)'
+                      : 'Zone'}
                 </label>
                 <input
                   type="text"
@@ -985,12 +1095,37 @@ export function AmrStands() {
                   onChange={(e) => setBulkEditStr(e.target.value)}
                   placeholder={bulkEditField === 'dwg_ref' ? 'Leave empty to clear' : ''}
                 />
+                {bulkEditField === 'external_ref' && selectedIds.size > 1 && bulkEditStr.trim() !== '' ? (
+                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                    External ref must be unique per stand. Applying the same value to multiple rows usually fails after
+                    the first stand (same as duplicate DWG refs).
+                  </p>
+                ) : null}
                 {bulkEditField === 'dwg_ref' && selectedIds.size > 1 && bulkEditStr.trim() !== '' ? (
                   <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
                     DWG ref must be unique per stand. Applying the same non-empty value to multiple rows usually fails
                     after the first stand.
                   </p>
                 ) : null}
+              </div>
+            ) : null}
+            {bulkEditField === 'active_missions' ? (
+              <div className="mb-4">
+                <label className="mb-1 block text-sm font-medium text-foreground">Active missions (minimum 1)</label>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+                  value={bulkEditNum}
+                  onChange={(e) =>
+                    setBulkEditNum(Math.max(1, Math.floor(Number(e.target.value) || 1)))
+                  }
+                />
+                <p className="mt-2 text-xs text-foreground/55">
+                  {missionQueueingEnabled
+                    ? 'Used as the occupancy bypass cap when &quot;Bypass pallet check&quot; is enabled on the stand.'
+                    : 'Bypass cap only applies when mission queueing is enabled in AMR settings; value is still stored on each stand.'}
+                </p>
               </div>
             ) : null}
             {!bulkEditField ? (
@@ -1006,7 +1141,11 @@ export function AmrStands() {
               </button>
               <button
                 type="button"
-                disabled={!bulkEditField || bulkEditSubmitting}
+                disabled={
+                  !bulkEditField ||
+                  bulkEditSubmitting ||
+                  (bulkEditField === 'external_ref' && !bulkEditStr.trim())
+                }
                 onClick={() => void applyBulkEdit()}
                 className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >

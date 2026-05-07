@@ -170,6 +170,20 @@ function containerIsPersistent(row: ContainerRow, persistentMissionCodes: Set<st
   return code !== '' && persistentMissionCodes.has(code)
 }
 
+function containerRowIsDcaTracked(row: ContainerRow, dcaTrackedContainerCodes: Set<string>): boolean {
+  const code = containerCodeFromRow(row)
+  return code !== '' && dcaTrackedContainerCodes.has(code)
+}
+
+function sortContainerRowsForDisplay(list: ContainerRow[]): ContainerRow[] {
+  return [...list].sort((a, b) =>
+    containerCodeFromRow(a).localeCompare(containerCodeFromRow(b), undefined, {
+      sensitivity: 'base',
+      numeric: true,
+    })
+  )
+}
+
 function PersistentChip() {
   return (
     <span
@@ -177,6 +191,28 @@ function PersistentChip() {
       className="inline-flex shrink-0 items-center rounded-full border border-violet-500/45 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-900 dark:text-violet-100"
     >
       Persistent
+    </span>
+  )
+}
+
+/** Same idea as Missions: fleet map vs mission records in this app. */
+function ContainerSourceChip({ kind }: { kind: 'dca' | 'fleet-only' }) {
+  if (kind === 'dca') {
+    return (
+      <span
+        title="This container code appears on at least one mission record in this app."
+        className="inline-flex shrink-0 items-center rounded-full border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-900 dark:border-emerald-500/35 dark:bg-emerald-500/12 dark:text-emerald-100"
+      >
+        DCA created
+      </span>
+    )
+  }
+  return (
+    <span
+      title="On the fleet map, but no mission record in this app lists this container code."
+      className="inline-flex shrink-0 items-center rounded-full border border-border bg-muted/60 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-foreground/65"
+    >
+      Fleet-only
     </span>
   )
 }
@@ -200,12 +236,14 @@ function ContainerGridCard({
   onSelect,
   onMove,
   showPersistent,
+  source,
 }: {
   row: ContainerRow
   onSelect: () => void
   /** Opens move (containerIn with isNew: false) without opening detail first */
   onMove?: () => void
   showPersistent: boolean
+  source: 'dca' | 'fleet-only'
 }) {
   const code = containerCodeFromRow(row)
   const model = containerModelCodeFromRow(row)
@@ -214,7 +252,11 @@ function ContainerGridCard({
   return (
     <div className="group relative flex w-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-gradient-to-b from-card via-card to-muted/15 text-left shadow-sm ring-offset-background transition duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md">
       <span
-        className="pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full bg-gradient-to-b from-primary/70 via-primary/45 to-primary/15"
+        className={`pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full ${
+          source === 'dca'
+            ? 'bg-gradient-to-b from-emerald-600/70 via-emerald-500/40 to-emerald-500/15'
+            : 'bg-gradient-to-b from-primary/70 via-primary/45 to-primary/15'
+        }`}
         aria-hidden
       />
       <button
@@ -224,7 +266,10 @@ function ContainerGridCard({
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground/45">Container</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground/45">Container</p>
+              <ContainerSourceChip kind={source} />
+            </div>
             <p className="mt-0.5 truncate font-mono text-base font-semibold tracking-tight text-foreground">
               {code || '—'}
             </p>
@@ -326,7 +371,15 @@ function renderContainerCell(key: string, raw: unknown): ReactNode {
   return <span className={className}>{plain}</span>
 }
 
-function ContainerDetailBody({ detail, showPersistent }: { detail: ContainerRow; showPersistent: boolean }) {
+function ContainerDetailBody({
+  detail,
+  showPersistent,
+  dcaTracked,
+}: {
+  detail: ContainerRow
+  showPersistent: boolean
+  dcaTracked: boolean
+}) {
   const { sections, extraRows } = useMemo(() => {
     const seen = new Set<string>()
     seen.add('containerCode')
@@ -371,6 +424,7 @@ function ContainerDetailBody({ detail, showPersistent }: { detail: ContainerRow;
         <p className="mt-1 font-mono text-xl font-semibold tracking-tight text-foreground">{titleCode || '—'}</p>
         {model ? <p className="mt-1 text-sm leading-snug text-foreground/75">{model}</p> : null}
         <div className="mt-4 flex flex-wrap items-center gap-3">
+          <ContainerSourceChip kind={dcaTracked ? 'dca' : 'fleet-only'} />
           <InMapChip value={detail.inMapStatus} />
           {showPersistent ? <PersistentChip /> : null}
         </div>
@@ -619,6 +673,7 @@ export function AmrContainers() {
   const [fleetSettings, setFleetSettings] = useState<AmrFleetSettings | null>(null)
   const [addContainerModalOpen, setAddContainerModalOpen] = useState(false)
   const [persistentMissionCodes, setPersistentMissionCodes] = useState<Set<string>>(new Set())
+  const [dcaTrackedContainerCodes, setDcaTrackedContainerCodes] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     void getAmrSettings().then((s) => {
@@ -627,18 +682,21 @@ export function AmrContainers() {
     })
   }, [])
 
-  const loadPersistentMissionCodes = useCallback(async () => {
+  const loadMissionContainerIndex = useCallback(async () => {
     try {
       const records = await getAmrMissionRecords()
-      const next = new Set<string>()
+      const persistent = new Set<string>()
+      const dcaTracked = new Set<string>()
       for (const r of records) {
-        if (Number(r.persistent_container) !== 1) continue
         const c = String(r.container_code ?? '').trim()
-        if (c) next.add(c)
+        if (c) dcaTracked.add(c)
+        if (Number(r.persistent_container) === 1 && c) persistent.add(c)
       }
-      setPersistentMissionCodes(next)
+      setPersistentMissionCodes(persistent)
+      setDcaTrackedContainerCodes(dcaTracked)
     } catch {
-      /* ignore — chips fall back to fleet-only flags */
+      setPersistentMissionCodes(new Set())
+      setDcaTrackedContainerCodes(new Set())
     }
   }, [])
 
@@ -661,15 +719,28 @@ export function AmrContainers() {
     }
   }, [])
 
+  const { dcaRows, fleetOnlyRows } = useMemo(() => {
+    const dca: ContainerRow[] = []
+    const fleet: ContainerRow[] = []
+    for (const r of rows) {
+      if (containerRowIsDcaTracked(r, dcaTrackedContainerCodes)) dca.push(r)
+      else fleet.push(r)
+    }
+    return {
+      dcaRows: sortContainerRowsForDisplay(dca),
+      fleetOnlyRows: sortContainerRowsForDisplay(fleet),
+    }
+  }, [rows, dcaTrackedContainerCodes])
+
   useEffect(() => {
     void loadRows()
-    void loadPersistentMissionCodes()
+    void loadMissionContainerIndex()
     const t = setInterval(() => {
       void loadRows()
-      void loadPersistentMissionCodes()
+      void loadMissionContainerIndex()
     }, pollMs)
     return () => clearInterval(t)
-  }, [pollMs, loadRows, loadPersistentMissionCodes])
+  }, [pollMs, loadRows, loadMissionContainerIndex])
 
   useEffect(() => {
     if (!detail) return
@@ -744,9 +815,10 @@ export function AmrContainers() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Containers</h1>
           <p className="mt-1 text-sm text-foreground/70">
-            In-map containers via containerQueryAll (inMapStatus=1). Polls while this page is open.{' '}
-            Move opens the RACK_MOVE mission wizard; Add uses
-            fleet containerIn; Remove uses containerOut. Fleet mutations require permission.
+            In-map containers via fleet <span className="font-mono text-xs">containerQueryAll</span> (inMapStatus=1).
+            Rows are grouped like Missions: <span className="font-medium text-foreground">DCA created</span> when a mission
+            record lists the container code, otherwise <span className="font-medium text-foreground">Fleet-only</span>.
+            Polls while this page is open. Move opens the move wizard; Add uses fleet containerIn; Remove uses containerOut.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -755,7 +827,7 @@ export function AmrContainers() {
             className="min-h-[44px] shrink-0 rounded-lg border border-border px-4 text-sm hover:bg-background"
             onClick={() => {
               void loadRows({ showSpinner: true })
-              void loadPersistentMissionCodes()
+              void loadMissionContainerIndex()
             }}
           >
             Refresh
@@ -777,16 +849,64 @@ export function AmrContainers() {
       ) : err ? (
         <p className="text-sm text-red-600">{err}</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((r, i) => (
-            <ContainerGridCard
-              key={`${containerCodeFromRow(r) || `row-${i}`}-${i}`}
-              row={r}
-              showPersistent={containerIsPersistent(r, persistentMissionCodes)}
-              onSelect={() => setDetail(r)}
-              onMove={canCreateMission ? () => goMissionMoveFromRow(r) : undefined}
-            />
-          ))}
+        <div className="space-y-8">
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight text-foreground">DCA created</h2>
+              <p className="mt-0.5 text-xs text-foreground/60">
+                Container code appears on at least one mission record in this app.
+              </p>
+            </div>
+            {dcaRows.length === 0 ? (
+              <p className="text-sm text-foreground/60">
+                {rows.length === 0
+                  ? 'No in-map containers from the fleet.'
+                  : 'None of these containers appear on mission records yet — check Fleet-only below.'}
+              </p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {dcaRows.map((r, i) => (
+                  <ContainerGridCard
+                    key={`dca-${containerCodeFromRow(r) || `row-${i}`}-${i}`}
+                    row={r}
+                    source="dca"
+                    showPersistent={containerIsPersistent(r, persistentMissionCodes)}
+                    onSelect={() => setDetail(r)}
+                    onMove={canCreateMission ? () => goMissionMoveFromRow(r) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight text-foreground">Fleet-only (external)</h2>
+              <p className="mt-0.5 text-xs text-foreground/60">
+                On the fleet map, but no mission record in this app lists this container code.
+              </p>
+            </div>
+            {fleetOnlyRows.length === 0 ? (
+              <p className="text-sm text-foreground/60">
+                {rows.length === 0
+                  ? 'No in-map containers from the fleet.'
+                  : 'No fleet-only rows — every in-map container is referenced by this app.'}
+              </p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {fleetOnlyRows.map((r, i) => (
+                  <ContainerGridCard
+                    key={`fleet-${containerCodeFromRow(r) || `row-${i}`}-${i}`}
+                    row={r}
+                    source="fleet-only"
+                    showPersistent={containerIsPersistent(r, persistentMissionCodes)}
+                    onSelect={() => setDetail(r)}
+                    onMove={canCreateMission ? () => goMissionMoveFromRow(r) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       )}
 
@@ -832,6 +952,7 @@ export function AmrContainers() {
             <ContainerDetailBody
               detail={detail}
               showPersistent={containerIsPersistent(detail, persistentMissionCodes)}
+              dcaTracked={containerRowIsDcaTracked(detail, dcaTrackedContainerCodes)}
             />
           </div>
         </div>

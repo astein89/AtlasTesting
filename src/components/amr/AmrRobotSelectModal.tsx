@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { robotStatusChipClass, robotStatusFriendly } from '@/utils/amrRobotStatus'
 
 export type AmrRobotPickRow = {
@@ -62,6 +62,7 @@ export function AmrRobotSelectModal({
   onGoToRobotsManage,
 }: Props) {
   const [local, setLocal] = useState<Set<string>>(() => new Set())
+  const prevOpenRef = useRef(false)
 
   /** Drop locked ids defensively, even if the parent forgot to filter them out of `rows`. */
   const visibleRows = useMemo(() => {
@@ -69,10 +70,30 @@ export function AmrRobotSelectModal({
     return rows.filter((r) => !lockedIds.has(r.id))
   }, [rows, lockedIds])
 
+  /**
+   * Seed from parent only when the dialog **opens**. Do not depend on `lockedIds` reference churn (parent polls
+   * `listAmrRobotLocks` and passes a new Set every tick) — that was resetting in-progress picks before Done.
+   */
   useEffect(() => {
-    if (!open) return
-    setLocal(new Set(selectedIds.filter((id) => !lockedIds?.has(id))))
+    const wasOpen = prevOpenRef.current
+    prevOpenRef.current = open
+    if (open && !wasOpen) {
+      setLocal(new Set(selectedIds.filter((id) => !lockedIds?.has(id))))
+    }
   }, [open, selectedIds, lockedIds])
+
+  /** While open: drop any id that became locked; do not wipe the rest of the working selection. */
+  useEffect(() => {
+    if (!open || !lockedIds || lockedIds.size === 0) return
+    setLocal((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const id of lockedIds) {
+        if (next.delete(id)) changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [open, lockedIds])
 
   const allIds = useMemo(() => visibleRows.map((r) => r.id).filter(Boolean), [visibleRows])
 

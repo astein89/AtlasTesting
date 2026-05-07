@@ -32,6 +32,8 @@ type AmrSettingsFormState = {
   hideFleetCompleteAfterMinutesDefault: number | null
   missionCreateStandPresenceSanityCheck: boolean
   missionQueueingEnabled: boolean
+  missionQueuedToastDismissMs: number
+  postDropPresenceWarningCheck: boolean
   palletDropConfirmTimeoutMs: number
   authKeyConfigured: boolean
   hyperionServerIp: string
@@ -103,6 +105,11 @@ function amrFleetSettingsToForm(s: AmrFleetSettings): AmrSettingsFormState {
     hideFleetCompleteAfterMinutesDefault: s.hideFleetCompleteAfterMinutesDefault ?? null,
     missionCreateStandPresenceSanityCheck: s.missionCreateStandPresenceSanityCheck !== false,
     missionQueueingEnabled: s.missionQueueingEnabled !== false,
+    missionQueuedToastDismissMs:
+      typeof s.missionQueuedToastDismissMs === 'number' && Number.isFinite(s.missionQueuedToastDismissMs)
+        ? s.missionQueuedToastDismissMs
+        : 10000,
+    postDropPresenceWarningCheck: s.postDropPresenceWarningCheck !== false,
     palletDropConfirmTimeoutMs:
       typeof s.palletDropConfirmTimeoutMs === 'number' && Number.isFinite(s.palletDropConfirmTimeoutMs)
         ? s.palletDropConfirmTimeoutMs
@@ -145,6 +152,8 @@ export function AmrSettings() {
     hideFleetCompleteAfterMinutesDefault: null as number | null,
     missionCreateStandPresenceSanityCheck: true,
     missionQueueingEnabled: true,
+    missionQueuedToastDismissMs: 10000,
+    postDropPresenceWarningCheck: true,
     palletDropConfirmTimeoutMs: 10000,
     authKeyConfigured: false,
     ...hyperionConnectionFromBaseUrl(''),
@@ -435,8 +444,10 @@ export function AmrSettings() {
             <span className="font-medium text-foreground">Stand presence check before mission create</span>
             <span className="mt-1 block text-xs text-foreground/65">
               When enabled, creating a multistop mission (new mission or from a template) queries Hyperion before
-              submit. If stop 1 appears empty but another stop reports a pallet, a confirmation appears. Uncheck to
-              skip that request and dialog. In-mission pallet chips and Containers refresh behavior are unchanged.
+              submit. You get a confirmation if stop 1 (pickup) reports no pallet where one is needed, or if the first
+              drop destination reports a pallet when it should be empty (and not bypass-pallet-check). Applies whether
+              mission queueing is on or off. Uncheck to skip that request and dialog. In-mission pallet chips and
+              Containers refresh behavior are unchanged.
             </span>
           </span>
         </label>
@@ -457,11 +468,49 @@ export function AmrSettings() {
           </span>
         </label>
         <label className="block text-sm">
+          Queued mission toast duration (ms)
+          <input
+            type="number"
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            disabled={!canEdit || !form.missionQueueingEnabled}
+            min={2000}
+            max={120000}
+            value={form.missionQueuedToastDismissMs}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, missionQueuedToastDismissMs: Number(e.target.value) }))
+            }
+          />
+          <span className="mt-1 block text-[11px] text-foreground/55">
+            When the first segment is queued on create, a banner confirms the mission and offers a shortcut to open it.
+            Server clamps between 2000 and 120000 ms.
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug">
+          <input
+            type="checkbox"
+            className="mt-0.5 shrink-0 rounded border-border"
+            checked={form.postDropPresenceWarningCheck}
+            disabled={!canEdit || !form.missionQueueingEnabled}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, postDropPresenceWarningCheck: e.target.checked }))
+            }
+          />
+          <span>
+            <span className="font-medium text-foreground">Presence warning check after mission completion</span>
+            <span className="mt-1 block text-xs text-foreground/65">
+              When queueing is on and this is enabled, DC polls Hyperion after a successful fleet drop to confirm the
+              pallet appeared; if none is detected before the deadline, a presence warning holds the reservation until an
+              operator acknowledges. Turning this off skips that poll cycle and releases the stand reservation as soon as
+              the fleet reports completion (stands with “bypass pallet check” already behave this way).
+            </span>
+          </span>
+        </label>
+        <label className="block text-sm">
           Post-lower pallet confirm timeout (ms)
           <input
             type="number"
             className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-            disabled={!canEdit}
+            disabled={!canEdit || !form.postDropPresenceWarningCheck}
             min={1000}
             max={600000}
             value={form.palletDropConfirmTimeoutMs}
@@ -470,7 +519,8 @@ export function AmrSettings() {
             }
           />
           <span className="mt-1 block text-[11px] text-foreground/55">
-            Worker keeps polling stand presence after a lower until pallet is detected or this timeout expires.
+            Used only when the option above is enabled: worker keeps polling until it sees a pallet or this timeout
+            expires (then a presence warning is raised).
           </span>
         </label>
       </section>

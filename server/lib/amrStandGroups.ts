@@ -7,6 +7,7 @@ import {
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
 import type { AmrHyperionConfig } from './hyperionConfig.js'
 import { hyperionConfigured } from './hyperionConfig.js'
+import { AMR_STAND_LOCATION_TYPE_NON_STAND, normalizeAmrStandLocationType } from './amrStandLocationType.js'
 
 /** Synthetic position prefix for queued rack-move payloads until a member stand is resolved (never sent to fleet). */
 export const AMR_STAND_GROUP_SENTINEL_PREFIX = '__group:'
@@ -31,6 +32,7 @@ export type StandGroupMemberRow = {
   enabled: number
   block_pickup: number
   block_dropoff: number
+  location_type?: string | null
 }
 
 export async function getStandGroupMembers(
@@ -42,14 +44,20 @@ export async function getStandGroupMembers(
   const rows = (await db
     .prepare(
       `SELECT s.id AS stand_id, s.external_ref, s.bypass_pallet_check, s.active_missions, s.enabled,
-              s.block_pickup, s.block_dropoff
+              s.block_pickup, s.block_dropoff,
+              COALESCE(s.location_type, 'stand') AS location_type
        FROM amr_stand_group_members m
        JOIN amr_stands s ON s.id = m.stand_id
        WHERE m.group_id = ?
        ORDER BY m.position ASC, s.external_ref ASC`
     )
     .all(gid)) as StandGroupMemberRow[]
-  return rows.filter((r) => Number(r.enabled ?? 1) === 1)
+  return rows.filter(
+    (r) =>
+      Number(r.enabled ?? 1) === 1 &&
+      /** Defensive: non-stand waypoints cannot be group picks (normally rejected at writes). */
+      normalizeAmrStandLocationType(r.location_type) !== AMR_STAND_LOCATION_TYPE_NON_STAND
+  )
 }
 
 export type ResolveGroupDestinationResult =
