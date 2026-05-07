@@ -21,7 +21,13 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { getAmrSettings, getAmrStandGroups, putAmrSettings, type ZoneCategory } from '@/api/amr'
+import {
+  AMR_STAND_GROUP_PREFIX,
+  getAmrSettings,
+  getAmrStandGroups,
+  putAmrSettings,
+  type ZoneCategory,
+} from '@/api/amr'
 import { useAlertConfirm } from '@/contexts/AlertConfirmContext'
 import { ConfirmModal } from '@/components/ui/ConfirmModal'
 import { randomUuid } from '@/lib/randomUuid'
@@ -30,6 +36,10 @@ const UNCATEGORIZED_BUCKET_ID = '__uncategorized__'
 const CATEGORY_PREFIX = 'cat:'
 const ZONE_PREFIX = 'zone:'
 const BUCKET_DROP_PREFIX = 'bucket-drop:'
+
+function isStandGroupSyntheticZone(zone: string): boolean {
+  return zone.trim().startsWith(AMR_STAND_GROUP_PREFIX)
+}
 
 type LocalCategory = {
   /** Stable local UUID — survives renames so dnd-kit ids stay valid mid-edit. */
@@ -76,12 +86,11 @@ function SortableCategoryCard({
   onRename: (name: string) => void
   onRemove: () => void
   children: React.ReactNode
-  /** Auto-managed (e.g. the synthetic `Groups` category): rename / drag / remove disabled. */
+  /** Auto-managed `Groups` category: rename and remove disabled; order still draggable among categories. */
   isLocked?: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `${CATEGORY_PREFIX}${category.id}`,
-    disabled: isLocked === true,
   })
   const style = { transform: CSS.Transform.toString(transform), transition }
   const orphanCount = zones.reduce((acc, z) => acc + (orphanZones.has(z) ? 1 : 0), 0)
@@ -93,32 +102,16 @@ function SortableCategoryCard({
     >
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-2 py-2">
-          {isLocked ? (
-            <span
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded p-1.5 text-foreground/45"
-              aria-label="Locked auto-managed category"
-              title="Auto-managed by stand groups"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 11c1.657 0 3 1.343 3 3v3a3 3 0 11-6 0v-3c0-1.657 1.343-3 3-3zm6-3v3M6 8v3m12 0H6m12 0a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2v-8a2 2 0 012-2"
-                />
-              </svg>
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
-              {...attributes}
-              {...listeners}
-              aria-label={`Drag to reorder category ${category.name || '(unnamed)'}`}
-            >
-              {dragGripIcon()}
-            </button>
-          )}
+          <button
+            type="button"
+            className="touch-none cursor-grab rounded p-1.5 text-foreground/45 hover:bg-background hover:text-foreground active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+            aria-label={`Drag to reorder category ${category.name || '(unnamed)'}`}
+            title={isLocked ? 'Drag to change category order (name is fixed for Groups)' : undefined}
+          >
+            {dragGripIcon()}
+          </button>
           <input
             value={category.name}
             onChange={(e) => onRename(e.target.value)}
@@ -211,8 +204,10 @@ function SortableZoneChip({
   onRemove: () => void
   groupLabels?: Record<string, string>
 }) {
+  const groupZoneLocked = isStandGroupSyntheticZone(zone)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `${ZONE_PREFIX}${zone}`,
+    disabled: groupZoneLocked,
   })
   const style = { transform: CSS.Transform.toString(transform), transition }
   return (
@@ -228,17 +223,29 @@ function SortableZoneChip({
             : 'border-border bg-background text-foreground'
         }`}
       >
-        <button
-          type="button"
-          className="touch-none cursor-grab rounded p-0.5 text-foreground/45 hover:text-foreground active:cursor-grabbing"
-          {...attributes}
-          {...listeners}
-          aria-label={`Drag zone ${zone}`}
-        >
-          <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-            <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
-          </svg>
-        </button>
+        {groupZoneLocked ? (
+          <span
+            className="flex shrink-0 rounded p-0.5 text-foreground/45"
+            title="Stand group order is managed on the Stand groups page (not draggable here)"
+            aria-label="Stand group chip — reorder on Stand groups page"
+          >
+            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
+            </svg>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="touch-none cursor-grab rounded p-0.5 text-foreground/45 hover:text-foreground active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+            aria-label={`Drag zone ${zone}`}
+          >
+            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm6-12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm0 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" />
+            </svg>
+          </button>
+        )}
         <span className={groupLabels?.[zone.trim()] ? 'font-sans' : 'font-mono'}>
           {zoneChipDisplayText(zone, groupLabels)}
         </span>
@@ -247,18 +254,20 @@ function SortableZoneChip({
             no stands
           </span>
         ) : null}
-        <button
-          type="button"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onRemove}
-          className="ml-1 rounded p-0.5 text-foreground/55 hover:bg-background hover:text-red-600"
-          aria-label={`Remove zone ${zoneChipDisplayText(zone, groupLabels)}`}
-          title="Move to Uncategorized"
-        >
-          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        {groupZoneLocked ? null : (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onRemove}
+            className="ml-1 rounded p-0.5 text-foreground/55 hover:bg-background hover:text-red-600"
+            aria-label={`Remove zone ${zoneChipDisplayText(zone, groupLabels)}`}
+            title="Move to Uncategorized"
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
     </li>
   )
@@ -382,7 +391,7 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
     }
   }, [])
 
-  /** Auto-managed Groups category — locked from rename / drag / delete; matches server `amrStandGroupZoneSync.ts`. */
+  /** Auto-managed Groups category — rename/remove locked; reorder among categories allowed. Matches server `amrStandGroupZoneSync.ts`. */
   const isGroupsCategoryName = useCallback(
     (n: string) => n.trim().toLowerCase() === 'groups',
     []
@@ -501,6 +510,7 @@ export function AmrZoneCategoriesModal({ allZones, onClose, onSaved }: AmrZoneCa
 
         if (!aId.startsWith(ZONE_PREFIX)) return
         const movedZone = aId.slice(ZONE_PREFIX.length)
+        if (isStandGroupSyntheticZone(movedZone)) return
         let targetBucket: string
         let insertBefore: string | null = null
 
