@@ -165,6 +165,24 @@ export function AmrDashboard() {
     [recentExpanded]
   )
 
+  /** Same ordering as Missions → Active: attention rows first, then oldest created first. */
+  const sortedActiveMissionGroups = useMemo(() => {
+    const copy = [...activeMissionGroups]
+    copy.sort((a, b) => {
+      const fa = flattenGroupedMissionRow(a)
+      const fb = flattenGroupedMissionRow(b)
+      const sa = String(fa.multistop_session_id ?? '').trim()
+      const sb = String(fb.multistop_session_id ?? '').trim()
+      const aa =
+        Boolean(sa && attentionSessionIds.has(sa)) && !missionRowIsQuietQueueWait(fa)
+      const bb =
+        Boolean(sb && attentionSessionIds.has(sb)) && !missionRowIsQuietQueueWait(fb)
+      if (aa !== bb) return aa ? -1 : 1
+      return String(fa.created_at ?? '').localeCompare(String(fb.created_at ?? ''))
+    })
+    return copy
+  }, [activeMissionGroups, attentionSessionIds])
+
   const recentGroups = useMemo(
     () => filterGroupedMissionsHideStale(historyGroupsRest, null),
     [historyGroupsRest]
@@ -309,14 +327,14 @@ export function AmrDashboard() {
               </tr>
             </thead>
             <tbody>
-              {activeMissionGroups.length === 0 ? (
+              {sortedActiveMissionGroups.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="py-6 text-center text-sm text-foreground/60">
                     No active missions.
                   </td>
                 </tr>
               ) : (
-                activeMissionGroups.map((group) => {
+                sortedActiveMissionGroups.map((group) => {
                   const r = flattenGroupedMissionRow(group)
                   const sessionId = String(r.multistop_session_id ?? '').trim()
                   const att = sessionId ? attentionBySession.get(sessionId) : undefined
@@ -509,7 +527,7 @@ export function AmrDashboard() {
               {recentTableGroups.length === 0 &&
                 records.length > 0 &&
                 filterAppMissionsRecentOrLive(records).length > 0 &&
-                activeMissionGroups.length > 0 && (
+                sortedActiveMissionGroups.length > 0 && (
                   <tr>
                     <td colSpan={5} className="py-6 text-center text-foreground/60">
                       No mission history in this table — active missions are listed above.

@@ -31,9 +31,11 @@ import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmModal } from '@/components/ui/ConfirmModal'
 import {
+  MISSION_QUEUED_CALLOUT_CLASS,
   MISSION_QUEUED_ROUTE_LEG_CARD_CLASS,
   missionOverviewOrDetailQueuedHue,
 } from '@/utils/amrMissionJobStatus'
+import { amrQueuedDependencyLines } from '@/utils/amrMissionQueuedDependency'
 import {
   multistopContinueOccupiedDestinationRef,
   multistopContinueReleaseDisabledUntilStandShowsEmpty,
@@ -325,7 +327,8 @@ export function AmrMultistopSummaryModal({
 }: AmrMultistopSummaryModalProps) {
   const openNewMissionModal = useAmrMissionNewModal()
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
-  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
+  const canAmrAttention = useAuthStore((s) => s.canAmrAttention())
+  const canAmrTerminateStuck = useAuthStore((s) => s.canAmrTerminateStuck())
   const [msRefresh, setMsRefresh] = useState(0)
   const [msData, setMsData] = useState<{ session: Record<string, unknown>; records: MissionRecordRow[] } | null>(null)
   const [msLoading, setMsLoading] = useState(false)
@@ -467,7 +470,8 @@ export function AmrMultistopSummaryModal({
   const awaitingContinue = msData
     ? sessionStatus === 'awaiting_continue'
     : stForBuckets === 'awaiting_continue'
-  const continueEnabled = canManage && awaitingContinue && nextSeg < totalSeg && Boolean(msData)
+  const continueEnabled =
+    (canManage || canAmrAttention) && awaitingContinue && nextSeg < totalSeg && Boolean(msData)
   const recordCount = msData?.records?.length ?? 0
   const cancelEnabled =
     canManage &&
@@ -477,7 +481,7 @@ export function AmrMultistopSummaryModal({
     recordCount === 0 &&
     !msLoading
   const terminateStuckEnabled =
-    canManage && Boolean(msData) && sessionStatus === 'failed' && !msLoading && Boolean(sessionId)
+    canAmrTerminateStuck && Boolean(msData) && sessionStatus === 'failed' && !msLoading && Boolean(sessionId)
 
   const continueNotBeforeRaw = msData?.session?.continue_not_before
   const continueNotBeforeIso =
@@ -930,6 +934,21 @@ export function AmrMultistopSummaryModal({
     session: msData?.session ? (msData.session as Record<string, unknown>) : null,
   })
 
+  const overviewQueuedDependencyLines = useMemo(
+    () =>
+      amrQueuedDependencyLines({
+        record: rolledUp,
+        session: msData?.session ? (msData.session as Record<string, unknown>) : null,
+        groupNames: standGroupNameById,
+      }),
+    [rolledUp, msData?.session, standGroupNameById]
+  )
+
+  const showOverviewQueuedCallout =
+    sessionQueuedForStand ||
+    overviewQueuedDependencyLines.length > 0 ||
+    Number(rolledUp.queued) === 1
+
   /** Portal to `document.body` so `fixed inset-0` covers the viewport (not clipped/stacked inside `main`). */
   const modal = (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
@@ -956,7 +975,7 @@ export function AmrMultistopSummaryModal({
             error: blockedDestPresenceError,
             unconfigured: blockedDestPresenceUnconfig,
           }}
-          canForceRelease={canForceRelease}
+          canForceRelease={canAmrAttention}
           continueBusy={continueBusy}
           confirmDisabled={
             cancelBusy || terminateStuckBusy || continueReleaseDisabledUntilStandEmpty
@@ -999,6 +1018,27 @@ export function AmrMultistopSummaryModal({
                 </span>
               ) : null}
             </div>
+            {showOverviewQueuedCallout ? (
+              <div
+                className={`mt-3 rounded-lg px-3 py-2.5 text-sm leading-snug text-foreground ${MISSION_QUEUED_CALLOUT_CLASS}`}
+              >
+                <p className="text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
+                  Waiting on
+                </p>
+                {overviewQueuedDependencyLines.length > 0 ? (
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-foreground/90 dark:text-violet-50/95">
+                    {overviewQueuedDependencyLines.map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-xs text-foreground/80">
+                    Mission is in the dispatch queue; dependency details will appear when the server attaches queue
+                    fields.
+                  </p>
+                )}
+              </div>
+            ) : null}
             <div className="mt-4 grid gap-3 border-t border-border/70 pt-3 sm:grid-cols-2">
               <div className="min-w-0">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-foreground/50">Container</p>
@@ -1169,7 +1209,7 @@ export function AmrMultistopSummaryModal({
                               )}{' '}
                               within the confirmation window (warned {formatDateTime(rec.presence_warning_at.trim())}).
                             </p>
-                            {canForceRelease ? (
+                            {canAmrAttention ? (
                               <button
                                 type="button"
                                 disabled={presenceAckBusyId === String(rec.id).trim()}
@@ -1273,7 +1313,7 @@ export function AmrMultistopSummaryModal({
                   >
                     Retry
                   </button>
-                  {canForceRelease ? (
+                  {canAmrAttention ? (
                     <button
                       type="button"
                       disabled={continueBusy || cancelBusy || terminateStuckBusy}
@@ -1400,7 +1440,7 @@ export function AmrMultistopSummaryModal({
                     ? 'Release now'
                     : 'Release Mission'}
               </button>
-              {canForceRelease &&
+              {canAmrAttention &&
               awaitingContinue &&
               sessionHeldForQueuedDispatch &&
               !continueBlockedStandRef ? (

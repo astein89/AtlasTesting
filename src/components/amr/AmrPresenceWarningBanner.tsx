@@ -37,7 +37,7 @@ function presenceWarningsFromRecords(records: unknown[] | null | undefined): Pre
 export function AmrPresenceWarningBanner() {
   const location = useLocation()
   const canAmr = useAuthStore((s) => s.hasPermission('module.amr'))
-  const canAck = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
+  const canAck = useAuthStore((s) => s.canAmrAttention())
   const [warnings, setWarnings] = useState<PresenceWarningRow[]>([])
   const [ackBusyId, setAckBusyId] = useState<string | null>(null)
   const [ackErr, setAckErr] = useState<string | null>(null)

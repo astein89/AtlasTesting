@@ -44,7 +44,8 @@ export function AmrAttentionBanner() {
   const location = useLocation()
   const canAmr = useAuthStore((s) => s.hasPermission('module.amr'))
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
-  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
+  const canAmrAttention = useAuthStore((s) => s.canAmrAttention())
+  const canAmrTerminateStuck = useAuthStore((s) => s.canAmrTerminateStuck())
   const [attention, setAttention] = useState<{ count: number; items: AmrMissionAttentionItem[] }>({
     count: 0,
     items: [],
@@ -114,7 +115,7 @@ export function AmrAttentionBanner() {
   const releaseEnabled =
     Boolean(soleSessionId) &&
     soleStatus === 'awaiting_continue' &&
-    canManage &&
+    canAmrAttention &&
     !releaseBusy &&
     !cancelBusy &&
     !terminateStuckBusy &&
@@ -128,7 +129,12 @@ export function AmrAttentionBanner() {
     !releaseBusy &&
     !terminateStuckBusy
   const terminateBannerEnabled =
-    Boolean(soleSessionId) && soleStatus === 'failed' && canManage && !terminateStuckBusy && !releaseBusy && !cancelBusy
+    Boolean(soleSessionId) &&
+    soleStatus === 'failed' &&
+    canAmrTerminateStuck &&
+    !terminateStuckBusy &&
+    !releaseBusy &&
+    !cancelBusy
 
   const releaseTitle = (() => {
     if (!soleSessionId) return undefined
@@ -381,7 +387,7 @@ export function AmrAttentionBanner() {
               className="max-w-md min-w-0 shrink rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-right text-xs font-medium leading-snug text-red-600 dark:border-red-500/35 dark:bg-red-950/40 dark:text-red-400"
             >
               <p className="text-pretty">{releaseErr}</p>
-              {canForceRelease && releaseOccupiedStandRef ? (
+              {canAmrAttention && releaseOccupiedStandRef ? (
                 <button
                   type="button"
                   disabled={releaseBusy || cancelBusy || terminateStuckBusy}

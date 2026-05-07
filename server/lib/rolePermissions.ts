@@ -3,6 +3,8 @@ import { normalizePermissionArray, roleHasPermission } from './permissionsCatalo
 
 const DEFAULT_BY_SLUG: Record<string, string[]> = {
   admin: ['*'],
+  /** Floor supervisor: resolve AMR attention items without creating missions or editing stands. */
+  amr_operator: ['module.amr', 'amr.attention.manage'],
   user: [
     'module.home',
     'module.testing',
@@ -24,7 +26,7 @@ const DEFAULT_BY_SLUG: Record<string, string[]> = {
 /** Pick one slug for legacy `users.role` / JWT `role` (deterministic). */
 export function primaryRoleSlug(slugs: string[]): string {
   if (slugs.length === 0) return 'user'
-  for (const pref of ['admin', 'user', 'viewer'] as const) {
+  for (const pref of ['admin', 'user', 'viewer', 'amr_operator'] as const) {
     if (slugs.includes(pref)) return pref
   }
   return [...slugs].sort()[0]

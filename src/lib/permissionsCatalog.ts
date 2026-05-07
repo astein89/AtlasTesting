@@ -63,6 +63,12 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     label: 'AMR: force release / continue when stand reports a pallet (Hyperion)',
     group: 'AMR',
   },
+  {
+    id: 'amr.attention.manage',
+    label:
+      'AMR: resolve attention (release / Continue, acknowledge presence warnings, force queued dispatch — without creating missions)',
+    group: 'AMR',
+  },
   { id: 'amr.stands.manage', label: 'AMR: manage stands / positions & CSV import', group: 'AMR' },
   {
     id: 'amr.stands.override-special',
@@ -130,6 +136,7 @@ export const ROLE_EDITOR_MODULE_NESTING: Array<{
     nestedIds: [
       'amr.missions.manage',
       'amr.missions.force_release',
+      'amr.attention.manage',
       'amr.stands.manage',
       'amr.stands.override-special',
       'amr.settings',

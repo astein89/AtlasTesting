@@ -21,6 +21,8 @@ function legacyPermissionsForRole(role: string | undefined): string[] {
   if (role === 'admin') return ['*']
   if (role === 'viewer')
     return ['module.home', 'module.testing', 'module.wiki', 'module.files', 'module.amr']
+  if (role === 'amr_operator')
+    return ['module.amr', 'amr.attention.manage']
   return [
     'module.home',
     'module.testing',
@@ -117,6 +119,10 @@ interface AuthState {
   canEditLocationsData: () => boolean
   /** Locations: schemas, components, and schema field definitions. */
   canEditLocationSchemas: () => boolean
+  /** AMR: release / Continue (force), acknowledge presence warnings, force queued dispatch — includes full mission managers. */
+  canAmrAttention: () => boolean
+  /** AMR: end failed multistop session (terminate stuck). */
+  canAmrTerminateStuck: () => boolean
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -154,6 +160,21 @@ export const useAuthStore = create<AuthState>()(
         roleHasPermission(effectivePermissions(get().user), 'locations.data.write'),
       canEditLocationSchemas: () =>
         roleHasPermission(effectivePermissions(get().user), 'locations.schemas.manage'),
+      canAmrAttention: () => {
+        const p = effectivePermissions(get().user)
+        return (
+          roleHasPermission(p, 'amr.attention.manage') ||
+          roleHasPermission(p, 'amr.missions.force_release') ||
+          roleHasPermission(p, 'amr.missions.manage')
+        )
+      },
+      canAmrTerminateStuck: () => {
+        const p = effectivePermissions(get().user)
+        return (
+          roleHasPermission(p, 'amr.attention.manage') ||
+          roleHasPermission(p, 'amr.missions.manage')
+        )
+      },
     }),
     {
       name: AUTH_STORAGE_KEY,

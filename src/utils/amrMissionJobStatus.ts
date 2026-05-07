@@ -18,12 +18,41 @@ export const MISSION_JOB_STATUS_NAMES: Record<number, string> = {
   91: 'Awaiting release',
   92: 'Queued',
   93: 'Presence warning',
+  /** Synthetic — Hyperion post-drop confirmation window before pallet seen or presence warning (see {@link missionRowIsCheckingPostDropPresence}). */
+  94: 'Checking presence',
 }
 
 /** Synthetic code — never returned by the fleet; see {@link MISSION_JOB_STATUS_NAMES}[91]. */
 export const MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE = 91
 export const MISSION_QUEUED_STATUS_CODE = 92
 export const MISSION_PRESENCE_WARNING_STATUS_CODE = 93
+export const MISSION_CHECKING_PRESENCE_STATUS_CODE = 94
+
+/** Post-drop Hyperion poll: deadline set; pallet not yet confirmed and no warning (matches worker presence tick query). */
+export function missionRowIsCheckingPostDropPresence(r: Record<string, unknown> | null | undefined): boolean {
+  if (!r) return false
+  const until = typeof r.presence_check_until === 'string' ? r.presence_check_until.trim() : ''
+  if (!until) return false
+  const seen = typeof r.presence_seen_at === 'string' ? r.presence_seen_at.trim() : ''
+  if (seen) return false
+  const warn = typeof r.presence_warning_at === 'string' ? r.presence_warning_at.trim() : ''
+  if (warn) return false
+  return true
+}
+
+/** Operator-visible presence warning — row may stay reserved until cleared (keep in active lists). */
+export function missionRowHasPresenceWarning(r: Record<string, unknown> | null | undefined): boolean {
+  if (!r) return false
+  const w = typeof r.presence_warning_at === 'string' ? r.presence_warning_at.trim() : ''
+  return Boolean(w)
+}
+
+/** Mission tables / detail badge: surfaces synthetic {@link MISSION_CHECKING_PRESENCE_STATUS_CODE} while polling after drop. */
+export function effectiveMissionDisplayLastStatus(record: Record<string, unknown> | null | undefined): unknown {
+  if (!record) return null
+  if (missionRowIsCheckingPostDropPresence(record)) return MISSION_CHECKING_PRESENCE_STATUS_CODE
+  return record.last_status ?? null
+}
 
 /**
  * Fleet codes after which the mission worker closes the mission row (`CLOSE_MISSION_ROW_STATUS` in `amrMissionWorker.ts`).
@@ -69,10 +98,12 @@ export function missionOverviewOrDetailQueuedHue(opts: {
   if (session && typeof session === 'object') {
     const qb =
       typeof session.queue_blocked_until === 'string' && session.queue_blocked_until.trim().length > 0
+    const qg =
+      typeof session.queue_blocked_group_id === 'string' && session.queue_blocked_group_id.trim().length > 0
     const ci =
       typeof session.container_in_payload_json === 'string' &&
       session.container_in_payload_json.trim().length > 0
-    return Boolean(qb || ci)
+    return Boolean(qb || qg || ci)
   }
   return false
 }
@@ -112,6 +143,8 @@ export function missionJobStatusChipClass(code: number | null): string {
       return 'border-violet-400/45 bg-violet-400/14 text-violet-950 dark:border-violet-500/40 dark:bg-violet-500/16 dark:text-violet-100'
     case 93:
       return 'border-amber-500/45 bg-amber-500/12 text-amber-950 dark:text-amber-100'
+    case MISSION_CHECKING_PRESENCE_STATUS_CODE:
+      return 'border-teal-500/40 bg-teal-500/12 text-teal-950 dark:text-teal-100'
     case 28:
       return 'border-orange-500/40 bg-orange-500/12 text-orange-950 dark:text-orange-100'
     case 10:

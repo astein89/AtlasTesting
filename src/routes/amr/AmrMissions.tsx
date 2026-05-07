@@ -99,8 +99,8 @@ type AppMissionSortCol =
   | 'container_code'
   | 'last_status'
   | 'tracking'
-  | 'fleet_complete'
   | 'created_at'
+  | 'time_completed'
 
 type FleetJobSortCol =
   | 'jobCode'
@@ -111,9 +111,18 @@ type FleetJobSortCol =
   | 'createTime'
   | 'source'
 
-function defaultAppMissionSortDir(col: AppMissionSortCol): SortDir {
+/** Default direction when switching columns on the Mission History table (newest created first). */
+function defaultHistoryMissionSortDir(col: AppMissionSortCol): SortDir {
   if (col === 'job_code' || col === 'container_code') return 'asc'
-  if (col === 'created_at' || col === 'last_status' || col === 'fleet_complete') return 'desc'
+  if (col === 'created_at' || col === 'last_status' || col === 'time_completed') return 'desc'
+  return 'asc'
+}
+
+/** Default direction when switching columns on the Active Missions table (oldest created first for Created). */
+function defaultActiveMissionSortDir(col: AppMissionSortCol): SortDir {
+  if (col === 'job_code' || col === 'container_code') return 'asc'
+  if (col === 'created_at') return 'asc'
+  if (col === 'last_status') return 'desc'
   return 'asc'
 }
 
@@ -150,13 +159,10 @@ function compareAppMissionRows(
       const wb = Number(b.worker_closed) === 1 ? 1 : 0
       return (wa - wb) * m
     }
-    case 'fleet_complete': {
-      const fa = Number(a.finalized) === 1 ? 1 : 0
-      const fb = Number(b.finalized) === 1 ? 1 : 0
-      return (fa - fb) * m
-    }
     case 'created_at':
       return String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) * m
+    case 'time_completed':
+      return String(a.updated_at ?? '').localeCompare(String(b.updated_at ?? '')) * m
     default:
       return 0
   }
@@ -248,8 +254,12 @@ export function AmrMissions() {
   const [detailFleetJob, setDetailFleetJob] = useState<Record<string, unknown> | null>(null)
   const [multistopSummarySessionId, setMultistopSummarySessionId] = useState<string | null>(null)
 
-  const [appSort, setAppSort] = useState<{ col: AppMissionSortCol; dir: SortDir }>({
+  const [activeMissionSort, setActiveMissionSort] = useState<{ col: AppMissionSortCol; dir: SortDir }>({
     col: 'created_at',
+    dir: 'asc',
+  })
+  const [historyMissionSort, setHistoryMissionSort] = useState<{ col: AppMissionSortCol; dir: SortDir }>({
+    col: 'time_completed',
     dir: 'desc',
   })
   const [appPage, setAppPage] = useState(1)
@@ -414,18 +424,18 @@ export function AmrMissions() {
   const sortedAppGroups = useMemo(() => {
     const copy = [...appTableGroups]
     copy.sort((a, b) =>
-      compareAppMissionGroups(a, b, appSort.col, appSort.dir, attentionFirst, attentionSessionIds)
+      compareAppMissionGroups(a, b, historyMissionSort.col, historyMissionSort.dir, attentionFirst, attentionSessionIds)
     )
     return copy
-  }, [appTableGroups, appSort, attentionFirst, attentionSessionIds])
+  }, [appTableGroups, historyMissionSort, attentionFirst, attentionSessionIds])
 
   const sortedActiveMissionGroups = useMemo(() => {
     const copy = [...activeMissionGroups]
     copy.sort((a, b) =>
-      compareAppMissionGroups(a, b, appSort.col, appSort.dir, attentionFirst, attentionSessionIds)
+      compareAppMissionGroups(a, b, activeMissionSort.col, activeMissionSort.dir, attentionFirst, attentionSessionIds)
     )
     return copy
-  }, [activeMissionGroups, appSort, attentionFirst, attentionSessionIds])
+  }, [activeMissionGroups, activeMissionSort, attentionFirst, attentionSessionIds])
 
   /** Modal sync searches both the active table and mission history. */
   const missionGroupsForModalResolve = useMemo(
@@ -496,9 +506,15 @@ export function AmrMissions() {
     [sortedFleetExternal, fleetPageSafe, fleetPageSize]
   )
 
-  const toggleAppSort = (col: AppMissionSortCol) => {
-    setAppSort((s) =>
-      s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: defaultAppMissionSortDir(col) }
+  const toggleActiveMissionSort = (col: AppMissionSortCol) => {
+    setActiveMissionSort((s) =>
+      s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: defaultActiveMissionSortDir(col) }
+    )
+  }
+
+  const toggleHistoryMissionSort = (col: AppMissionSortCol) => {
+    setHistoryMissionSort((s) =>
+      s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: defaultHistoryMissionSortDir(col) }
     )
     setAppPage(1)
   }
@@ -544,22 +560,22 @@ export function AmrMissions() {
                       <th className="whitespace-nowrap px-3 py-2 text-base font-medium">Robot</th>
                       <SortableTh
                         label="Job / mission code"
-                        active={appSort.col === 'job_code'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('job_code')}
+                        active={activeMissionSort.col === 'job_code'}
+                        dir={activeMissionSort.dir}
+                        onClick={() => toggleActiveMissionSort('job_code')}
                       />
                       <SortableTh
                         label="Container"
-                        active={appSort.col === 'container_code'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('container_code')}
+                        active={activeMissionSort.col === 'container_code'}
+                        dir={activeMissionSort.dir}
+                        onClick={() => toggleActiveMissionSort('container_code')}
                       />
                       <th className="whitespace-nowrap px-3 py-2 text-xs font-medium">Status</th>
                       <SortableTh
                         label="Created"
-                        active={appSort.col === 'created_at'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('created_at')}
+                        active={activeMissionSort.col === 'created_at'}
+                        dir={activeMissionSort.dir}
+                        onClick={() => toggleActiveMissionSort('created_at')}
                       />
                     </tr>
                   </thead>
@@ -722,39 +738,39 @@ export function AmrMissions() {
                     <tr className="border-b border-border bg-muted/40 text-foreground/80">
                       <SortableTh
                         label="Job / mission code"
-                        active={appSort.col === 'job_code'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('job_code')}
+                        active={historyMissionSort.col === 'job_code'}
+                        dir={historyMissionSort.dir}
+                        onClick={() => toggleHistoryMissionSort('job_code')}
                       />
                       <SortableTh
                         label="Container"
-                        active={appSort.col === 'container_code'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('container_code')}
+                        active={historyMissionSort.col === 'container_code'}
+                        dir={historyMissionSort.dir}
+                        onClick={() => toggleHistoryMissionSort('container_code')}
                       />
                       <SortableTh
                         label="Last status"
-                        active={appSort.col === 'last_status'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('last_status')}
+                        active={historyMissionSort.col === 'last_status'}
+                        dir={historyMissionSort.dir}
+                        onClick={() => toggleHistoryMissionSort('last_status')}
                       />
                       <SortableTh
                         label="Tracking"
-                        active={appSort.col === 'tracking'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('tracking')}
-                      />
-                      <SortableTh
-                        label="Fleet complete"
-                        active={appSort.col === 'fleet_complete'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('fleet_complete')}
+                        active={historyMissionSort.col === 'tracking'}
+                        dir={historyMissionSort.dir}
+                        onClick={() => toggleHistoryMissionSort('tracking')}
                       />
                       <SortableTh
                         label="Created"
-                        active={appSort.col === 'created_at'}
-                        dir={appSort.dir}
-                        onClick={() => toggleAppSort('created_at')}
+                        active={historyMissionSort.col === 'created_at'}
+                        dir={historyMissionSort.dir}
+                        onClick={() => toggleHistoryMissionSort('created_at')}
+                      />
+                      <SortableTh
+                        label="Time completed"
+                        active={historyMissionSort.col === 'time_completed'}
+                        dir={historyMissionSort.dir}
+                        onClick={() => toggleHistoryMissionSort('time_completed')}
                       />
                     </tr>
                   </thead>
@@ -773,6 +789,11 @@ export function AmrMissions() {
                       typeof created === 'string' || created instanceof Date
                         ? formatDateTime(created as string | Date)
                         : String(created ?? '')
+                    const completedAt = r.updated_at
+                    const timeCompletedLabel =
+                      typeof completedAt === 'string' || completedAt instanceof Date
+                        ? formatDateTime(completedAt as string | Date)
+                        : String(completedAt ?? '')
                     return (
                       <tr
                         key={String(r.id)}
@@ -824,8 +845,8 @@ export function AmrMissions() {
                         <td className="px-3 py-2 text-foreground/80">
                           {Number(r.worker_closed) === 1 ? 'Closed' : 'Open'}
                         </td>
-                        <td className="px-3 py-2">{Number(r.finalized) === 1 ? 'Yes' : 'No'}</td>
                         <td className="px-3 py-2 text-xs text-foreground/70">{createdLabel || '—'}</td>
+                        <td className="px-3 py-2 text-xs text-foreground/70">{timeCompletedLabel || '—'}</td>
                       </tr>
                     )
                   })}

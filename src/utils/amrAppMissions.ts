@@ -1,3 +1,8 @@
+import {
+  missionRowHasPresenceWarning,
+  missionRowIsCheckingPostDropPresence,
+} from '@/utils/amrMissionJobStatus'
+
 /** Default window for dashboard / missions list (hide older app missions). */
 export const APP_MISSION_DISPLAY_MAX_AGE_HOURS = 24
 
@@ -74,6 +79,8 @@ export function filterAppMissionsRecentOrLive<T extends Record<string, unknown>>
 
   return records.filter((r) => {
     if (isRecentByCreatedAt(r)) return true
+    if (missionRowIsCheckingPostDropPresence(r)) return true
+    if (missionRowHasPresenceWarning(r)) return true
     const sid = multistopSessionIdOnRecord(r)
     if (sid) return !multistopSessionTerminalOnRecord(r)
     return !workerClosedMissionRecord(r)
@@ -84,6 +91,8 @@ export function filterAppMissionsRecentOrLive<T extends Record<string, unknown>>
 const FLEET_COMPLETE_LIKE_STATUS = new Set([30, 31, 35])
 
 function isFleetCompleteLikeForHide<T extends Record<string, unknown>>(r: T): boolean {
+  if (missionRowIsCheckingPostDropPresence(r)) return false
+  if (missionRowHasPresenceWarning(r)) return false
   if (Number(r.finalized) === 1) return true
   const n = typeof r.last_status === 'number' ? r.last_status : Number(r.last_status)
   return Number.isFinite(n) && FLEET_COMPLETE_LIKE_STATUS.has(n)

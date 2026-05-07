@@ -66,8 +66,10 @@ import { formatRemainingMmSs, remainingMsUntilIso } from '@/utils/amrContinueCou
 import {
   MISSION_QUEUED_CALLOUT_CLASS,
   MISSION_QUEUED_ROUTE_LEG_CARD_CLASS,
+  effectiveMissionDisplayLastStatus,
   missionOverviewOrDetailQueuedHue,
 } from '@/utils/amrMissionJobStatus'
+import { amrQueuedDependencyLines } from '@/utils/amrMissionQueuedDependency'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 
@@ -693,7 +695,8 @@ export interface AmrMissionDetailModalProps {
 export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: AmrMissionDetailModalProps) {
   const openNewMissionModal = useAmrMissionNewModal()
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
-  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
+  const canAmrAttention = useAuthStore((s) => s.canAmrAttention())
+  const canAmrTerminateStuck = useAuthStore((s) => s.canAmrTerminateStuck())
   const [msRefresh, setMsRefresh] = useState(0)
   const [msData, setMsData] = useState<{
     session: Record<string, unknown>
@@ -1660,7 +1663,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     }
   }
 
-  const terminateStuckEnabled = canManage && Boolean(sessionId) && sessionStatus === 'failed'
+  const terminateStuckEnabled = canAmrTerminateStuck && Boolean(sessionId) && sessionStatus === 'failed'
 
   const onTerminateStuckSession = async () => {
     if (!sessionId || !terminateStuckEnabled) return
@@ -1703,6 +1706,27 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const queuedDestRef =
     typeof record?.queued_destination_ref === 'string' ? record.queued_destination_ref.trim() : ''
   const queuedAtIso = typeof record?.queued_at === 'string' ? record.queued_at.trim() : ''
+  const queuedDependencyLines = useMemo(
+    () =>
+      amrQueuedDependencyLines({
+        record: record ?? null,
+        session: msData?.session ?? null,
+        groupNames: standGroupNameById,
+      }),
+    [record, msData?.session, standGroupNameById]
+  )
+  const showQueuedDependencyCallout =
+    Boolean(missionRecordPk) &&
+    (isQueuedMission || queuedDependencyLines.length > 0)
+  const recordDisplayLastStatus = useMemo(
+    () => effectiveMissionDisplayLastStatus(record ?? null),
+    [
+      record?.last_status,
+      record?.presence_check_until,
+      record?.presence_seen_at,
+      record?.presence_warning_at,
+    ]
+  )
   const presenceWarnIso =
     typeof record?.presence_warning_at === 'string' ? record.presence_warning_at.trim() : ''
   const presenceDestRef =
@@ -1829,7 +1853,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
             error: blockedDestPresenceError,
             unconfigured: blockedDestPresenceUnconfig,
           }}
-          canForceRelease={canForceRelease && showForceReleaseForMissionError}
+          canForceRelease={canAmrAttention && showForceReleaseForMissionError}
           continueBusy={continueBusy}
           confirmDisabled={patchBusy || continueReleaseDisabledUntilStandEmpty}
           retryLabel={standOccupiedReleaseRetryLabel}
@@ -1850,8 +1874,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               {jobCode || missionCode || '—'}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {record.last_status != null ? (
-                <MissionJobStatusBadge value={record.last_status} />
+              {recordDisplayLastStatus != null ? (
+                <MissionJobStatusBadge value={recordDisplayLastStatus} />
               ) : (
                 <span className="text-sm text-foreground/50">No status yet</span>
               )}
@@ -1869,18 +1893,26 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 </span>
               ) : null}
             </div>
-            {isQueuedMission && missionRecordPk ? (
+            {showQueuedDependencyCallout ? (
               <div
                 className={`mt-3 rounded-lg px-3 py-2.5 text-sm leading-snug text-foreground ${MISSION_QUEUED_CALLOUT_CLASS}`}
               >
                 <p className="text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
-                  Queued for destination
+                  Waiting on
                 </p>
-                <p className="mt-1 break-all font-mono text-xs">{queuedDestRef || '—'}</p>
+                {queuedDependencyLines.length > 0 ? (
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-foreground/90 dark:text-violet-50/95">
+                    {queuedDependencyLines.map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 break-all font-mono text-xs text-foreground/85">{queuedDestRef || '—'}</p>
+                )}
                 {queuedAtIso ? (
                   <p className="mt-1 text-xs text-foreground/65">Queued since {formatDateTime(queuedAtIso)}</p>
                 ) : null}
-                {canForceRelease ? (
+                {canAmrAttention ? (
                   <button
                     type="button"
                     disabled={queuedMissionForceBusy}
@@ -1903,7 +1935,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                   post-drop confirmation window. The mission row is flagged and may still hold a stand reservation (
                   warned {formatDateTime(presenceWarnIso)}).
                 </p>
-                {canForceRelease ? (
+                {canAmrAttention ? (
                   <button
                     type="button"
                     disabled={ackPresenceBusy}
@@ -1914,7 +1946,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                   </button>
                 ) : (
                   <p className="mt-2 text-xs text-foreground/60">
-                    Operators with mission force-release permission can acknowledge and release the reservation.
+                    Operators with AMR attention permission can acknowledge and release the reservation.
                   </p>
                 )}
               </div>
@@ -2039,7 +2071,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                       >
                         Retry
                       </button>
-                      {canForceRelease && showForceReleaseForMissionError ? (
+                      {canAmrAttention && showForceReleaseForMissionError ? (
                         <button
                           type="button"
                           disabled={continueBusy || patchBusy}
@@ -2161,6 +2193,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                             (si >= draftDestinations.length - 1
                               ? true
                               : draftDestinations[si].putDown === true)
+                          const segDisplayStatus = effectiveMissionDisplayLastStatus(rec as Record<string, unknown>)
                           return (
                             <li
                               key={String(rec.id)}
@@ -2170,8 +2203,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                 <span className="font-mono text-xs text-foreground/70">
                                   {String(rec.job_code ?? '')}
                                 </span>
-                                {rec.last_status != null ? (
-                                  <MissionJobStatusBadge value={rec.last_status as number} />
+                                {segDisplayStatus != null ? (
+                                  <MissionJobStatusBadge value={segDisplayStatus} />
                                 ) : null}
                               </div>
                               {routeStandPresenceUi ? (
@@ -2278,13 +2311,16 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                 and save the plan; use Release when the session is waiting for the next leg.
                               </p>
                             ) : null}
-                            {!routePlanEditable && (awaitingContinue || sessionStatus === 'active') && !canManage ? (
+                            {!routePlanEditable &&
+                            (awaitingContinue || sessionStatus === 'active') &&
+                            !canManage &&
+                            !canAmrAttention ? (
                               <p className="text-xs text-foreground/60">
-                                Route edits and continue require mission management permission.
+                                Route edits and continue require mission management or AMR attention permission.
                               </p>
                             ) : null}
 
-                            {routePlanEditable ? (
+                            {routePlanEditable || (canAmrAttention && awaitingContinue) ? (
                               <div className="flex w-full min-w-0 flex-col gap-2">
                                 {awaitingContinue &&
                                 continueNotBeforeIso &&
@@ -2303,7 +2339,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                 ) : null}
                                 <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-3">
                                   {awaitingContinue &&
-                                  canForceRelease &&
+                                  canAmrAttention &&
                                   showForceReleaseForMissionError ? (
                                     <button
                                       type="button"
@@ -2334,13 +2370,15 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                           : 'Release Mission'}
                                     </button>
                                   ) : null}
-                                  <button
-                                    type="button"
-                                    className="min-h-[44px] shrink-0 text-sm font-medium text-primary underline underline-offset-2 hover:no-underline"
-                                    onClick={openAddStopModal}
-                                  >
-                                    Add Stop
-                                  </button>
+                                  {canManage ? (
+                                    <button
+                                      type="button"
+                                      className="min-h-[44px] shrink-0 text-sm font-medium text-primary underline underline-offset-2 hover:no-underline"
+                                      onClick={openAddStopModal}
+                                    >
+                                      Add Stop
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
                             ) : null}

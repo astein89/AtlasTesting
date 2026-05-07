@@ -273,6 +273,7 @@ export function initSchema(db: DbWrapper) {
   migrateAmrRobots(db)
   migrateRolesGrantModuleAmr(db)
   migrateRolesAddAmrStandsOverrideSpecial(db)
+  migrateRolesSeedAmrOperator(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_test_runs_test_plan_id ON test_runs(test_plan_id);
@@ -1546,6 +1547,23 @@ function migrateRolesAddAmrStandsOverrideSpecial(db: DbWrapper) {
       const next = [...list, 'amr.stands.override-special']
       db.prepare('UPDATE roles SET permissions = ? WHERE slug = ?').run(JSON.stringify(next.sort()), slug)
     }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Preset role: AMR floor supervisor — resolve attention without mission create / stands / settings. */
+function migrateRolesSeedAmrOperator(db: DbWrapper) {
+  try {
+    const row = db.prepare('SELECT slug FROM roles WHERE slug = ?').get('amr_operator') as
+      | { slug?: string }
+      | undefined
+    if (row?.slug) return
+    db.prepare('INSERT INTO roles (slug, label, permissions) VALUES (?, ?, ?)').run(
+      'amr_operator',
+      'AMR operator',
+      JSON.stringify(['module.amr', 'amr.attention.manage'])
+    )
   } catch {
     // Ignore
   }

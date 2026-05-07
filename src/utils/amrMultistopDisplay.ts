@@ -1,5 +1,10 @@
 import { filterHideStaleFleetCompleteMissions } from '@/utils/amrAppMissions'
-import { MISSION_QUEUED_STATUS_CODE, MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE } from '@/utils/amrMissionJobStatus'
+import {
+  MISSION_CHECKING_PRESENCE_STATUS_CODE,
+  MISSION_QUEUED_STATUS_CODE,
+  MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE,
+  missionRowIsCheckingPostDropPresence,
+} from '@/utils/amrMissionJobStatus'
 
 export type GroupedMissionSingle = {
   kind: 'single'
@@ -131,7 +136,13 @@ function mergedMissionRobotId(head: Record<string, unknown>, latest: Record<stri
 
 /** One synthetic mission row for sorting, filtering, and table cells (rollup from latest segment). */
 export function flattenGroupedMissionRow(group: GroupedMissionRow): Record<string, unknown> {
-  if (group.kind === 'single') return { ...group.record }
+  if (group.kind === 'single') {
+    const base = { ...group.record }
+    if (missionRowIsCheckingPostDropPresence(group.record)) {
+      return { ...base, last_status: MISSION_CHECKING_PRESENCE_STATUS_CODE }
+    }
+    return base
+  }
   const { head, latest, sessionId, segmentCount } = group
   const robotId = mergedMissionRobotId(head, latest)
   const sessionWorkflow = multistopSessionStatusFromGroup(group)
@@ -139,13 +150,17 @@ export function flattenGroupedMissionRow(group: GroupedMissionRow): Record<strin
   const queueBlockedGroupId =
     typeof head.queue_blocked_group_id === 'string' ? head.queue_blocked_group_id.trim() : ''
   const hasDeferredContainerIn = typeof head.container_in_payload_json === 'string' && head.container_in_payload_json.trim().length > 0
-  /** Previous leg may already be fleet‑complete while the session is still waiting on Release — don’t surface that as row status. */
-  const rollupLastStatus =
-    sessionWorkflow === 'awaiting_continue'
-      ? queueBlockedUntil || hasDeferredContainerIn || queueBlockedGroupId
-        ? MISSION_QUEUED_STATUS_CODE
-        : MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE
-      : latest.last_status
+  const queuedRollup =
+    sessionWorkflow === 'awaiting_continue' &&
+    Boolean(queueBlockedUntil || hasDeferredContainerIn || queueBlockedGroupId)
+  /** Latest segment may be fleet‑complete while Hyperion still confirms pallet presence after drop — surface as Checking presence. */
+  let rollupLastStatus: unknown = queuedRollup
+    ? MISSION_QUEUED_STATUS_CODE
+    : missionRowIsCheckingPostDropPresence(latest as Record<string, unknown>)
+      ? MISSION_CHECKING_PRESENCE_STATUS_CODE
+      : sessionWorkflow === 'awaiting_continue'
+        ? MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE
+        : latest.last_status
   return {
     ...head,
     last_status: rollupLastStatus,

@@ -12,17 +12,17 @@ export interface DateTimeConfig {
 
 export const DEFAULT_DATE_TIME_CONFIG: DateTimeConfig = {
   dateFormat: 'MM/dd/yyyy',
-  timeFormat: 'HH:mm',
-  dateTimeFormat: 'MM/dd/yyyy HH:mm',
+  timeFormat: 'HH:mm:ss',
+  dateTimeFormat: 'MM/dd/yyyy HH:mm:ss',
 }
 
 /** Preset configs users can pick from */
 export const DATE_TIME_PRESETS: { label: string; value: DateTimeConfig }[] = [
-  { label: 'US (MM/dd/yyyy, 24h)', value: { dateFormat: 'MM/dd/yyyy', timeFormat: 'HH:mm', dateTimeFormat: 'MM/dd/yyyy HH:mm' } },
-  { label: 'US (MM/dd/yyyy, 12h)', value: { dateFormat: 'MM/dd/yyyy', timeFormat: 'h:mm a', dateTimeFormat: 'MM/dd/yyyy h:mm a' } },
-  { label: 'UK (dd/MM/yyyy, 24h)', value: { dateFormat: 'dd/MM/yyyy', timeFormat: 'HH:mm', dateTimeFormat: 'dd/MM/yyyy HH:mm' } },
-  { label: 'UK (dd/MM/yyyy, 12h)', value: { dateFormat: 'dd/MM/yyyy', timeFormat: 'h:mm a', dateTimeFormat: 'dd/MM/yyyy h:mm a' } },
-  { label: 'ISO (yyyy-MM-dd, 24h)', value: { dateFormat: 'yyyy-MM-dd', timeFormat: 'HH:mm', dateTimeFormat: 'yyyy-MM-dd HH:mm' } },
+  { label: 'US (MM/dd/yyyy, 24h)', value: { dateFormat: 'MM/dd/yyyy', timeFormat: 'HH:mm:ss', dateTimeFormat: 'MM/dd/yyyy HH:mm:ss' } },
+  { label: 'US (MM/dd/yyyy, 12h)', value: { dateFormat: 'MM/dd/yyyy', timeFormat: 'h:mm:ss a', dateTimeFormat: 'MM/dd/yyyy h:mm:ss a' } },
+  { label: 'UK (dd/MM/yyyy, 24h)', value: { dateFormat: 'dd/MM/yyyy', timeFormat: 'HH:mm:ss', dateTimeFormat: 'dd/MM/yyyy HH:mm:ss' } },
+  { label: 'UK (dd/MM/yyyy, 12h)', value: { dateFormat: 'dd/MM/yyyy', timeFormat: 'h:mm:ss a', dateTimeFormat: 'dd/MM/yyyy h:mm:ss a' } },
+  { label: 'ISO (yyyy-MM-dd, 24h)', value: { dateFormat: 'yyyy-MM-dd', timeFormat: 'HH:mm:ss', dateTimeFormat: 'yyyy-MM-dd HH:mm:ss' } },
 ]
 
 let currentConfig: DateTimeConfig = { ...DEFAULT_DATE_TIME_CONFIG }

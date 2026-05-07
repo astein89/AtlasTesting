@@ -68,6 +68,12 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     label: 'AMR: force release / continue when stand reports a pallet (Hyperion)',
     group: 'AMR',
   },
+  {
+    id: 'amr.attention.manage',
+    label:
+      'AMR: resolve attention (release / Continue, acknowledge presence warnings, force queued dispatch — without creating missions)',
+    group: 'AMR',
+  },
   { id: 'amr.stands.manage', label: 'AMR: manage stands / positions & CSV import', group: 'AMR' },
   {
     id: 'amr.stands.override-special',
@@ -112,6 +118,27 @@ export function roleHasPermission(
   if (!permissions || permissions.length === 0) return false
   if (permissions.includes('*')) return true
   return permissions.includes(key)
+}
+
+/** Release, Continue with force, acknowledge presence warnings, force queued mission dispatch. */
+export function roleHasAmrAttentionPermission(permissions: string[] | undefined | null): boolean {
+  if (!permissions?.length) return false
+  if (permissions.includes('*')) return true
+  return (
+    roleHasPermission(permissions, 'amr.attention.manage') ||
+    roleHasPermission(permissions, 'amr.missions.force_release') ||
+    roleHasPermission(permissions, 'amr.missions.manage')
+  )
+}
+
+/** End failed multistop session (destructive cleanup). */
+export function roleHasAmrTerminateStuckPermission(permissions: string[] | undefined | null): boolean {
+  if (!permissions?.length) return false
+  if (permissions.includes('*')) return true
+  return (
+    roleHasPermission(permissions, 'amr.attention.manage') ||
+    roleHasPermission(permissions, 'amr.missions.manage')
+  )
 }
 
 export function isKnownPermissionKey(key: string): boolean {

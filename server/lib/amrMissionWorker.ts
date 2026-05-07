@@ -11,6 +11,7 @@ import {
   isStandAvailableForDrop,
   releaseReservationsForRecord,
   reserveStandForRecord,
+  type StandQueuePolicy,
 } from './amrStandAvailability.js'
 import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
@@ -337,8 +338,11 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
         const hcfg = await getAmrHyperionConfig(db)
         const presenceCache: Record<string, boolean> = {}
         for (const [ref, row] of headsByDestination.entries()) {
-          const policy = await getStandQueuePolicy(db, ref)
-          if (!policy) continue
+          const policyRow = await getStandQueuePolicy(db, ref)
+          const policy: StandQueuePolicy = policyRow ?? {
+            bypassPalletCheck: false,
+            activeMissions: 1,
+          }
           let palletPresent = false
           if (!policy.bypassPalletCheck && !(await externalRefUsesNonStandRow(db, ref))) {
             if (!hyperionConfigured(hcfg)) continue

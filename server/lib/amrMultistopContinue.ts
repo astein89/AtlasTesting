@@ -190,6 +190,50 @@ export async function executeMultistopContinue(params: {
       .run(JSON.stringify(plan), new Date().toISOString(), sessionId)
   }
 
+  /** Block automatic Continue while another mission holds this drop stand — unless operator force-releases (skip presence). */
+  if (!skipStandPresenceCheck) {
+    const reservationGate = multistopSegmentDropGate(plan, next_segment_index)
+    const reservationDestRef =
+      reservationGate?.kind === 'stand' ? reservationGate.ref.trim() : ''
+    if (reservationDestRef) {
+      const nonStandSet = await externalRefsNonStandLocation(db, [reservationDestRef])
+      if (!nonStandSet.has(reservationDestRef)) {
+        const rc = await activeReservationCount(db, reservationDestRef)
+        if (rc > 0) {
+          const ts = new Date().toISOString()
+          const queueBlockedUntil = new Date(
+            Date.now() + Math.max(1000, cfg.pollMsMissionWorker || 5000)
+          ).toISOString()
+          const msg = `Drop stand ${reservationDestRef} has an active reservation — cannot dispatch yet.`
+          if (cfg.missionQueueingEnabled !== false) {
+            await db
+              .prepare(
+                `UPDATE amr_multistop_sessions
+               SET queue_blocked_until = ?, queue_blocked_group_id = NULL, updated_at = ?
+               WHERE id = ?`
+              )
+              .run(queueBlockedUntil, ts, sessionId)
+            return {
+              ok: false,
+              status: 409,
+              error: msg,
+              standOccupiedRef: reservationDestRef,
+              code: 'STAND_OCCUPIED',
+              queued: true,
+            }
+          }
+          return {
+            ok: false,
+            status: 409,
+            error: msg,
+            standOccupiedRef: reservationDestRef,
+            code: 'STAND_OCCUPIED',
+          }
+        }
+      }
+    }
+  }
+
   if (cfg.missionCreateStandPresenceSanityCheck && !skipStandPresenceCheck) {
     const dropGateCheck = multistopSegmentDropGate(plan, next_segment_index)
     const destRef = dropGateCheck?.kind === 'stand' ? dropGateCheck.ref : ''

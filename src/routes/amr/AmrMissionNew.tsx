@@ -424,7 +424,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const canAmrModule = useAuthStore((s) => s.hasPermission('module.amr'))
   const canAmrApiDebug = useAuthStore((s) => s.hasPermission('amr.tools.dev'))
   const canOverrideSpecial = useAuthStore((s) => s.hasPermission('amr.stands.override-special'))
-  const canForceRelease = useAuthStore((s) => s.hasPermission('amr.missions.force_release'))
+  const canAmrAttention = useAuthStore((s) => s.canAmrAttention())
   const { showConfirm, showAlert } = useAlertConfirm()
   const { pushToast } = useToast()
   const [stands, setStands] = useState<AmrStandPickerRow[]>([])
@@ -1228,7 +1228,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               <p className="font-medium text-foreground">Mission queued</p>
               <p className="text-xs text-foreground/80">{queuedBody}</p>
               <div className="flex flex-wrap gap-2 pt-1">
-                {canForceRelease ? (
+                {canAmrAttention ? (
                   <button
                     type="button"
                     className="rounded-lg border border-destructive/50 bg-background px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"

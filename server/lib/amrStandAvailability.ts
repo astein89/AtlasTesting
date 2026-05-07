@@ -49,10 +49,12 @@ export function isStandAvailableForDrop(opts: {
   activeReservations: number
 }): boolean {
   const activeReservations = Number.isFinite(opts.activeReservations) ? opts.activeReservations : 0
+  /** Never start another drop to this stand while any mission row still holds an unreleased reservation here. */
+  if (activeReservations > 0) return false
   if (opts.policy.bypassPalletCheck) {
-    return activeReservations < opts.policy.activeMissions
+    return true
   }
-  return !opts.palletPresent && activeReservations === 0
+  return !opts.palletPresent
 }
 
 export async function reserveStandForRecord(

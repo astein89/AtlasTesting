@@ -9,7 +9,7 @@ import {
   type AuthRequest,
 } from '../middleware/auth.js'
 import { asyncRoute } from '../utils/asyncRoute.js'
-import { roleHasPermission } from '../lib/permissionsCatalog.js'
+import { roleHasAmrAttentionPermission, roleHasPermission } from '../lib/permissionsCatalog.js'
 import {
   getAmrFleetConfig,
   saveAmrFleetConfig,
@@ -65,6 +65,7 @@ import {
   isStandAvailableForDrop,
   releaseReservationsForRecord,
   reserveStandForRecord,
+  type StandQueuePolicy,
 } from '../lib/amrStandAvailability.js'
 import { rescheduleAmrMissionWorker } from '../lib/amrMissionWorker.js'
 import {
@@ -252,6 +253,7 @@ async function dispatchQueuedMissionRecordById(
     }
     submitPayload = sp
   }
+
   const cfg = await getAmrFleetConfig(db)
   const ciRaw = typeof row.container_in_payload_json === 'string' ? row.container_in_payload_json.trim() : ''
   if (ciRaw) {
@@ -1645,8 +1647,8 @@ router.post(
 
     const destinationGroupId = typeof b.destinationGroupId === 'string' ? b.destinationGroupId.trim() : ''
     const forceRelease = b.forceRelease === true || b.forceRelease === 'true'
-    if (forceRelease && !roleHasPermission(req.user?.permissions ?? [], 'amr.missions.force_release')) {
-      res.status(403).json({ error: 'Force release permission required.' })
+    if (forceRelease && !roleHasAmrAttentionPermission(req.user?.permissions)) {
+      res.status(403).json({ error: 'AMR attention permission required for force release.' })
       return
     }
 
@@ -2148,7 +2150,7 @@ router.patch(
 router.post(
   '/dc/missions/multistop/:sessionId/continue',
   authMiddleware,
-  requirePermission('amr.missions.manage'),
+  requireAnyPermission('amr.missions.manage', 'amr.attention.manage', 'amr.missions.force_release'),
   asyncRoute(async (req: AuthRequest, res) => {
     const sessionId = typeof req.params.sessionId === 'string' ? req.params.sessionId.trim() : ''
     if (!sessionId) {
@@ -2158,11 +2160,8 @@ router.post(
     const cfg = await getAmrFleetConfig(db)
     const body = (req.body ?? {}) as Record<string, unknown>
     const forceRelease = body.forceRelease === true || body.forceRelease === 'true'
-    if (
-      forceRelease &&
-      !roleHasPermission(req.user?.permissions ?? [], 'amr.missions.force_release')
-    ) {
-      res.status(403).json({ error: 'Force release permission required.' })
+    if (forceRelease && !roleHasAmrAttentionPermission(req.user?.permissions)) {
+      res.status(403).json({ error: 'AMR attention permission required for force release.' })
       return
     }
     const result = await executeMultistopContinue({
@@ -2205,7 +2204,7 @@ router.post(
 router.post(
   '/dc/missions/:missionRecordId/force-release',
   authMiddleware,
-  requirePermission('amr.missions.force_release'),
+  requireAnyPermission('amr.missions.manage', 'amr.attention.manage', 'amr.missions.force_release'),
   asyncRoute(async (req: AuthRequest, res) => {
     const missionRecordId =
       typeof req.params.missionRecordId === 'string' ? req.params.missionRecordId.trim() : ''
@@ -2225,7 +2224,7 @@ router.post(
 router.post(
   '/dc/missions/:missionRecordId/ack-presence-warning',
   authMiddleware,
-  requirePermission('amr.missions.force_release'),
+  requireAnyPermission('amr.missions.manage', 'amr.attention.manage', 'amr.missions.force_release'),
   asyncRoute(async (req: AuthRequest, res) => {
     const missionRecordId =
       typeof req.params.missionRecordId === 'string' ? req.params.missionRecordId.trim() : ''
@@ -2281,7 +2280,7 @@ router.post(
 router.post(
   '/dc/missions/multistop/:sessionId/terminate-stuck',
   authMiddleware,
-  requirePermission('amr.missions.manage'),
+  requireAnyPermission('amr.missions.manage', 'amr.attention.manage'),
   asyncRoute(async (req: AuthRequest, res) => {
     const sessionId = typeof req.params.sessionId === 'string' ? req.params.sessionId.trim() : ''
     if (!sessionId) {
@@ -2518,8 +2517,8 @@ router.post(
     const total_segments = plan.destinations.length
     const missionRecordId = uuidv4()
     const forceRelease = b.forceRelease === true || b.forceRelease === 'true'
-    if (forceRelease && !roleHasPermission(req.user?.permissions ?? [], 'amr.missions.force_release')) {
-      res.status(403).json({ error: 'Force release permission required.' })
+    if (forceRelease && !roleHasAmrAttentionPermission(req.user?.permissions)) {
+      res.status(403).json({ error: 'AMR attention permission required for force release.' })
       return
     }
 

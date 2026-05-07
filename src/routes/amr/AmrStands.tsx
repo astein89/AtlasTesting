@@ -25,7 +25,7 @@ import {
 const STAND_BULK_FIELDS = [
   { value: 'location_type', label: 'Location type' },
   { value: 'zone', label: 'Zone' },
-  { value: 'external_ref', label: 'Location (External Ref)' },
+  { value: 'external_ref', label: 'Location' },
   { value: 'dwg_ref', label: 'DWG ref' },
   { value: 'orientation', label: 'Orientation' },
   { value: 'x', label: 'X (m)' },
@@ -39,8 +39,21 @@ const STAND_BULK_FIELDS = [
 
 type StandBulkFieldKey = (typeof STAND_BULK_FIELDS)[number]['value']
 
-const STAND_TABLE_KEYS = ['external_ref', 'zone', 'orientation', 'xy', 'enabled', 'restrictions'] as const
+const STAND_TABLE_KEYS = [
+  'external_ref',
+  'stand_type',
+  'zone',
+  'orientation',
+  'xy',
+  'enabled',
+  'restrictions',
+] as const
 type StandTableKey = (typeof STAND_TABLE_KEYS)[number]
+
+function standTypeLabel(row: Record<string, unknown>): string {
+  const lt = normalizeAmrStandLocationType((row as { location_type?: unknown }).location_type)
+  return lt === AMR_STAND_LOCATION_TYPE_NON_STAND ? 'Non-stand waypoint' : 'Rack stand'
+}
 
 function restrictionsLabel(row: Record<string, unknown>): string {
   const bp = Number(row.block_pickup) === 1
@@ -59,6 +72,8 @@ function standFilterValue(row: Record<string, unknown>, key: StandTableKey): str
   switch (key) {
     case 'external_ref':
       return String(row.external_ref ?? '')
+    case 'stand_type':
+      return standTypeLabel(row)
     case 'zone':
       return String(row.zone ?? '')
     case 'orientation':
@@ -77,6 +92,7 @@ function standFilterValue(row: Record<string, unknown>, key: StandTableKey): str
 function standSearchHaystack(row: Record<string, unknown>): string {
   return [
     standFilterValue(row, 'external_ref'),
+    standFilterValue(row, 'stand_type'),
     standFilterValue(row, 'zone'),
     standFilterValue(row, 'orientation'),
     standFilterValue(row, 'xy'),
@@ -697,7 +713,7 @@ export function AmrStands() {
     setBulkEditOpen(true)
   }, [seedBulkEditFromFirstSelected])
 
-  const tableColSpan = canManage ? 8 : 6
+  const tableColSpan = canManage ? 9 : 7
 
   const filterIcon = (
     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1080,7 +1096,7 @@ export function AmrStands() {
                   {bulkEditField === 'dwg_ref'
                     ? 'DWG ref'
                     : bulkEditField === 'external_ref'
-                      ? 'Location (External Ref)'
+                      ? 'Location'
                       : 'Zone'}
                 </label>
                 <input
@@ -1186,7 +1202,7 @@ export function AmrStands() {
                 title="Tap to sort. Long-press or Shift+click to add secondary sort."
               >
                 <span className="flex min-w-0 items-center gap-1">
-                  <span className="min-w-0 truncate">Location (External Ref)</span>
+                  <span className="min-w-0 truncate">Location</span>
                   {getSortIndex('external_ref') >= 0 && (
                     <span className="shrink-0 text-foreground/60">
                       {getSortIndex('external_ref') + 1}
@@ -1210,13 +1226,56 @@ export function AmrStands() {
                 {openFilterColumn === 'external_ref' && (
                   <ColumnFilterDropdown
                     columnKey="external_ref"
-                    columnLabel="Location (External Ref)"
+                    columnLabel="Location"
                     values={getColumnValues('external_ref')}
                     selected={columnFilters.external_ref ?? new Set()}
                     onChange={(s) => setColumnFilters((p) => ({ ...p, external_ref: s }))}
                     onClose={() => setOpenFilterColumn(null)}
                     tableAnchorRefs={filterAnchorRefs}
                     tableAnchorKey="external_ref"
+                  />
+                )}
+              </th>
+              <th
+                ref={(el) => {
+                  filterAnchorRefs.current.stand_type = el
+                }}
+                className="relative min-w-0 cursor-pointer select-none px-3 py-2 font-medium text-foreground hover:bg-muted/60"
+                {...getSortHandlers('stand_type')}
+                title="Tap to sort"
+              >
+                <span className="flex min-w-0 items-center gap-1">
+                  <span className="min-w-0 truncate">Type</span>
+                  {getSortIndex('stand_type') >= 0 && (
+                    <span className="shrink-0 text-foreground/60">
+                      {getSortIndex('stand_type') + 1}
+                      {getSortDir('stand_type') === 'asc' ? '↓' : '↑'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenFilterColumn((c) => (c === 'stand_type' ? null : 'stand_type'))
+                    }}
+                    className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                      columnFilters.stand_type?.size ? 'text-primary' : 'text-foreground/50'
+                    }`}
+                    title="Filter column"
+                  >
+                    {filterIcon}
+                  </button>
+                </span>
+                {openFilterColumn === 'stand_type' && (
+                  <ColumnFilterDropdown
+                    columnKey="stand_type"
+                    columnLabel="Type"
+                    values={getColumnValues('stand_type')}
+                    selected={columnFilters.stand_type ?? new Set()}
+                    onChange={(s) => setColumnFilters((p) => ({ ...p, stand_type: s }))}
+                    onClose={() => setOpenFilterColumn(null)}
+                    tableAnchorRefs={filterAnchorRefs}
+                    tableAnchorKey="stand_type"
                   />
                 )}
               </th>
@@ -1518,6 +1577,24 @@ function StandRow({
         </td>
       ) : null}
       <td className="px-3 py-2 font-mono text-xs">{String(row.external_ref)}</td>
+      <td className="px-3 py-2">
+        {normalizeAmrStandLocationType((row as { location_type?: unknown }).location_type) ===
+        AMR_STAND_LOCATION_TYPE_NON_STAND ? (
+          <span
+            className="inline-flex rounded-full border border-violet-500/35 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:text-violet-200"
+            title="Non-stand waypoint"
+          >
+            Waypoint
+          </span>
+        ) : (
+          <span
+            className="inline-flex rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-foreground"
+            title="Rack stand"
+          >
+            Rack
+          </span>
+        )}
+      </td>
       <td className="px-3 py-2">{String(row.zone ?? '')}</td>
       <td className="px-3 py-2">{String(row.orientation ?? '')}</td>
       <td className="px-3 py-2 text-xs">
