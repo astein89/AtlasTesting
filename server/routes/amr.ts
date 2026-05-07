@@ -15,7 +15,7 @@ import {
   saveAmrFleetConfig,
   publicAmrFleetConfig,
   normalizeZoneCategories,
-  type AmrFleetConfig,
+  type AmrFleetConfigSavePatch,
 } from '../lib/amrConfig.js'
 import {
   getAmrHyperionConfig,
@@ -411,7 +411,7 @@ router.put(
   requirePermission('amr.settings'),
   asyncRoute(async (req: AuthRequest, res) => {
     const body = req.body as Record<string, unknown>
-    const patch: Partial<AmrFleetConfig> & { authKey?: string } = {}
+    const patch: AmrFleetConfigSavePatch = {}
     if (typeof body.serverIp === 'string') patch.serverIp = body.serverIp
     if (typeof body.serverPort === 'number') patch.serverPort = body.serverPort
     if (typeof body.useHttps === 'boolean') patch.useHttps = body.useHttps

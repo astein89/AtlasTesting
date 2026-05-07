@@ -72,6 +72,15 @@ export type AmrFleetConfig = {
   zonePickerInlineZones?: string[]
 }
 
+/**
+ * Partial merge input for `saveAmrFleetConfig`. Use `zonePickerInlineZones: null` to delete the key (legacy picker
+ * behavior).
+ */
+export type AmrFleetConfigSavePatch = Omit<Partial<AmrFleetConfig>, 'zonePickerInlineZones'> & {
+  authKey?: string
+  zonePickerInlineZones?: string[] | null
+}
+
 export const DEFAULT_AMR_FLEET_CONFIG: AmrFleetConfig = {
   serverIp: '',
   serverPort: 80,
@@ -201,7 +210,7 @@ export async function getAmrFleetConfig(db: AsyncDbWrapper): Promise<AmrFleetCon
 /** Persist config; omit or empty authKey leaves existing key unchanged. */
 export async function saveAmrFleetConfig(
   db: AsyncDbWrapper,
-  patch: Partial<AmrFleetConfig> & { authKey?: string; zonePickerInlineZones?: string[] | null }
+  patch: AmrFleetConfigSavePatch
 ): Promise<AmrFleetConfig> {
   const current = await getAmrFleetConfig(db)
   const { zonePickerInlineZones: zpiPatch, ...patchRest } = patch
