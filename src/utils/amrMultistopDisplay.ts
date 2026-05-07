@@ -1,4 +1,5 @@
 import { filterHideStaleFleetCompleteMissions } from '@/utils/amrAppMissions'
+import { MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE } from '@/utils/amrMissionJobStatus'
 
 export type GroupedMissionSingle = {
   kind: 'single'
@@ -133,9 +134,13 @@ export function flattenGroupedMissionRow(group: GroupedMissionRow): Record<strin
   if (group.kind === 'single') return { ...group.record }
   const { head, latest, sessionId, segmentCount } = group
   const robotId = mergedMissionRobotId(head, latest)
+  const sessionWorkflow = multistopSessionStatusFromGroup(group)
+  /** Previous leg may already be fleet‑complete while the session is still waiting on Release — don’t surface that as row status. */
+  const rollupLastStatus =
+    sessionWorkflow === 'awaiting_continue' ? MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE : latest.last_status
   return {
     ...head,
-    last_status: latest.last_status,
+    last_status: rollupLastStatus,
     worker_closed: latest.worker_closed,
     finalized: latest.finalized,
     updated_at: latest.updated_at,
@@ -191,10 +196,27 @@ export function fleetJobStatusBelongsInMissionHistory(lastStatus: unknown): bool
   return Number.isFinite(n) && FLEET_JOB_STATUS_MISSION_HISTORY.has(n)
 }
 
+function multistopSessionWorkflowKeepsMissionActive(workflow: string | null): boolean {
+  if (workflow == null || !String(workflow).trim()) return false
+  switch (String(workflow).trim().toLowerCase()) {
+    case 'active':
+    case 'awaiting_continue':
+    case 'pending':
+    case 'failed':
+      return true
+    default:
+      return false
+  }
+}
+
 /**
  * Splits **Active Missions** vs **Mission History** using the **latest fleet job status** on the row
  * (`flattenGroupedMissionRow`), not session workflow alone — so Warning (**50**) never lands in history just because
  * the multistop session row was marked completed while the fleet still reports 50.
+ *
+ * Multistop: while `amr_multistop_sessions.status` is still **active / awaiting_continue / pending / failed**, keep the
+ * group in **Active** even if the **latest segment row** shows fleet-complete (**30**) — that often means the last
+ * *submitted* leg finished, not that the whole route is done.
  */
 export function partitionMissionGroupsForTables(groups: GroupedMissionRow[]): {
   active: GroupedMissionRow[]
@@ -203,6 +225,13 @@ export function partitionMissionGroupsForTables(groups: GroupedMissionRow[]): {
   const active: GroupedMissionRow[] = []
   const history: GroupedMissionRow[] = []
   for (const g of groups) {
+    if (g.kind === 'multistop') {
+      const ws = multistopSessionStatusFromGroup(g)
+      if (multistopSessionWorkflowKeepsMissionActive(ws)) {
+        active.push(g)
+        continue
+      }
+    }
     const flat = flattenGroupedMissionRow(g)
     if (fleetJobStatusBelongsInMissionHistory(flat.last_status)) history.push(g)
     else active.push(g)

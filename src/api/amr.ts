@@ -118,6 +118,35 @@ export async function getAmrStands() {
   return data.stands
 }
 
+/** Per-robot lock metadata stored in `amr_robots`. Locked robots are excluded from `submitMission.robotIds`. */
+export type AmrRobotLockRow = {
+  robotId: string
+  locked: boolean
+  /** ISO timestamp set when the robot was locked; cleared on unlock. */
+  lockedAt: string | null
+  /** User id that flipped the lock on. */
+  lockedBy: string | null
+  notes: string | null
+}
+
+/** Returns every persisted lock row (locked + previously-touched). Active fleet rows come from `robotQuery`. */
+export async function listAmrRobotLocks() {
+  const { data } = await api.get<{ robots: AmrRobotLockRow[] }>('/amr/robots')
+  return data.robots
+}
+
+/** Sets / clears the lock flag on a robot. Locking blocks new fleet `submitMission` assignment. */
+export async function setAmrRobotLock(
+  robotId: string,
+  body: { locked: boolean; notes?: string | null }
+) {
+  const { data } = await api.put<{ robot: AmrRobotLockRow }>(
+    `/amr/robots/${encodeURIComponent(robotId)}/lock`,
+    body
+  )
+  return data.robot
+}
+
 export async function createAmrStand(body: Record<string, unknown>) {
   const { data } = await api.post<Record<string, unknown>>('/amr/dc/stands', body)
   return data

@@ -58,6 +58,8 @@ export function AmrAttentionBanner() {
   const [terminateStuckBusy, setTerminateStuckBusy] = useState(false)
   const [forceReleaseConfirmOpen, setForceReleaseConfirmOpen] = useState(false)
   const [palletPresenceBypassRefs, setPalletPresenceBypassRefs] = useState(() => new Set<string>())
+  /** Hyperion must report empty (`false`) before Release is enabled — mirrors mission modals. */
+  const [releaseDisabledUntilStandEmpty, setReleaseDisabledUntilStandEmpty] = useState(false)
 
   useEffect(() => {
     if (!canAmr) return
@@ -112,7 +114,8 @@ export function AmrAttentionBanner() {
     canManage &&
     !releaseBusy &&
     !cancelBusy &&
-    !terminateStuckBusy
+    !terminateStuckBusy &&
+    !releaseDisabledUntilStandEmpty
   const cancelBannerEnabled =
     Boolean(soleSessionId) &&
     soleStatus === 'awaiting_continue' &&
@@ -128,8 +131,58 @@ export function AmrAttentionBanner() {
     if (!soleSessionId) return undefined
     if (!canManage) return 'Mission management permission required'
     if (soleStatus !== 'awaiting_continue') return 'Release is only available when waiting to continue'
+    if (releaseDisabledUntilStandEmpty)
+      return 'Release stays off until Hyperion reports the next drop stand as empty'
     return undefined
   })()
+
+  useEffect(() => {
+    if (!soleSessionId || soleStatus !== 'awaiting_continue') {
+      setReleaseDisabledUntilStandEmpty(false)
+      return
+    }
+    let cancelled = false
+    const tick = async () => {
+      if (cancelled) return
+      try {
+        const settings = await getAmrSettings()
+        if (cancelled) return
+        if (settings.missionCreateStandPresenceSanityCheck === false) {
+          setReleaseDisabledUntilStandEmpty(false)
+          return
+        }
+        const ms = await getAmrMultistopSession(soleSessionId)
+        if (cancelled) return
+        const session = (ms.session ?? {}) as Record<string, unknown>
+        const nextSeg = sessionNextSegmentIndex(session)
+        const planRaw = session.plan_json ?? session.planJson
+        const plan = parseMultistopReleasePlanDestinations(planRaw)
+        const ref =
+          Number.isFinite(nextSeg) && plan ? multistopContinueOccupiedDestinationRef(plan, nextSeg) : null
+        if (!ref || refBypassesPalletCheck(ref, palletPresenceBypassRefs)) {
+          setReleaseDisabledUntilStandEmpty(false)
+          return
+        }
+        const presence = await postStandPresence([ref])
+        if (cancelled) return
+        const v = presence[ref]
+        setReleaseDisabledUntilStandEmpty(v !== false)
+      } catch {
+        if (!cancelled) setReleaseDisabledUntilStandEmpty(false)
+      }
+    }
+    void tick()
+    const t = setInterval(tick, POLL_MS)
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void tick()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [soleSessionId, soleStatus, palletPresenceBypassRefs])
 
   useEffect(() => {
     setReleaseErr(null)

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { amrFleetProxy } from '@/api/amr'
-import { getAmrSettings } from '@/api/amr'
+import {
+  amrFleetProxy,
+  getAmrSettings,
+  listAmrRobotLocks,
+  setAmrRobotLock,
+  type AmrRobotLockRow,
+} from '@/api/amr'
+import { useAuthStore } from '@/store/authStore'
 import { isRobotOffMapStatus, robotStatusChipClass, robotStatusFriendly } from '@/utils/amrRobotStatus'
 
 type RobotRow = Record<string, unknown>
@@ -170,24 +176,69 @@ function RobotCardChevron() {
   )
 }
 
-function RobotGridCard({ row, onSelect }: { row: RobotRow; onSelect: () => void }) {
+/** Inline "Locked" chip — tagged on cards plus the picker so the lock state is visible alongside live fleet status. */
+function LockedChip() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-orange-500/45 bg-orange-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300"
+      title="Locked from new fleet missions"
+    >
+      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 11v2m-5 4h10a2 2 0 002-2v-5a2 2 0 00-2-2H7a2 2 0 00-2 2v5a2 2 0 002 2zm8-8V7a3 3 0 10-6 0v2"
+        />
+      </svg>
+      Locked
+    </span>
+  )
+}
+
+function RobotGridCard({
+  row,
+  locked,
+  canLock,
+  lockBusy,
+  onSelect,
+  onToggleLock,
+}: {
+  row: RobotRow
+  locked: boolean
+  canLock: boolean
+  lockBusy: boolean
+  onSelect: () => void
+  onToggleLock: () => void
+}) {
   const id = String(row.robotId ?? '')
   const model = String(row.robotType ?? '').trim()
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="group relative flex w-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-gradient-to-b from-card via-card to-muted/15 text-left shadow-sm ring-offset-background transition duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    <div
+      className={`group relative flex w-full flex-col overflow-hidden rounded-2xl border bg-gradient-to-b from-card via-card to-muted/15 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${
+        locked ? 'border-orange-500/55 hover:border-orange-500/70' : 'border-border/80 hover:border-primary/35'
+      }`}
     >
       <span
-        className="pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full bg-gradient-to-b from-primary/70 via-primary/45 to-primary/15"
+        className={`pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full ${
+          locked
+            ? 'bg-gradient-to-b from-orange-500/85 via-orange-400/55 to-orange-500/20'
+            : 'bg-gradient-to-b from-primary/70 via-primary/45 to-primary/15'
+        }`}
         aria-hidden
       />
-      <div className="flex flex-1 flex-col p-4 pl-5">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex flex-1 flex-col p-4 pl-5 text-left ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground/45">Robot</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground/45">Robot</p>
+              {locked ? <LockedChip /> : null}
+            </div>
             <p className="mt-0.5 truncate font-mono text-base font-semibold tracking-tight text-foreground">{id}</p>
             {model ? (
               <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-foreground/65" title={model}>
@@ -210,11 +261,36 @@ function RobotGridCard({ row, onSelect }: { row: RobotRow; onSelect: () => void 
             <RobotCardBatteryStrip level={row.batteryLevel} />
           </div>
         </div>
+      </button>
+      <div className="flex items-center justify-between gap-2 border-t border-border/40 bg-muted/25 px-3 py-2 text-[11px] font-medium text-foreground/45 transition group-hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={onSelect}
+          className="text-[11px] font-medium text-foreground/45 hover:text-foreground/70"
+        >
+          View details
+        </button>
+        {canLock ? (
+          <button
+            type="button"
+            onClick={onToggleLock}
+            disabled={lockBusy}
+            className={`inline-flex min-h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+              locked
+                ? 'border-orange-500/50 bg-orange-500/10 text-orange-700 hover:bg-orange-500/15 dark:text-orange-300'
+                : 'border-border bg-background text-foreground/75 hover:bg-muted'
+            }`}
+            title={
+              locked
+                ? 'Allow this robot to receive new fleet missions'
+                : 'Block this robot from receiving new fleet missions'
+            }
+          >
+            {lockBusy ? '…' : locked ? 'Unlock' : 'Lock'}
+          </button>
+        ) : null}
       </div>
-      <div className="border-t border-border/40 bg-muted/25 px-4 py-2 text-center text-[11px] font-medium text-foreground/45 transition group-hover:bg-muted/40 group-hover:text-foreground/60">
-        View details
-      </div>
-    </button>
+    </div>
   )
 }
 
@@ -353,6 +429,10 @@ export function AmrRobots() {
   const [err, setErr] = useState('')
   const [detail, setDetail] = useState<RobotRow | null>(null)
   const [pollMs, setPollMs] = useState(5000)
+  const [lockRows, setLockRows] = useState<AmrRobotLockRow[]>([])
+  const [lockBusyId, setLockBusyId] = useState<string | null>(null)
+  const [lockErr, setLockErr] = useState('')
+  const canLock = useAuthStore((s) => s.hasPermission('amr.robots.lock'))
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -370,10 +450,14 @@ export function AmrRobots() {
     const showSpinner = opts?.showSpinner === true
     if (showSpinner) setLoading(true)
     try {
-      const data = await amrFleetProxy('robotQuery', { robotId: '', robotType: '' })
+      const [data, locks] = await Promise.all([
+        amrFleetProxy('robotQuery', { robotId: '', robotType: '' }),
+        listAmrRobotLocks().catch(() => [] as AmrRobotLockRow[]),
+      ])
       if (!mountedRef.current) return
       const body = data as { data?: RobotRow[] }
       setRows(Array.isArray(body?.data) ? body.data : [])
+      setLockRows(locks)
       setErr('')
     } catch {
       if (mountedRef.current) setErr('Failed to load robots')
@@ -388,20 +472,107 @@ export function AmrRobots() {
     return () => clearInterval(t)
   }, [pollMs, loadRobots])
 
-  const visibleRows = useMemo(() => rows.filter((r) => !isRobotOffMapStatus(r.status)), [rows])
+  const lockedSet = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of lockRows) {
+      if (r.locked) s.add(r.robotId)
+    }
+    return s
+  }, [lockRows])
 
+  /**
+   * Off-map robots (status 1) stay hidden. Exception: locked + departure is surfaced only when the user
+   * has `amr.robots.lock` so they can unlock; without that permission keep the legacy hide-them rule.
+   * Same for synthetic rows for locks absent from fleet — only operators who can unlock need those rows.
+   */
+  const visibleRows = useMemo(() => {
+    const liveIds = new Set<string>()
+    const out: RobotRow[] = []
+    for (const r of rows) {
+      const id = String(r.robotId ?? '').trim()
+      liveIds.add(id)
+      const allowLockedOffMapException = canLock && lockedSet.has(id)
+      if (!isRobotOffMapStatus(r.status) || allowLockedOffMapException) out.push(r)
+    }
+    if (canLock) {
+      /** Locked robots the live fleet didn't report — synthetic row only so someone with lock perm can unlock. */
+      for (const id of lockedSet) {
+        if (!liveIds.has(id)) out.push({ robotId: id, status: '', batteryLevel: null, robotType: '' })
+      }
+    }
+    return out
+  }, [rows, lockedSet, canLock])
+
+  const toggleLock = useCallback(
+    async (robotId: string, nextLocked: boolean) => {
+      const id = robotId.trim()
+      if (!id) return
+      setLockBusyId(id)
+      setLockErr('')
+      const prev = lockRows
+      setLockRows((cur) => {
+        const idx = cur.findIndex((r) => r.robotId === id)
+        if (idx >= 0) {
+          const copy = cur.slice()
+          copy[idx] = { ...copy[idx], locked: nextLocked }
+          return copy
+        }
+        return [
+          ...cur,
+          { robotId: id, locked: nextLocked, lockedAt: null, lockedBy: null, notes: null },
+        ]
+      })
+      try {
+        const updated = await setAmrRobotLock(id, { locked: nextLocked })
+        if (!mountedRef.current) return
+        setLockRows((cur) => {
+          const idx = cur.findIndex((r) => r.robotId === id)
+          if (idx >= 0) {
+            const copy = cur.slice()
+            copy[idx] = updated
+            return copy
+          }
+          return [...cur, updated]
+        })
+      } catch {
+        if (!mountedRef.current) return
+        setLockRows(prev)
+        setLockErr(`Failed to ${nextLocked ? 'lock' : 'unlock'} ${id}.`)
+      } finally {
+        if (mountedRef.current) setLockBusyId(null)
+      }
+    },
+    [lockRows]
+  )
+
+  /**
+   * Unlocked robots are grouped by fleet status first; locked robots render last in “Locked from missions”
+   * so live status sections stay primary when scanning the page.
+   */
   const statusSections = useMemo(() => {
+    const lockedSection: RobotRow[] = []
     const byKey = new Map<number | 'none', RobotRow[]>()
     for (const r of visibleRows) {
+      const id = String(r.robotId ?? '').trim()
+      if (lockedSet.has(id)) {
+        lockedSection.push(r)
+        continue
+      }
       const key = statusCategoryKey(r.status)
       const list = byKey.get(key)
       if (list) list.push(r)
       else byKey.set(key, [r])
     }
     for (const list of byKey.values()) list.sort(compareRobotsByName)
+    lockedSection.sort(compareRobotsByName)
     const keys = sortedStatusCategoryKeys(new Set(byKey.keys()))
-    return keys.map((k) => ({ key: k, heading: categoryHeading(k), rows: byKey.get(k)! }))
-  }, [visibleRows])
+    const out: { key: number | 'none' | 'locked'; heading: string; rows: RobotRow[] }[] = []
+    for (const k of keys) out.push({ key: k, heading: categoryHeading(k), rows: byKey.get(k)! })
+    if (lockedSection.length > 0) {
+      out.push({ key: 'locked', heading: 'Locked from missions', rows: lockedSection })
+    }
+    return out
+  }, [visibleRows, lockedSet])
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -410,7 +581,8 @@ export function AmrRobots() {
           <h1 className="text-xl font-semibold tracking-tight">Robots</h1>
           <p className="mt-1 text-sm text-foreground/70">
             Live data from robotQuery (polls while this page is open). Robots with status 1 are not on the map and are
-            omitted here. The list is grouped by status and sorted alphabetically by robot id.
+            omitted unless they are locked and you have permission to lock or unlock robots.{' '}
+            {canLock ? 'Use Lock to block a robot from receiving new missions.' : ''}
           </p>
         </div>
         <button
@@ -421,6 +593,14 @@ export function AmrRobots() {
           Refresh
         </button>
       </div>
+      {lockErr ? (
+        <p
+          role="alert"
+          className="rounded-md border border-red-500/40 bg-red-500/[0.09] px-3 py-2 text-sm text-red-950 dark:text-red-50"
+        >
+          {lockErr}
+        </p>
+      ) : null}
       {loading ? (
         <p className="text-sm text-foreground/60">Loading…</p>
       ) : err ? (
@@ -440,13 +620,21 @@ export function AmrRobots() {
                 </span>
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {sectionRows.map((r, i) => (
-                  <RobotGridCard
-                    key={robotSortName(r) !== '' ? robotSortName(r) : `row-${String(key)}-${i}`}
-                    row={r}
-                    onSelect={() => setDetail(r)}
-                  />
-                ))}
+                {sectionRows.map((r, i) => {
+                  const id = String(r.robotId ?? '').trim()
+                  const locked = lockedSet.has(id)
+                  return (
+                    <RobotGridCard
+                      key={robotSortName(r) !== '' ? robotSortName(r) : `row-${String(key)}-${i}`}
+                      row={r}
+                      locked={locked}
+                      canLock={canLock}
+                      lockBusy={lockBusyId === id}
+                      onSelect={() => setDetail(r)}
+                      onToggleLock={() => void toggleLock(id, !locked)}
+                    />
+                  )
+                })}
               </div>
             </section>
           ))}

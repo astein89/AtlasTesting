@@ -10,9 +10,12 @@ import {
   terminateStuckAmrMultistopSession,
 } from '@/api/amr'
 import { AmrAutoContinueCountdown } from '@/components/amr/AmrAutoContinueCountdown'
+import { AmrStandOccupiedContinueModal } from '@/components/amr/AmrStandOccupiedContinueModal'
+import { AmrStandPresenceRow } from '@/components/amr/AmrStandPresenceRow'
 import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
 import { MissionJobStatusBadge } from '@/components/amr/MissionJobStatusBadge'
 import {
+  flattenGroupedMissionRow,
   friendlyMultistopSessionStatus,
   headRecordForMissionDetail,
   isChainedMultistopGroup,
@@ -24,6 +27,7 @@ import { useAuthStore } from '@/store/authStore'
 import { ConfirmModal } from '@/components/ui/ConfirmModal'
 import {
   multistopContinueOccupiedDestinationRef,
+  multistopContinueReleaseDisabledUntilStandShowsEmpty,
   multistopStandOccupiedContinueMessage,
   parseMultistopReleasePlanDestinations,
   refBypassesPalletCheck,
@@ -76,17 +80,25 @@ type PlanDest = {
   position: string
   continueMode?: 'manual' | 'auto'
   autoContinueSeconds?: number
+  /** Fleet arrival NODE at this destination; final segment treated as Lower in UI. */
+  putDown?: boolean
 }
 
 type ParsedSessionPlan = {
   destinations: PlanDest[]
   pickupContinue?: { continueMode: 'manual' | 'auto'; autoContinueSeconds?: number }
+  /** Per-segment fleet putDown at first NODE_POINT (Depart). */
+  segmentFirstNodePutDown?: boolean[]
 }
 
 function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
   if (typeof planJson !== 'string' || !planJson.trim()) return null
   try {
-    const o = JSON.parse(planJson) as { destinations?: unknown; pickupContinue?: unknown }
+    const o = JSON.parse(planJson) as {
+      destinations?: unknown
+      pickupContinue?: unknown
+      segmentFirstNodePutDown?: unknown
+    }
     if (!Array.isArray(o.destinations)) return null
     const out: PlanDest[] = []
     for (const x of o.destinations) {
@@ -100,6 +112,7 @@ function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
           ? row.autoContinueSeconds
           : Number(row.autoContinueSeconds)
       const entry: PlanDest = { position, continueMode: cm }
+      if (typeof row.putDown === 'boolean') entry.putDown = row.putDown
       if (cm === 'auto' && Number.isFinite(n) && n >= 0) {
         entry.autoContinueSeconds = Math.min(Math.max(0, Math.floor(n)), 86400)
       }
@@ -124,7 +137,17 @@ function parseSessionPlan(planJson: unknown): ParsedSessionPlan | null {
         pickupContinue = { continueMode: 'manual' }
       }
     }
-    return pickupContinue ? { destinations: out, pickupContinue } : { destinations: out }
+    let segmentFirstNodePutDown: boolean[] | undefined
+    if (Array.isArray(o.segmentFirstNodePutDown)) {
+      segmentFirstNodePutDown = o.segmentFirstNodePutDown.map((x) => x === true || x === 'true')
+    }
+    const base: ParsedSessionPlan = pickupContinue
+      ? { destinations: out, pickupContinue }
+      : { destinations: out }
+    if (segmentFirstNodePutDown && segmentFirstNodePutDown.length > 0) {
+      base.segmentFirstNodePutDown = segmentFirstNodePutDown
+    }
+    return base
   } catch {
     return null
   }
@@ -168,20 +191,49 @@ function segmentLegEndpoints(
 
 type LegBucket = 'completed' | 'current' | 'next_continue' | 'upcoming' | 'done'
 
-function segmentBucket(i: number, st: string, nextSeg: number, _total: number): LegBucket {
+/** Matches worker `CLOSE_MISSION_ROW_STATUS` — row still open on Warning (50) even if session already advanced. */
+const FLEET_STATUSES_CLOSED_MISSION_ROW = new Set([30, 31, 35])
+
+function isMissionRecordFleetClosed(rec: MissionRecordRow | undefined): boolean {
+  if (!rec) return false
+  const wc = rec.worker_closed ?? (rec as { workerClosed?: unknown }).workerClosed
+  if (wc === true) return true
+  if (wc === false || wc === null || wc === undefined) {
+    /* continue */
+  } else if (typeof wc === 'string') {
+    const t = wc.trim().toLowerCase()
+    if (t === '1' || t === 'true') return true
+    const n = Number(wc.trim())
+    if (Number.isFinite(n) && n === 1) return true
+  } else {
+    const n = Number(wc)
+    if (Number.isFinite(n) && n === 1) return true
+  }
+  const ls = rec.last_status ?? (rec as { lastStatus?: unknown }).lastStatus
+  const statusNum = typeof ls === 'number' && Number.isFinite(ls) ? ls : Number(ls)
+  return Number.isFinite(statusNum) && FLEET_STATUSES_CLOSED_MISSION_ROW.has(statusNum)
+}
+
+function segmentBucket(
+  i: number,
+  st: string,
+  nextSeg: number,
+  _total: number,
+  rec: MissionRecordRow | undefined
+): LegBucket {
   if (st === 'completed' || st === 'cancelled') return 'done'
   if (st === 'failed') {
-    if (i < nextSeg) return 'completed'
+    if (i < nextSeg) return isMissionRecordFleetClosed(rec) ? 'completed' : 'upcoming'
     return 'upcoming'
   }
   if (st === 'awaiting_continue') {
-    if (i < nextSeg) return 'completed'
+    if (i < nextSeg) return isMissionRecordFleetClosed(rec) ? 'completed' : 'current'
     if (i === nextSeg) return 'next_continue'
     return 'upcoming'
   }
   if (st === 'active') {
     if (nextSeg <= 0) return 'upcoming'
-    if (i < nextSeg - 1) return 'completed'
+    if (i < nextSeg - 1) return isMissionRecordFleetClosed(rec) ? 'completed' : 'upcoming'
     if (i === nextSeg - 1) return 'current'
     return 'upcoming'
   }
@@ -241,6 +293,7 @@ export function AmrMultistopSummaryModal({
   const [msErr, setMsErr] = useState<string | null>(null)
   /** Set when pallet-at-stand blocks continue (client check or API 409 STAND_OCCUPIED). */
   const [continueBlockedStandRef, setContinueBlockedStandRef] = useState<string | null>(null)
+  const [standOccupiedModalDismissed, setStandOccupiedModalDismissed] = useState(false)
   /** Hyperion snapshot for {@link continueBlockedStandRef} while destination-not-empty is shown. */
   const [blockedDestPresence, setBlockedDestPresence] = useState<boolean | null>(null)
   const [blockedDestPresenceLoading, setBlockedDestPresenceLoading] = useState(false)
@@ -255,26 +308,34 @@ export function AmrMultistopSummaryModal({
   /** Only show session loading when switching sessions; silent refetch when list polling bumps the head record. */
   const prevFetchedMultistopSessionIdRef = useRef<string | null>(null)
   const [palletPresenceBypassRefs, setPalletPresenceBypassRefs] = useState(() => new Set<string>())
+  const [standPresenceMap, setStandPresenceMap] = useState<Record<string, boolean | null>>({})
+  const [standPresenceLoading, setStandPresenceLoading] = useState(false)
+  const [standPresenceError, setStandPresenceError] = useState(false)
+  const [standPresenceUnconfig, setStandPresenceUnconfig] = useState(false)
+  /** Same auto-refresh cadence as Containers / Mission New / Stand Picker — sourced from AMR settings. */
+  const [pollMsContainers, setPollMsContainers] = useState(5000)
+  const [standPresenceSanityOn, setStandPresenceSanityOn] = useState(true)
 
   useEffect(() => {
     void getAmrStands().then((rows) => setPalletPresenceBypassRefs(standRefsBypassingPalletCheck(rows)))
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    void getAmrSettings().then((s) => {
+      if (cancelled) return
+      setPollMsContainers(Math.max(3000, s.pollMsContainers))
+      setStandPresenceSanityOn(s.missionCreateStandPresenceSanityCheck !== false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const sessionId = group ? group.sessionId.trim() : ''
-  const rolledUp = useMemo(() => {
+  const rolledUp = useMemo((): MissionRecordRow | null => {
     if (!group?.head || !group?.latest) return null
-    const latest = group.latest
-    const head = group.head
-    return {
-      ...head,
-      last_status: latest.last_status,
-      worker_closed: latest.worker_closed,
-      finalized: latest.finalized,
-      updated_at: latest.updated_at,
-      multistop_session_id: group.sessionId,
-      multistop_segment_count: group.segmentCount,
-      multistop_session_status: head.multistop_session_status ?? latest.multistop_session_status,
-    } as MissionRecordRow
+    return flattenGroupedMissionRow(group) as MissionRecordRow
   }, [group])
 
   useEffect(() => {
@@ -369,6 +430,37 @@ export function AmrMultistopSummaryModal({
       ? continueNotBeforeRaw.trim()
       : null
 
+  /** Same parsing as Continue — session plan includes `putDown` per segment (route card UI plan does not). */
+  const continuePlanForOccupiedRef = useMemo(() => {
+    const raw = msData?.session != null ? (msData.session as Record<string, unknown>).plan_json ?? (msData.session as Record<string, unknown>).planJson : undefined
+    return parseMultistopReleasePlanDestinations(raw)
+  }, [msData?.session])
+
+  const nextContinueOccupiedCheckRef = useMemo(() => {
+    if (!continuePlanForOccupiedRef || !Number.isFinite(nextSeg)) return null
+    return multistopContinueOccupiedDestinationRef(continuePlanForOccupiedRef, nextSeg)
+  }, [continuePlanForOccupiedRef, nextSeg])
+
+  const continueReleaseDisabledUntilStandEmpty = useMemo(
+    () =>
+      multistopContinueReleaseDisabledUntilStandShowsEmpty({
+        sanityEnabled: standPresenceSanityOn,
+        nextOccupiedCheckRef: nextContinueOccupiedCheckRef,
+        bypassRefs: palletPresenceBypassRefs,
+        presenceMap: standPresenceMap,
+        routePresenceUnconfig: standPresenceUnconfig,
+        routePresenceError: standPresenceError,
+      }),
+    [
+      standPresenceSanityOn,
+      nextContinueOccupiedCheckRef,
+      palletPresenceBypassRefs,
+      standPresenceMap,
+      standPresenceUnconfig,
+      standPresenceError,
+    ]
+  )
+
   /** Leg that is in progress or waiting for Continue — scroll this into view in the route list. */
   const focusLegIndex = useMemo(() => {
     const legCount = totalSeg > 0 ? totalSeg : plan?.length ?? 0
@@ -376,11 +468,99 @@ export function AmrMultistopSummaryModal({
     const indices = Array.from({ length: legCount }, (_, i) => i)
     const totalOrFallback = totalSeg || indices.length
     for (const i of indices) {
-      const b = segmentBucket(i, stForBuckets, nextSeg, totalOrFallback)
+      const b = segmentBucket(i, stForBuckets, nextSeg, totalOrFallback, recordByStep.get(i))
       if (b === 'current' || b === 'next_continue') return i
     }
     return indices[indices.length - 1] ?? null
-  }, [rolledUp, totalSeg, plan, stForBuckets, nextSeg])
+  }, [rolledUp, totalSeg, plan, stForBuckets, nextSeg, recordByStep])
+
+  /** Stand refs used as From/To across every visible leg card — drives `postStandPresence` queries. */
+  const legStandRefs = useMemo(() => {
+    const legCount = totalSeg > 0 ? totalSeg : plan?.length ?? 0
+    if (legCount === 0) return [] as string[]
+    const set = new Set<string>()
+    for (let i = 0; i < legCount; i += 1) {
+      const { start, end } = segmentLegEndpoints(i, plan, pickupPos)
+      const a = start.trim()
+      const b = end.trim()
+      if (a && a !== '—') set.add(a)
+      if (b && b !== '—') set.add(b)
+    }
+    return [...set].sort()
+  }, [totalSeg, plan, pickupPos])
+
+  const legStandRefsKey = legStandRefs.join('\0')
+
+  /** Next Continue stand + stand-occupied dialog ref — always included in auto-refresh. */
+  const presencePollRefs = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of legStandRefs) {
+      const t = r.trim()
+      if (t) set.add(t)
+    }
+    const nc = nextContinueOccupiedCheckRef?.trim()
+    if (nc) set.add(nc)
+    const cb = continueBlockedStandRef?.trim()
+    if (cb) set.add(cb)
+    return [...set].sort()
+  }, [legStandRefsKey, nextContinueOccupiedCheckRef, continueBlockedStandRef])
+
+  const presencePollRefsKey = presencePollRefs.join('\0')
+
+  const loadPresenceForRefs = useCallback(
+    async (refs: string[], opts?: { silent?: boolean }) => {
+      if (refs.length === 0) return
+      const silent = opts?.silent === true
+      if (!silent) {
+        setStandPresenceLoading(true)
+        setStandPresenceError(false)
+        setStandPresenceUnconfig(false)
+      }
+      try {
+        const map = await postStandPresence(refs)
+        setStandPresenceMap((prev) => {
+          const next = { ...prev }
+          for (const r of refs) {
+            next[r] = Object.prototype.hasOwnProperty.call(map, r) ? map[r] : null
+          }
+          return next
+        })
+        setStandPresenceError(false)
+        setStandPresenceUnconfig(false)
+      } catch (e: unknown) {
+        if (silent) return
+        const status = (e as { response?: { status?: number } })?.response?.status
+        if (status === 503) setStandPresenceUnconfig(true)
+        else setStandPresenceError(true)
+      } finally {
+        if (!silent) setStandPresenceLoading(false)
+      }
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (presencePollRefs.length === 0) return
+    void loadPresenceForRefs(presencePollRefs, { silent: true })
+  }, [presencePollRefsKey, loadPresenceForRefs, presencePollRefs])
+
+  useEffect(() => {
+    if (presencePollRefs.length === 0) return
+    const tid = window.setInterval(() => {
+      void loadPresenceForRefs(presencePollRefs, { silent: true })
+    }, pollMsContainers)
+    return () => clearInterval(tid)
+  }, [presencePollRefsKey, loadPresenceForRefs, presencePollRefs, pollMsContainers])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return
+      if (presencePollRefs.length === 0) return
+      void loadPresenceForRefs(presencePollRefs, { silent: true })
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [presencePollRefsKey, loadPresenceForRefs, presencePollRefs])
 
   const focusLegRef = useRef<HTMLLIElement | null>(null)
   const didScrollOnOpenRef = useRef(false)
@@ -497,23 +677,32 @@ export function AmrMultistopSummaryModal({
     }
   }
 
-  const loadBlockedDestinationPresence = useCallback(async () => {
+  const loadBlockedDestinationPresence = useCallback(async (opts?: { silent?: boolean }) => {
     const ref = continueBlockedStandRef?.trim()
     if (!ref) return
-    setBlockedDestPresenceLoading(true)
-    setBlockedDestPresenceError(false)
-    setBlockedDestPresenceUnconfig(false)
+    const silent = opts?.silent === true
+    if (!silent) {
+      setBlockedDestPresenceLoading(true)
+      setBlockedDestPresenceError(false)
+      setBlockedDestPresenceUnconfig(false)
+    }
     try {
       const p = await postStandPresence([ref])
       const v = p[ref]
       setBlockedDestPresence(typeof v === 'boolean' ? v : null)
+      if (!silent) {
+        setBlockedDestPresenceError(false)
+        setBlockedDestPresenceUnconfig(false)
+      }
     } catch (e: unknown) {
       const status = (e as { response?: { status?: number } })?.response?.status
-      if (status === 503) setBlockedDestPresenceUnconfig(true)
-      else setBlockedDestPresenceError(true)
-      setBlockedDestPresence(null)
+      if (!silent) {
+        if (status === 503) setBlockedDestPresenceUnconfig(true)
+        else setBlockedDestPresenceError(true)
+        setBlockedDestPresence(null)
+      }
     } finally {
-      setBlockedDestPresenceLoading(false)
+      if (!silent) setBlockedDestPresenceLoading(false)
     }
   }, [continueBlockedStandRef])
 
@@ -528,7 +717,36 @@ export function AmrMultistopSummaryModal({
     void loadBlockedDestinationPresence()
   }, [continueBlockedStandRef, loadBlockedDestinationPresence])
 
+  useEffect(() => {
+    const ref = continueBlockedStandRef?.trim()
+    if (!ref) return
+    const tid = window.setInterval(() => {
+      void loadBlockedDestinationPresence({ silent: true })
+    }, pollMsContainers)
+    return () => clearInterval(tid)
+  }, [continueBlockedStandRef, loadBlockedDestinationPresence, pollMsContainers])
+
+  useEffect(() => {
+    if (!continueBlockedStandRef?.trim()) return
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return
+      void loadBlockedDestinationPresence({ silent: true })
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [continueBlockedStandRef, loadBlockedDestinationPresence])
+
+  useEffect(() => {
+    setStandOccupiedModalDismissed(false)
+  }, [continueBlockedStandRef])
+
+  /** Matches footer “Release Mission” / “Release now” for the stand-occupied dialog primary action. */
+  const standOccupiedReleaseRetryLabel = continueNotBeforeIso ? 'Release now' : 'Release Mission'
+
   if (!group || !rolledUp) return null
+
+  const hideStandOccupiedInlineAlert =
+    Boolean(continueBlockedStandRef) && !standOccupiedModalDismissed
 
   const payload = parsePayload(rolledUp)
   const payloadRobotIds = submitRobotIdsFromPayload(payload)
@@ -580,6 +798,35 @@ export function AmrMultistopSummaryModal({
         className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg sm:max-h-[90vh] sm:max-w-xl"
         onClick={(e) => e.stopPropagation()}
       >
+        <AmrStandOccupiedContinueModal
+          open={Boolean(continueBlockedStandRef) && !standOccupiedModalDismissed}
+          standRef={continueBlockedStandRef ?? ''}
+          message={
+            msErr ??
+            (continueBlockedStandRef
+              ? multistopStandOccupiedContinueMessage(continueBlockedStandRef)
+              : 'Stand occupied.')
+          }
+          presence={{
+            present: blockedDestPresence,
+            loading: blockedDestPresenceLoading,
+            error: blockedDestPresenceError,
+            unconfigured: blockedDestPresenceUnconfig,
+          }}
+          canForceRelease={canForceRelease}
+          continueBusy={continueBusy}
+          confirmDisabled={
+            cancelBusy || terminateStuckBusy || continueReleaseDisabledUntilStandEmpty
+          }
+          retryLabel={standOccupiedReleaseRetryLabel}
+          onDismiss={() => setStandOccupiedModalDismissed(true)}
+          onRetry={() => void onContinue()}
+          onRefreshPresence={() => void loadBlockedDestinationPresence()}
+          onRequestForceRelease={() => {
+            setStandOccupiedModalDismissed(true)
+            setForceReleaseConfirmOpen(true)
+          }}
+        />
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
           <div className="min-w-0 flex-1">
             <p
@@ -648,11 +895,42 @@ export function AmrMultistopSummaryModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
           <section className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground/55">Route stops</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground/55">Route stops</h3>
+              <div className="flex items-center gap-2">
+                {standPresenceUnconfig ? (
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    Hyperion not configured
+                  </span>
+                ) : standPresenceError ? (
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    Stand status error
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={presencePollRefs.length === 0 || standPresenceLoading}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground/80 hover:bg-muted disabled:opacity-50"
+                  onClick={() => void loadPresenceForRefs(presencePollRefs)}
+                  title="Refresh pallet presence for route stands and the next Continue destination"
+                >
+                  {standPresenceLoading ? 'Refreshing…' : 'Refresh stands'}
+                </button>
+              </div>
+            </div>
             {pickupPos ? (
               <div className="space-y-1">
                 <p className="text-sm text-foreground/80">
                   Pickup: <span className="font-mono">{pickupPos}</span>
+                  {parsedPlan?.segmentFirstNodePutDown != null &&
+                  parsedPlan.segmentFirstNodePutDown.length > 0 ? (
+                    <>
+                      <span className="text-foreground/35"> &gt; </span>
+                      <span className="text-[10px] font-semibold uppercase text-foreground/75">
+                        {parsedPlan.segmentFirstNodePutDown[0] === true ? 'LOWER' : 'LIFT'}
+                      </span>
+                    </>
+                  ) : null}
                 </p>
                 {parsedPlan?.pickupContinue ? (
                   <p className="text-xs text-foreground/65">{formatPickupRelease(parsedPlan.pickupContinue)}</p>
@@ -665,11 +943,13 @@ export function AmrMultistopSummaryModal({
             ) : null}
             <ul className="space-y-2">
               {legIndices.map((i) => {
-                const bucket = segmentBucket(i, stForBuckets, nextSeg, totalSeg || legIndices.length)
+                const bucket = segmentBucket(i, stForBuckets, nextSeg, totalSeg || legIndices.length, recordByStep.get(i))
                 const { start, end } = segmentLegEndpoints(i, plan, pickupPos)
                 const rec = recordByStep.get(i)
                 const destCount = plan?.length ?? legIndices.length
                 const isLastStop = destCount > 0 && i === destCount - 1
+                const departLower = parsedPlan?.segmentFirstNodePutDown?.[i] === true
+                const arriveLower = isLastStop ? true : plan?.[i]?.putDown === true
                 return (
                   <li
                     key={i}
@@ -698,13 +978,28 @@ export function AmrMultistopSummaryModal({
                             <MissionJobStatusBadge value={rec.last_status as number} />
                           ) : null}
                         </div>
-                        <p className="break-all font-mono text-xs leading-relaxed text-foreground/85">
-                          <span className="text-foreground/50">From </span>
-                          {start}
-                          <span className="mx-1 text-foreground/35">→</span>
-                          <span className="text-foreground/50">To </span>
-                          {end}
-                        </p>
+                        <div className="space-y-1">
+                          <AmrStandPresenceRow
+                            label="From"
+                            standRef={start}
+                            presenceMap={standPresenceMap}
+                            loading={standPresenceLoading}
+                            error={standPresenceError}
+                            unconfigured={standPresenceUnconfig}
+                            bypassRefs={palletPresenceBypassRefs}
+                            forkAction={departLower ? 'lower' : 'lift'}
+                          />
+                          <AmrStandPresenceRow
+                            label="To"
+                            standRef={end}
+                            presenceMap={standPresenceMap}
+                            loading={standPresenceLoading}
+                            error={standPresenceError}
+                            unconfigured={standPresenceUnconfig}
+                            bypassRefs={palletPresenceBypassRefs}
+                            forkAction={arriveLower ? 'lower' : 'lift'}
+                          />
+                        </div>
                         {rec?.job_code ? (
                           <p className="font-mono text-[10px] text-foreground/55">{String(rec.job_code)}</p>
                         ) : null}
@@ -741,7 +1036,7 @@ export function AmrMultistopSummaryModal({
         </div>
 
         <div className="shrink-0 border-t border-border bg-card px-4 py-4 sm:px-5">
-          {msErr ? (
+          {msErr && !hideStandOccupiedInlineAlert ? (
             <div
               role="alert"
               aria-live="assertive"
@@ -780,7 +1075,12 @@ export function AmrMultistopSummaryModal({
                   </div>
                   <button
                     type="button"
-                    disabled={continueBusy || cancelBusy || terminateStuckBusy}
+                    disabled={
+                      continueBusy ||
+                      cancelBusy ||
+                      terminateStuckBusy ||
+                      continueReleaseDisabledUntilStandEmpty
+                    }
                     className="min-h-[40px] w-full rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 sm:w-auto"
                     onClick={() => void onContinue()}
                   >
@@ -880,7 +1180,18 @@ export function AmrMultistopSummaryModal({
               ) : null}
               <button
                 type="button"
-                disabled={!continueEnabled || continueBusy || cancelBusy || terminateStuckBusy}
+                disabled={
+                  !continueEnabled ||
+                  continueBusy ||
+                  cancelBusy ||
+                  terminateStuckBusy ||
+                  continueReleaseDisabledUntilStandEmpty
+                }
+                title={
+                  continueReleaseDisabledUntilStandEmpty
+                    ? 'Release stays off until Hyperion reports the next drop stand as empty'
+                    : undefined
+                }
                 className="min-h-[44px] w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-foreground hover:bg-amber-500/15 disabled:opacity-50 dark:border-amber-500/35 sm:w-auto"
                 onClick={() => void onContinue()}
               >

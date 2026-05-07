@@ -19,7 +19,20 @@ type Props = {
   error?: string | null
   /** Re-fetch robot list (e.g. same rate as Robots page / AMR settings). */
   onRefresh?: () => void
+  /**
+   * Defensive backstop: rows whose id is in this set are filtered out before render,
+   * so a stale parent `rows` snapshot can never surface a locked robot in the picker.
+   */
+  lockedIds?: Set<string>
+  /**
+   * Invoked when the user activates “Robots page” (closes nested modals + navigates in the host).
+   * A plain SPA `Link` is not enough while the global New Mission dialog stays mounted.
+   */
+  onGoToRobotsManage?: () => void
 }
+
+const ROBOTS_PAGE_LINK_BTN =
+  'inline cursor-pointer border-0 bg-transparent p-0 font-inherit text-inherit underline decoration-from-font rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
 
 function PickRobotBatteryStrip({ pct }: { pct: number | null }) {
   if (pct == null) {
@@ -45,15 +58,23 @@ export function AmrRobotSelectModal({
   loading,
   error,
   onRefresh,
+  lockedIds,
+  onGoToRobotsManage,
 }: Props) {
   const [local, setLocal] = useState<Set<string>>(() => new Set())
 
+  /** Drop locked ids defensively, even if the parent forgot to filter them out of `rows`. */
+  const visibleRows = useMemo(() => {
+    if (!lockedIds || lockedIds.size === 0) return rows
+    return rows.filter((r) => !lockedIds.has(r.id))
+  }, [rows, lockedIds])
+
   useEffect(() => {
     if (!open) return
-    setLocal(new Set(selectedIds))
-  }, [open, selectedIds])
+    setLocal(new Set(selectedIds.filter((id) => !lockedIds?.has(id))))
+  }, [open, selectedIds, lockedIds])
 
-  const allIds = useMemo(() => rows.map((r) => r.id).filter(Boolean), [rows])
+  const allIds = useMemo(() => visibleRows.map((r) => r.id).filter(Boolean), [visibleRows])
 
   if (!open) return null
 
@@ -68,6 +89,30 @@ export function AmrRobotSelectModal({
 
   const selectAll = () => setLocal(new Set(allIds))
   const clearAll = () => setLocal(new Set())
+
+  const lockedCount = lockedIds?.size ?? 0
+  const robotsLink = onGoToRobotsManage ? (
+    <button
+      type="button"
+      className={`${ROBOTS_PAGE_LINK_BTN} hover:text-orange-700 dark:hover:text-orange-200`}
+      onClick={onGoToRobotsManage}
+    >
+      Robots page
+    </button>
+  ) : (
+    <span className="font-medium">Robots page</span>
+  )
+  const robotsLinkRed = onGoToRobotsManage ? (
+    <button
+      type="button"
+      className={`${ROBOTS_PAGE_LINK_BTN} hover:text-red-700 dark:hover:text-red-200`}
+      onClick={onGoToRobotsManage}
+    >
+      Robots page
+    </button>
+  ) : (
+    <span className="font-medium">Robots page</span>
+  )
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/50 p-4 sm:items-center">
@@ -103,15 +148,29 @@ export function AmrRobotSelectModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          {!loading && !error && lockedCount > 0 && visibleRows.length > 0 ? (
+            <p
+              role="status"
+              className="mb-3 rounded-md border border-orange-500/40 bg-orange-500/10 px-2.5 py-1.5 text-xs leading-snug text-orange-900 dark:text-orange-100"
+            >
+              <span className="font-medium">{lockedCount} robot(s) locked.</span> Only active unlocked robots receive new
+              missions. Manage locks on the {robotsLink}.
+            </p>
+          ) : null}
           {loading ? (
             <p className="text-sm text-foreground/60">Loading robots…</p>
           ) : error ? (
             <p className="text-sm text-red-600">{error}</p>
-          ) : rows.length === 0 ? (
+          ) : visibleRows.length === 0 && lockedCount > 0 ? (
+            <p className="text-sm text-red-700 dark:text-red-300">
+              Every active fleet robot matching this picker is locked. Unlock at least one on the {robotsLinkRed}, or{' '}
+              refresh after changes.
+            </p>
+          ) : visibleRows.length === 0 ? (
             <p className="text-sm text-foreground/60">No active robots reported by the fleet.</p>
           ) : (
             <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
-              {rows.map((r) => {
+              {visibleRows.map((r) => {
                 const { label, code } = robotStatusFriendly(r.status)
                 const chipCls = robotStatusChipClass(code)
                 const checked = local.has(r.id)
@@ -198,7 +257,7 @@ export function AmrRobotSelectModal({
             <button
               type="button"
               className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
-              disabled={rows.length === 0}
+              disabled={visibleRows.length === 0}
               onClick={selectAll}
             >
               Select all

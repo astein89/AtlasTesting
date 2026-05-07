@@ -365,6 +365,16 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
     updated_at TEXT,
     FOREIGN KEY (created_by) REFERENCES users(id)
   )`,
+  `CREATE TABLE IF NOT EXISTS amr_robots (
+    robot_id TEXT PRIMARY KEY,
+    locked INTEGER NOT NULL DEFAULT 0,
+    locked_at TEXT,
+    locked_by TEXT,
+    notes TEXT,
+    updated_at TEXT,
+    FOREIGN KEY (locked_by) REFERENCES users(id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_robots_locked ON amr_robots(locked)`,
 ]
 
 export async function initSchemaPg(db: AsyncDbWrapper): Promise<void> {

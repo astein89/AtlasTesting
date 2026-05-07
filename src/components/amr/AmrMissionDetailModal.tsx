@@ -26,6 +26,7 @@ import {
   patchAmrMultistopSession,
   postStandPresence,
   terminateStuckAmrMultistopSession,
+  type AmrStandPickerMode,
   type ZoneCategory,
 } from '@/api/amr'
 import { getApiErrorMessage, parseMultistopContinueStandOccupied } from '@/api/client'
@@ -37,12 +38,18 @@ import {
   LocationPinIcon,
   type AmrStandPickerRow,
 } from '@/components/amr/AmrStandPickerModal'
+import { AmrStandOccupiedContinueModal } from '@/components/amr/AmrStandOccupiedContinueModal'
+import { AmrStandPresenceRow } from '@/components/amr/AmrStandPresenceRow'
 import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/amr/PalletPresenceGlyph'
 import { amrPath } from '@/lib/appPaths'
 import { friendlyMultistopSessionStatus } from '@/utils/amrMultistopDisplay'
+
+const emptyStandPresenceBypass = new Set<string>()
 import {
   multistopContinueOccupiedDestinationRef,
+  multistopContinueReleaseDisabledUntilStandShowsEmpty,
   multistopStandOccupiedContinueMessage,
+  parseMultistopReleasePlanDestinations,
   refBypassesPalletCheck,
   standRefsBypassingPalletCheck,
   type MultistopReleasePlanDest,
@@ -52,6 +59,26 @@ import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 
 export type AmrMissionRecordRow = Record<string, unknown>
+
+/**
+ * Prefer live `GET …/multistop/:id` session row; fall back to mission-list JOIN (`multistop_session_status`) so route
+ * actions stay enabled while session loads or if the session object omits `status`.
+ */
+function multistopSessionStatusFromSources(
+  session: Record<string, unknown> | undefined | null,
+  record: AmrMissionRecordRow | null
+): string | null {
+  if (session) {
+    const raw = session.status ?? session.Status
+    if (raw != null && String(raw).trim()) return String(raw).trim()
+  }
+  if (!record) return null
+  const r =
+    record.multistop_session_status ??
+    (record as { multistopSessionStatus?: unknown }).multistopSessionStatus
+  if (r != null && String(r).trim()) return String(r).trim()
+  return null
+}
 
 function parsePayload(record: AmrMissionRecordRow): Record<string, unknown> | null {
   const raw = record.mission_payload_json
@@ -199,14 +226,16 @@ function planToDraft(plan: MultistopPlanDest[]): DraftDest[] {
   return plan.map((d) => ({ ...d, id: uuidv4() }))
 }
 
-function formatPalletAtStopReadOnly(
+/** Fleet fork at segment end (arrival at To). */
+function arriveForkAction(
   row: MultistopPlanDest,
   segmentIndexInPlan: number,
   totalDestinations: number
-): string {
-  if (totalDestinations < 1) return 'At stop: —'
-  if (segmentIndexInPlan >= totalDestinations - 1) return 'At stop: Drop pallet (final)'
-  return row.putDown === true ? 'At stop: Drop pallet' : 'At stop: Pickup pallet'
+): 'lower' | 'lift' {
+  if (totalDestinations < 1) return 'lift'
+  const lower =
+    segmentIndexInPlan >= totalDestinations - 1 ? true : row.putDown === true
+  return lower ? 'lower' : 'lift'
 }
 
 function formatReleaseAfterStopReadOnly(
@@ -365,6 +394,24 @@ function planEditSnapshot(
   })
 }
 
+type RouteStandPresenceSlice = {
+  map: Record<string, boolean | null>
+  loading: boolean
+  error: boolean
+  unconfigured: boolean
+  bypassRefs: Set<string>
+}
+
+/** Hyperion reports a pallet at the leg destination (To) — matches stand-occupied modal emphasis. */
+function destinationStandReadsOccupied(legEnd: string, standPresence?: RouteStandPresenceSlice): boolean {
+  if (!standPresence) return false
+  const ref = legEnd.trim()
+  if (!ref || ref === '—') return false
+  if (standPresence.unconfigured || standPresence.error) return false
+  if (refBypassesPalletCheck(ref, standPresence.bypassRefs)) return false
+  return standPresence.map[ref] === true
+}
+
 function SortableTailDestCard({
   row,
   tailSlot,
@@ -373,10 +420,13 @@ function SortableTailDestCard({
   totalStops,
   legStart,
   legEnd,
+  standPresence,
   legToolbar,
   sortableDisabled,
   segmentIndexInPlan,
   totalDestinations,
+  warnDestinationOccupied,
+  departPutDown,
 }: {
   row: DraftDest
   /** 1 = next fleet leg (first in tail); drives highlight vs later stops. */
@@ -387,6 +437,8 @@ function SortableTailDestCard({
   totalStops: number
   legStart: string
   legEnd: string
+  /** When set, show stacked From/To + pallet presence like Mission Overview. */
+  standPresence?: RouteStandPresenceSlice
   /** Edit / Remove — editing opens the route stop modal. */
   legToolbar?: {
     editLabel: string
@@ -399,8 +451,23 @@ function SortableTailDestCard({
   /** 0-based index in full destination list; release timing applies before next leg except final stop. */
   segmentIndexInPlan?: number
   totalDestinations?: number
+  /**
+   * Red “stand occupied / unable to dispatch” treatment applies only when DC is waiting for Continue
+   * (`awaiting_continue`). Hide while a segment is **active** so in-flight work does not look like a release block.
+   */
+  warnDestinationOccupied?: boolean
+  /** Fleet putDown at first NODE_POINT of this segment (Depart). */
+  departPutDown: boolean
 }) {
+  const fromFork: 'lower' | 'lift' = departPutDown ? 'lower' : 'lift'
+  const toFork =
+    typeof segmentIndexInPlan === 'number' && typeof totalDestinations === 'number'
+      ? arriveForkAction(row, segmentIndexInPlan, totalDestinations)
+      : 'lift'
   const isNext = tailSlot === 1
+  const destOccupied =
+    warnDestinationOccupied !== false &&
+    destinationStandReadsOccupied(legEnd, standPresence)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: row.id,
     disabled: sortableDisabled === true,
@@ -414,13 +481,49 @@ function SortableTailDestCard({
           <p className="text-xs font-semibold tabular-nums text-foreground">
             Stop {stopNum} of {totalStops}
           </p>
-          <p className="mt-1.5 break-all font-mono text-sm leading-normal text-foreground/85">
-            <span className="text-foreground/50">Start </span>
-            {legStart}
-            <span className="mx-1.5 text-foreground/30">→</span>
-            <span className="text-foreground/50">End </span>
-            {legEnd}
-          </p>
+          {standPresence ? (
+            <div className="mt-1.5 space-y-1">
+              <AmrStandPresenceRow
+                label="From"
+                standRef={legStart}
+                presenceMap={standPresence.map}
+                loading={standPresence.loading}
+                error={standPresence.error}
+                unconfigured={standPresence.unconfigured}
+                bypassRefs={standPresence.bypassRefs}
+                forkAction={fromFork}
+              />
+              <AmrStandPresenceRow
+                label="To"
+                standRef={legEnd}
+                presenceMap={standPresence.map}
+                loading={standPresence.loading}
+                error={standPresence.error}
+                unconfigured={standPresence.unconfigured}
+                bypassRefs={standPresence.bypassRefs}
+                forkAction={toFork}
+              />
+            </div>
+          ) : (
+            <div className="mt-1.5 space-y-1 text-sm leading-normal text-foreground/85">
+              <p className="break-all font-mono">
+                <span className="text-foreground/50">From </span>
+                {legStart}
+                <span className="text-foreground/35"> &gt; </span>
+                <span className="font-sans text-[10px] font-semibold uppercase text-foreground/75">
+                  {fromFork === 'lower' ? 'LOWER' : 'LIFT'}
+                </span>
+              </p>
+              <p className="break-all font-mono">
+                <span className="text-foreground/50">To </span>
+                {legEnd}
+                <span className="text-foreground/35"> &gt; </span>
+                <span className="font-sans text-[10px] font-semibold uppercase text-foreground/75">
+                  {toFork === 'lower' ? 'LOWER' : 'LIFT'}
+                </span>
+              </p>
+            </div>
+          )}
         </div>
         {legToolbar ? (
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -451,14 +554,29 @@ function SortableTailDestCard({
     <div
       ref={setNodeRef}
       style={style}
+      aria-invalid={destOccupied ? true : undefined}
       className={`rounded-lg border p-3 ${
-        showGrip ? 'grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-2 items-start' : 'flex flex-col gap-2'
+        showGrip
+          ? 'grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-2 gap-y-2 items-start'
+          : 'flex flex-col gap-2'
       } ${
-        isNext
-          ? 'border-primary/45 bg-primary/8 ring-1 ring-primary/20'
-          : 'border-border/80 bg-muted/15'
+        destOccupied
+          ? 'border-red-500/45 bg-red-500/10 ring-1 ring-red-500/25 dark:border-red-500/40 dark:bg-red-950/35'
+          : isNext
+            ? 'border-primary/45 bg-primary/8 ring-1 ring-primary/20'
+            : 'border-border/80 bg-muted/15'
       } ${isDragging ? 'z-[5] opacity-95 shadow-md' : ''}`}
     >
+      {destOccupied ? (
+        <p
+          role="alert"
+          className={`text-base font-semibold leading-snug text-red-600 dark:text-red-400 ${
+            showGrip ? 'col-span-2' : ''
+          }`}
+        >
+          {multistopStandOccupiedContinueMessage(legEnd)}
+        </p>
+      ) : null}
       {showGrip ? (
         <button
           type="button"
@@ -481,14 +599,9 @@ function SortableTailDestCard({
       <div className="min-w-0 flex flex-col gap-2">
         {stopHeading}
         {typeof segmentIndexInPlan === 'number' && typeof totalDestinations === 'number' ? (
-          <>
-            <p className="mt-2 text-xs text-foreground/65">
-              {formatPalletAtStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
-            </p>
-            <p className="mt-1 text-xs text-foreground/65">
-              {formatReleaseAfterStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
-            </p>
-          </>
+          <p className="mt-2 text-xs text-foreground/65">
+            {formatReleaseAfterStopReadOnly(row, segmentIndexInPlan, totalDestinations)}
+          </p>
         ) : null}
       </div>
     </div>
@@ -521,7 +634,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   } | null>(null)
   const [msLoading, setMsLoading] = useState(false)
   const [msErr, setMsErr] = useState<string | null>(null)
+  /** Set when Continue throws from the API — not when we block early for stand occupied (client pre-check). */
+  const [continueApiFailed, setContinueApiFailed] = useState(false)
   const [continueBlockedStandRef, setContinueBlockedStandRef] = useState<string | null>(null)
+  const [standOccupiedModalDismissed, setStandOccupiedModalDismissed] = useState(false)
   const [blockedDestPresence, setBlockedDestPresence] = useState<boolean | null>(null)
   const [blockedDestPresenceLoading, setBlockedDestPresenceLoading] = useState(false)
   const [blockedDestPresenceError, setBlockedDestPresenceError] = useState(false)
@@ -538,6 +654,14 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const [draftSegFirstPutDown, setDraftSegFirstPutDown] = useState<boolean[]>([])
   const [savedPlanSnapshot, setSavedPlanSnapshot] = useState('')
   const [planEditErr, setPlanEditErr] = useState<string | null>(null)
+
+  /** Whole-route stand refs for Hyperion presence — matches Mission Overview (`pollMsContainers` auto-refresh). */
+  const [routeStandPresenceMap, setRouteStandPresenceMap] = useState<Record<string, boolean | null>>({})
+  const [routeStandPresenceLoading, setRouteStandPresenceLoading] = useState(false)
+  const [routeStandPresenceError, setRouteStandPresenceError] = useState(false)
+  const [routeStandPresenceUnconfig, setRouteStandPresenceUnconfig] = useState(false)
+  const [pollMsContainers, setPollMsContainers] = useState(5000)
+  const [standPresenceSanityOn, setStandPresenceSanityOn] = useState(true)
 
   const [standRows, setStandRows] = useState<AmrStandPickerRow[]>([])
   const palletPresenceBypassRefs = useMemo(() => standRefsBypassingPalletCheck(standRows), [standRows])
@@ -624,6 +748,8 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     )
     void getAmrSettings().then((s) => {
       setZoneCategories(Array.isArray(s.zoneCategories) ? s.zoneCategories : [])
+      setPollMsContainers(Math.max(3000, s.pollMsContainers))
+      setStandPresenceSanityOn(s.missionCreateStandPresenceSanityCheck !== false)
     })
   }, [])
 
@@ -640,6 +766,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       prevFetchedMultistopSessionIdRef.current = null
       setMsData(null)
       setMsErr(null)
+      setContinueApiFailed(false)
       setContinueBlockedStandRef(null)
       setDraftDestinations(null)
       setDraftPickupContinue(null)
@@ -653,6 +780,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       setMsLoading(true)
     }
     setMsErr(null)
+    setContinueApiFailed(false)
     setContinueBlockedStandRef(null)
     let cancelled = false
     void getAmrMultistopSession(sessionId)
@@ -743,6 +871,156 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
       planEditSnapshot(draftDestinations, draftPickupContinue, draftSegFirstPutDown) !== savedPlanSnapshot
     )
   }, [draftDestinations, draftPickupContinue, draftSegFirstPutDown, savedPlanSnapshot])
+
+  const pickupPos = useMemo(() => {
+    if (msData?.session?.pickup_position != null) return String(msData.session.pickup_position)
+    return null
+  }, [msData?.session?.pickup_position])
+
+  const routePlanStandRefs = useMemo(() => {
+    if (!sessionId || !planPlainForLegLabels?.length) return [] as string[]
+    const set = new Set<string>()
+    const n = planPlainForLegLabels.length
+    for (let i = 0; i < n; i += 1) {
+      const { start, end } = segmentLegEndpoints(i, planPlainForLegLabels, pickupPos)
+      const a = start.trim()
+      const b = end.trim()
+      if (a && a !== '—') set.add(a)
+      if (b && b !== '—') set.add(b)
+    }
+    return [...set].sort()
+  }, [sessionId, planPlainForLegLabels, pickupPos])
+
+  const routePlanStandRefsKey = routePlanStandRefs.join('\0')
+
+  const planForContinueOccupiedRef = useMemo((): MultistopReleasePlanDest[] | null => {
+    if (draftDestinations?.length) {
+      return normalizeDraftPutDownRows(draftDestinations).map((r) => ({
+        position: r.position.trim(),
+        putDown: r.putDown === true,
+      }))
+    }
+    return parseMultistopReleasePlanDestinations(msData?.session?.plan_json)
+  }, [draftDestinations, msData?.session?.plan_json])
+
+  const nextContinueOccupiedCheckRef = useMemo(() => {
+    if (!planForContinueOccupiedRef?.length || !Number.isFinite(nextSegmentIndex)) return null
+    return multistopContinueOccupiedDestinationRef(planForContinueOccupiedRef, nextSegmentIndex)
+  }, [planForContinueOccupiedRef, nextSegmentIndex])
+
+  /** Includes next Continue drop + blocked stand so release gating and maps stay fresh while polling. */
+  const presencePollStandRefs = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of routePlanStandRefs) {
+      const t = r.trim()
+      if (t) set.add(t)
+    }
+    const nc = nextContinueOccupiedCheckRef?.trim()
+    if (nc) set.add(nc)
+    const cb = continueBlockedStandRef?.trim()
+    if (cb) set.add(cb)
+    return [...set].sort()
+  }, [routePlanStandRefsKey, nextContinueOccupiedCheckRef, continueBlockedStandRef])
+
+  const presencePollStandRefsKey = presencePollStandRefs.join('\0')
+
+  const continueReleaseDisabledUntilStandEmpty = useMemo(
+    () =>
+      multistopContinueReleaseDisabledUntilStandShowsEmpty({
+        sanityEnabled: standPresenceSanityOn,
+        nextOccupiedCheckRef: nextContinueOccupiedCheckRef,
+        bypassRefs: palletPresenceBypassRefs,
+        presenceMap: routeStandPresenceMap,
+        routePresenceUnconfig: routeStandPresenceUnconfig,
+        routePresenceError: routeStandPresenceError,
+      }),
+    [
+      standPresenceSanityOn,
+      nextContinueOccupiedCheckRef,
+      palletPresenceBypassRefs,
+      routeStandPresenceMap,
+      routeStandPresenceUnconfig,
+      routeStandPresenceError,
+    ]
+  )
+
+  const loadRoutePlanPresence = useCallback(
+    async (refs: string[], opts?: { silent?: boolean }) => {
+      if (refs.length === 0) return
+      const silent = opts?.silent === true
+      if (!silent) {
+        setRouteStandPresenceLoading(true)
+        setRouteStandPresenceError(false)
+        setRouteStandPresenceUnconfig(false)
+      }
+      try {
+        const map = await postStandPresence(refs)
+        setRouteStandPresenceMap((prev) => {
+          const next = { ...prev }
+          for (const r of refs) {
+            next[r] = Object.prototype.hasOwnProperty.call(map, r) ? map[r] : null
+          }
+          return next
+        })
+        setRouteStandPresenceError(false)
+        setRouteStandPresenceUnconfig(false)
+      } catch (e: unknown) {
+        if (silent) return
+        const status = (e as { response?: { status?: number } })?.response?.status
+        if (status === 503) setRouteStandPresenceUnconfig(true)
+        else setRouteStandPresenceError(true)
+      } finally {
+        if (!silent) setRouteStandPresenceLoading(false)
+      }
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (presencePollStandRefs.length === 0) return
+    void loadRoutePlanPresence(presencePollStandRefs, { silent: true })
+  }, [presencePollStandRefsKey, loadRoutePlanPresence, presencePollStandRefs])
+
+  useEffect(() => {
+    if (presencePollStandRefs.length === 0) return
+    const tid = window.setInterval(() => {
+      void loadRoutePlanPresence(presencePollStandRefs, { silent: true })
+    }, pollMsContainers)
+    return () => clearInterval(tid)
+  }, [presencePollStandRefsKey, loadRoutePlanPresence, presencePollStandRefs, pollMsContainers])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return
+      if (presencePollStandRefs.length === 0) return
+      void loadRoutePlanPresence(presencePollStandRefs, { silent: true })
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [presencePollStandRefsKey, loadRoutePlanPresence, presencePollStandRefs])
+
+  const routeStandPresenceUi = useMemo(
+    () =>
+      sessionId && msData && planPlainForLegLabels && planPlainForLegLabels.length > 0
+        ? {
+            map: routeStandPresenceMap,
+            loading: routeStandPresenceLoading,
+            error: routeStandPresenceError,
+            unconfigured: routeStandPresenceUnconfig,
+            bypassRefs: palletPresenceBypassRefs,
+          }
+        : undefined,
+    [
+      sessionId,
+      msData,
+      planPlainForLegLabels,
+      routeStandPresenceMap,
+      routeStandPresenceLoading,
+      routeStandPresenceError,
+      routeStandPresenceUnconfig,
+      palletPresenceBypassRefs,
+    ]
+  )
 
   const removeDraftRow = useCallback(
     (id: string) => {
@@ -981,8 +1259,33 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const showRouteModalPutDownToggle =
     routeStopModal?.mode === 'edit' && draftDestinations != null && !editStopIsFinal
 
-  const sessionStatus = msData?.session?.status != null ? String(msData.session.status) : null
+  /** Same mode logic as {@link AmrMissionNew} stand picker — pickup / dropoff / any by segment role and pallet toggle. */
+  const routeStopStandPickerMode = useMemo((): AmrStandPickerMode => {
+    if (!draftDestinations?.length || !routeStopModal) return 'dropoff'
+    if (routeStopModal.mode === 'add') return 'dropoff'
+    const idx = draftDestinations.findIndex((r) => r.id === routeStopModal.rowId)
+    if (idx < 0) return 'dropoff'
+    const total = draftDestinations.length
+    if (total === 1 || idx === 0) return 'dropoff'
+    if (idx >= total - 1) return 'dropoff'
+    const prev = draftDestinations[idx - 1]
+    const departDrop = prev?.putDown === true
+    const arriveDrop = routeStopPutDown
+    if (departDrop !== arriveDrop) return 'any'
+    return arriveDrop ? 'dropoff' : 'pickup'
+  }, [draftDestinations, routeStopModal, routeStopPutDown])
+
+  const sessionStatus = multistopSessionStatusFromSources(
+    msData?.session != null ? (msData.session as Record<string, unknown>) : null,
+    record
+  )
   const awaitingContinue = sessionStatus === 'awaiting_continue'
+  /** Show force release when Release cannot dispatch: API failure, failed session, occupied stand (sanity), or blocked ref. */
+  const showForceReleaseForMissionError =
+    sessionStatus === 'failed' ||
+    continueApiFailed ||
+    continueReleaseDisabledUntilStandEmpty ||
+    Boolean(continueBlockedStandRef?.trim())
   const continueNotBeforeRaw = msData?.session?.continue_not_before
   const continueNotBeforeIso =
     typeof continueNotBeforeRaw === 'string' && continueNotBeforeRaw.trim()
@@ -1019,23 +1322,32 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     return qs ? `${amrPath('logs')}?${qs}` : amrPath('logs')
   }, [record])
 
-  const loadBlockedDestinationPresence = useCallback(async () => {
+  const loadBlockedDestinationPresence = useCallback(async (opts?: { silent?: boolean }) => {
     const ref = continueBlockedStandRef?.trim()
     if (!ref) return
-    setBlockedDestPresenceLoading(true)
-    setBlockedDestPresenceError(false)
-    setBlockedDestPresenceUnconfig(false)
+    const silent = opts?.silent === true
+    if (!silent) {
+      setBlockedDestPresenceLoading(true)
+      setBlockedDestPresenceError(false)
+      setBlockedDestPresenceUnconfig(false)
+    }
     try {
       const p = await postStandPresence([ref])
       const v = p[ref]
       setBlockedDestPresence(typeof v === 'boolean' ? v : null)
+      if (!silent) {
+        setBlockedDestPresenceError(false)
+        setBlockedDestPresenceUnconfig(false)
+      }
     } catch (e: unknown) {
       const status = (e as { response?: { status?: number } })?.response?.status
-      if (status === 503) setBlockedDestPresenceUnconfig(true)
-      else setBlockedDestPresenceError(true)
-      setBlockedDestPresence(null)
+      if (!silent) {
+        if (status === 503) setBlockedDestPresenceUnconfig(true)
+        else setBlockedDestPresenceError(true)
+        setBlockedDestPresence(null)
+      }
     } finally {
-      setBlockedDestPresenceLoading(false)
+      if (!silent) setBlockedDestPresenceLoading(false)
     }
   }, [continueBlockedStandRef])
 
@@ -1050,7 +1362,36 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     void loadBlockedDestinationPresence()
   }, [continueBlockedStandRef, loadBlockedDestinationPresence])
 
+  useEffect(() => {
+    const ref = continueBlockedStandRef?.trim()
+    if (!ref) return
+    const tid = window.setInterval(() => {
+      void loadBlockedDestinationPresence({ silent: true })
+    }, pollMsContainers)
+    return () => clearInterval(tid)
+  }, [continueBlockedStandRef, loadBlockedDestinationPresence, pollMsContainers])
+
+  useEffect(() => {
+    if (!continueBlockedStandRef?.trim()) return
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return
+      void loadBlockedDestinationPresence({ silent: true })
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [continueBlockedStandRef, loadBlockedDestinationPresence])
+
+  useEffect(() => {
+    setStandOccupiedModalDismissed(false)
+  }, [continueBlockedStandRef])
+
+  /** Matches footer “Release Mission” / “Release now” wording for Retry in the stand-occupied dialog. */
+  const standOccupiedReleaseRetryLabel = continueNotBeforeIso ? 'Release now' : 'Release Mission'
+
   if (!record) return null
+
+  const hideStandOccupiedInlineAlert =
+    Boolean(continueBlockedStandRef) && !standOccupiedModalDismissed
 
   const payload = parsePayload(record)
   const steps = missionSteps(payload)
@@ -1066,10 +1407,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const updatedAt =
     typeof updatedRaw === 'string' || updatedRaw instanceof Date ? formatDateTime(updatedRaw as string | Date) : '—'
 
-  /** Continue / patch plan / reorder — only while waiting; show remaining route read-only while segment is active. */
-  const routeActionsEnabled = canManage && awaitingContinue
-  const pickupPos =
-    msData?.session?.pickup_position != null ? String(msData.session.pickup_position) : null
+  /** Plan patch, reorder, add/edit/remove stops — any time the multistop session is `active` or `awaiting_continue`. */
+  const routePlanEditable =
+    canManage && (sessionStatus === 'active' || sessionStatus === 'awaiting_continue')
 
   const lockedRobotFromSession =
     sessionId && msData?.session && typeof msData.session.locked_robot_id === 'string'
@@ -1112,6 +1452,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     if (!sessionId || !draftDestinations) return
     setContinueBusy(true)
     setMsErr(null)
+    setContinueApiFailed(false)
     setContinueBlockedStandRef(null)
     setPlanEditErr(null)
     try {
@@ -1135,10 +1476,12 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         }
       }
       await continueAmrMultistopSession(sessionId)
+      setContinueApiFailed(false)
       setContinueBlockedStandRef(null)
       setMsRefresh((n) => n + 1)
       onSessionUpdated?.()
     } catch (e: unknown) {
+      setContinueApiFailed(true)
       setMsErr(getApiErrorMessage(e, 'Continue failed'))
       setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
     } finally {
@@ -1147,20 +1490,23 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   }
 
   const onConfirmForceRelease = async () => {
-    if (!sessionId || !continueBlockedStandRef) return
+    if (!sessionId) return
     setForceReleaseConfirmOpen(false)
     setContinueBusy(true)
     setMsErr(null)
+    setContinueApiFailed(false)
     try {
       if (hasPlanChanges) {
         const ok = await persistPlanToServer()
         if (!ok) return
       }
       await continueAmrMultistopSession(sessionId, { forceRelease: true })
+      setContinueApiFailed(false)
       setContinueBlockedStandRef(null)
       setMsRefresh((n) => n + 1)
       onSessionUpdated?.()
     } catch (e: unknown) {
+      setContinueApiFailed(true)
       setMsErr(getApiErrorMessage(e, 'Force release failed'))
       setContinueBlockedStandRef(parseMultistopContinueStandOccupied(e))
     } finally {
@@ -1174,6 +1520,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
     if (!sessionId || !terminateStuckEnabled) return
     setTerminateStuckBusy(true)
     setMsErr(null)
+    setContinueApiFailed(false)
     try {
       await terminateStuckAmrMultistopSession(sessionId)
       setTerminateStuckConfirmOpen(false)
@@ -1197,6 +1544,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         ? Number(msData.session.total_segments)
         : planPlainForLegLabels?.length ?? msData?.records?.length ?? 0
 
+  const forceReleaseStandRefForConfirm =
+    (continueBlockedStandRef ?? nextContinueOccupiedCheckRef)?.trim() || null
+
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
@@ -1212,10 +1562,10 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
           title="Force release"
           variant="amber"
           message={
-            continueBlockedStandRef ? (
+            forceReleaseStandRefForConfirm ? (
               <span>
                 Hyperion still reports a pallet at stand{' '}
-                <span className="font-mono">{continueBlockedStandRef}</span>. Force only if the stand is actually
+                <span className="font-mono">{forceReleaseStandRefForConfirm}</span>. Force only if the stand is actually
                 clear or you accept the risk of a fleet conflict.
               </span>
             ) : (
@@ -1245,6 +1595,33 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
             if (!terminateStuckBusy) setTerminateStuckConfirmOpen(false)
           }}
           onConfirm={() => void onTerminateStuckSession()}
+        />
+        <AmrStandOccupiedContinueModal
+          open={Boolean(continueBlockedStandRef) && !standOccupiedModalDismissed}
+          standRef={continueBlockedStandRef ?? ''}
+          message={
+            msErr ??
+            (continueBlockedStandRef
+              ? multistopStandOccupiedContinueMessage(continueBlockedStandRef)
+              : 'Stand occupied.')
+          }
+          presence={{
+            present: blockedDestPresence,
+            loading: blockedDestPresenceLoading,
+            error: blockedDestPresenceError,
+            unconfigured: blockedDestPresenceUnconfig,
+          }}
+          canForceRelease={canForceRelease && showForceReleaseForMissionError}
+          continueBusy={continueBusy}
+          confirmDisabled={patchBusy || continueReleaseDisabledUntilStandEmpty}
+          retryLabel={standOccupiedReleaseRetryLabel}
+          onDismiss={() => setStandOccupiedModalDismissed(true)}
+          onRetry={() => void onContinue()}
+          onRefreshPresence={() => void loadBlockedDestinationPresence()}
+          onRequestForceRelease={() => {
+            setStandOccupiedModalDismissed(true)
+            setForceReleaseConfirmOpen(true)
+          }}
         />
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
           <div className="min-w-0 flex-1">
@@ -1297,16 +1674,44 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-2 text-foreground/70 hover:bg-background hover:text-foreground"
-            aria-label="Close"
-          >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            {sessionId && presencePollStandRefs.length > 0 ? (
+              <div className="flex max-w-[min(100vw-6rem,16rem)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-right sm:max-w-none">
+                {routeStandPresenceUnconfig ? (
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    Hyperion not configured
+                  </span>
+                ) : routeStandPresenceError ? (
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    Stand status error
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex shrink-0 items-center gap-2">
+              {sessionId && presencePollStandRefs.length > 0 ? (
+                <button
+                  type="button"
+                  disabled={routeStandPresenceLoading}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground/80 hover:bg-muted disabled:opacity-50"
+                  onClick={() => void loadRoutePlanPresence(presencePollStandRefs)}
+                  title="Refresh pallet presence for route stands and the next Continue destination"
+                >
+                  {routeStandPresenceLoading ? 'Refreshing…' : 'Refresh stands'}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={onClose}
+                className="shrink-0 rounded-lg p-2 text-foreground/70 hover:bg-background hover:text-foreground"
+                aria-label="Close"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
@@ -1316,7 +1721,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                 {chainMultistopRoute ? 'Multi-stop route' : 'Route'}
               </h3>
               {msLoading ? <p className="text-sm text-foreground/60">Loading session…</p> : null}
-              {msErr ? (
+              {msErr && !hideStandOccupiedInlineAlert ? (
                 <div
                   role="alert"
                   aria-live="assertive"
@@ -1355,13 +1760,15 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                       </div>
                       <button
                         type="button"
-                        disabled={continueBusy || patchBusy}
+                        disabled={
+                          continueBusy || patchBusy || continueReleaseDisabledUntilStandEmpty
+                        }
                         className="min-h-[40px] w-full rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 sm:w-auto"
                         onClick={() => void onContinue()}
                       >
                         Retry
                       </button>
-                      {canForceRelease ? (
+                      {canForceRelease && showForceReleaseForMissionError ? (
                         <button
                           type="button"
                           disabled={continueBusy || patchBusy}
@@ -1397,8 +1804,16 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                     <div className="space-y-2">
                       <p className="text-sm">
                         Pickup: <span className="font-mono">{pickupPos}</span>
+                        {draftSegFirstPutDown.length > 0 ? (
+                          <>
+                            <span className="text-foreground/35"> &gt; </span>
+                            <span className="text-[10px] font-semibold uppercase text-foreground/75">
+                              {draftSegFirstPutDown[0] === true ? 'LOWER' : 'LIFT'}
+                            </span>
+                          </>
+                        ) : null}
                       </p>
-                      {routeActionsEnabled && nextSegmentIndex === 0 && draftPickupContinue ? (
+                      {routePlanEditable && nextSegmentIndex === 0 && draftPickupContinue ? (
                         <div className="rounded-lg border border-border bg-muted/25 px-3 py-2">
                           <p className="text-xs font-medium text-foreground/75">Before first leg</p>
                           <div className="mt-2 flex items-center gap-3">
@@ -1462,6 +1877,14 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                         .map((rec) => {
                           const si = msStepIndex(rec)
                           const { start, end } = segmentLegEndpoints(si, planPlainForLegLabels, pickupPos)
+                          const completedDepart =
+                            draftSegFirstPutDown.length > si ? draftSegFirstPutDown[si] === true : false
+                          const completedArriveLower =
+                            draftDestinations &&
+                            draftDestinations.length > si &&
+                            (si >= draftDestinations.length - 1
+                              ? true
+                              : draftDestinations[si].putDown === true)
                           return (
                             <li
                               key={String(rec.id)}
@@ -1475,13 +1898,77 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                   <MissionJobStatusBadge value={rec.last_status as number} />
                                 ) : null}
                               </div>
-                              <p className="break-all font-mono text-sm leading-normal text-foreground/85">
-                                <span className="text-foreground/50">Start </span>
-                                {start}
-                                <span className="mx-1.5 text-foreground/30">→</span>
-                                <span className="text-foreground/50">End </span>
-                                {end}
-                              </p>
+                              {routeStandPresenceUi ? (
+                                <div className="space-y-1 pt-0.5">
+                                  <AmrStandPresenceRow
+                                    label="From"
+                                    standRef={start}
+                                    presenceMap={routeStandPresenceUi.map}
+                                    loading={routeStandPresenceUi.loading}
+                                    error={routeStandPresenceUi.error}
+                                    unconfigured={routeStandPresenceUi.unconfigured}
+                                    bypassRefs={routeStandPresenceUi.bypassRefs}
+                                    forkAction={
+                                      draftDestinations && draftDestinations.length > si
+                                        ? completedDepart
+                                          ? 'lower'
+                                          : 'lift'
+                                        : undefined
+                                    }
+                                  />
+                                  <AmrStandPresenceRow
+                                    label="To"
+                                    standRef={end}
+                                    presenceMap={routeStandPresenceUi.map}
+                                    loading={routeStandPresenceUi.loading}
+                                    error={routeStandPresenceUi.error}
+                                    unconfigured={routeStandPresenceUi.unconfigured}
+                                    bypassRefs={routeStandPresenceUi.bypassRefs}
+                                    forkAction={
+                                      draftDestinations && draftDestinations.length > si
+                                        ? Boolean(completedArriveLower)
+                                          ? 'lower'
+                                          : 'lift'
+                                        : undefined
+                                    }
+                                  />
+                                </div>
+                              ) : (
+                                <div className="space-y-1 pt-0.5">
+                                  <AmrStandPresenceRow
+                                    label="From"
+                                    standRef={start}
+                                    presenceMap={{}}
+                                    loading={false}
+                                    error={false}
+                                    unconfigured={false}
+                                    bypassRefs={emptyStandPresenceBypass}
+                                    forkAction={
+                                      draftDestinations && draftDestinations.length > si
+                                        ? completedDepart
+                                          ? 'lower'
+                                          : 'lift'
+                                        : undefined
+                                    }
+                                  />
+                                  <AmrStandPresenceRow
+                                    label="To"
+                                    standRef={end}
+                                    presenceMap={{}}
+                                    loading={false}
+                                    error={false}
+                                    unconfigured={false}
+                                    bypassRefs={emptyStandPresenceBypass}
+                                    forkAction={
+                                      draftDestinations && draftDestinations.length > si
+                                        ? Boolean(completedArriveLower)
+                                          ? 'lower'
+                                          : 'lift'
+                                        : undefined
+                                    }
+                                  />
+                                </div>
+                              )}
                             </li>
                           )
                         })}
@@ -1492,7 +1979,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                       <DndContext
                         sensors={sensors}
                         collisionDetection={closestCenter}
-                        onDragEnd={routeActionsEnabled ? handleTailDragEnd : undefined}
+                        onDragEnd={routePlanEditable ? handleTailDragEnd : undefined}
                       >
                         <SortableContext
                           items={tailDestRows.map((r) => r.id)}
@@ -1505,21 +1992,22 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                               </p>
                             </div>
 
-                            {!routeActionsEnabled && sessionStatus === 'active' ? (
+                            {routePlanEditable && sessionStatus === 'active' ? (
                               <p className="text-xs text-foreground/60">
-                                This stop is running. Continue, add stops, and route edits are available when the
-                                fleet finishes this stop and the session is waiting for the next step.
+                                A fleet segment is in progress. You can still change upcoming stops, add destinations,
+                                and save the plan; use Release when the session is waiting for the next leg.
                               </p>
                             ) : null}
-                            {!routeActionsEnabled && awaitingContinue && !canManage ? (
+                            {!routePlanEditable && (awaitingContinue || sessionStatus === 'active') && !canManage ? (
                               <p className="text-xs text-foreground/60">
-                                Continue and route edits require mission permission.
+                                Route edits and continue require mission management permission.
                               </p>
                             ) : null}
 
-                            {routeActionsEnabled ? (
+                            {routePlanEditable ? (
                               <div className="flex w-full min-w-0 flex-col gap-2">
-                                {continueNotBeforeIso &&
+                                {awaitingContinue &&
+                                continueNotBeforeIso &&
                                 autoContinueWaitMs != null &&
                                 autoContinueWaitMs > 0 ? (
                                   <p
@@ -1533,26 +2021,46 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     </span>
                                   </p>
                                 ) : null}
-                                <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3">
-                                <button
-                                  type="button"
-                                  disabled={continueBusy || patchBusy}
-                                  className="min-h-[44px] shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-foreground hover:bg-amber-500/15 disabled:opacity-50 dark:border-amber-500/35"
-                                  onClick={() => void onContinue()}
-                                >
-                                  {continueBusy
-                                    ? 'Releasing…'
-                                    : continueNotBeforeIso
-                                      ? 'Release now'
-                                      : 'Release Mission'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="min-h-[44px] shrink-0 text-sm font-medium text-primary underline underline-offset-2 hover:no-underline"
-                                  onClick={openAddStopModal}
-                                >
-                                  Add Stop
-                                </button>
+                                <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-3">
+                                  {awaitingContinue &&
+                                  canForceRelease &&
+                                  showForceReleaseForMissionError ? (
+                                    <button
+                                      type="button"
+                                      disabled={continueBusy || patchBusy}
+                                      title="Bypass empty-stand check — only if the stand is clear or you accept fleet risk"
+                                      className="min-h-[44px] shrink-0 rounded-lg border border-red-600/50 bg-background px-4 text-sm font-medium text-red-700 hover:bg-red-500/15 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/50"
+                                      onClick={() => setForceReleaseConfirmOpen(true)}
+                                    >
+                                      Force release…
+                                    </button>
+                                  ) : null}
+                                  {awaitingContinue ? (
+                                    <button
+                                      type="button"
+                                      disabled={continueBusy || patchBusy || continueReleaseDisabledUntilStandEmpty}
+                                      title={
+                                        continueReleaseDisabledUntilStandEmpty
+                                          ? 'Release stays off until Hyperion reports the next drop stand as empty'
+                                          : undefined
+                                      }
+                                      className="min-h-[44px] shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-foreground hover:bg-amber-500/15 disabled:opacity-50 dark:border-amber-500/35"
+                                      onClick={() => void onContinue()}
+                                    >
+                                      {continueBusy
+                                        ? 'Releasing…'
+                                        : continueNotBeforeIso
+                                          ? 'Release now'
+                                          : 'Release Mission'}
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="min-h-[44px] shrink-0 text-sm font-medium text-primary underline underline-offset-2 hover:no-underline"
+                                    onClick={openAddStopModal}
+                                  >
+                                    Add Stop
+                                  </button>
                                 </div>
                               </div>
                             ) : null}
@@ -1571,14 +2079,17 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                   tailSlot={i + 1}
                                   segmentIndexInPlan={si}
                                   totalDestinations={draftDestinations.length}
-                                  reorderable={routeActionsEnabled && tailDestRows.length > 1}
-                                  sortableDisabled={!routeActionsEnabled}
+                                  reorderable={routePlanEditable && tailDestRows.length > 1}
+                                  sortableDisabled={!routePlanEditable}
                                   stopNum={si + 1}
                                   totalStops={routeTotalStops}
                                   legStart={legStart}
                                   legEnd={legEnd}
+                                  warnDestinationOccupied={awaitingContinue && i === 0}
+                                  departPutDown={draftSegFirstPutDown[si] === true}
+                                  standPresence={routeStandPresenceUi}
                                   legToolbar={
-                                    routeActionsEnabled
+                                    routePlanEditable
                                       ? i === 0
                                         ? {
                                             editLabel: 'Edit',
@@ -1698,7 +2209,7 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
         <AmrStandPickerModal
           stands={standRows}
           stackOrder="aboveDialogs"
-          mode={routeStopPutDown ? 'dropoff' : 'pickup'}
+          mode={routeStopStandPickerMode}
           zoneCategories={zoneCategories}
           canOverride={canOverrideSpecial}
           onClose={() => setAddStopPickerOpen(false)}

@@ -83,6 +83,26 @@ export function refBypassesPalletCheck(ref: string | null | undefined, bypassRef
   return Boolean(r && bypassRefs.has(r))
 }
 
+/**
+ * When stand-presence sanity is on, disable Continue/Release until Hyperion reports empty (`false`)
+ * for the next continue destination stand — unless bypassed or presence integration is unavailable.
+ */
+export function multistopContinueReleaseDisabledUntilStandShowsEmpty(opts: {
+  sanityEnabled: boolean
+  nextOccupiedCheckRef: string | null
+  bypassRefs: Set<string>
+  presenceMap: Record<string, boolean | null>
+  routePresenceUnconfig: boolean
+  routePresenceError: boolean
+}): boolean {
+  if (!opts.sanityEnabled) return false
+  const ref = opts.nextOccupiedCheckRef?.trim() || null
+  if (!ref) return false
+  if (refBypassesPalletCheck(ref, opts.bypassRefs)) return false
+  if (opts.routePresenceUnconfig || opts.routePresenceError) return false
+  return opts.presenceMap[ref] !== false
+}
+
 export function shouldWarnFirstSegmentDropOccupied(
   legs: Array<{ position: string; putDown?: boolean }>,
   presence: Record<string, boolean>,

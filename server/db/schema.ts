@@ -266,6 +266,7 @@ export function initSchema(db: DbWrapper) {
   migrateAmrMissionRecordLockedRobot(db)
   migrateAmrStandsSpecialLocationFlags(db)
   migrateAmrStandsBypassPalletCheck(db)
+  migrateAmrRobots(db)
   migrateRolesGrantModuleAmr(db)
   migrateRolesAddAmrStandsOverrideSpecial(db)
   // Create indexes after migrations (test_runs may have had test_id before migrateRecordsToPlanDirect)
@@ -1334,6 +1335,26 @@ function migrateAmrStandsSpecialLocationFlags(db: DbWrapper) {
     if (!cols.includes('block_dropoff')) {
       db.run('ALTER TABLE amr_stands ADD COLUMN block_dropoff INTEGER NOT NULL DEFAULT 0')
     }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Per-robot lock state: locked robots are excluded from new fleet `submitMission` `robotIds`. */
+function migrateAmrRobots(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_robots (
+        robot_id TEXT PRIMARY KEY,
+        locked INTEGER NOT NULL DEFAULT 0,
+        locked_at TEXT,
+        locked_by TEXT,
+        notes TEXT,
+        updated_at TEXT,
+        FOREIGN KEY (locked_by) REFERENCES users(id)
+      )
+    `)
+    db.run('CREATE INDEX IF NOT EXISTS idx_amr_robots_locked ON amr_robots(locked)')
   } catch {
     // Ignore
   }

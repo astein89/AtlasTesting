@@ -21,11 +21,16 @@ export function AmrMissionNewModal({
   const canAmrApiDebug = useAuthStore((s) => s.hasPermission('amr.tools.dev'))
   const [missionError, setMissionError] = useState('')
   const [clearErrorsNonce, setClearErrorsNonce] = useState(0)
+  const [standsRefresh, setStandsRefresh] = useState<{ canRefresh: boolean; loading: boolean }>({
+    canRefresh: false,
+    loading: false,
+  })
 
   useEffect(() => {
     if (!open) {
       setMissionError('')
       setClearErrorsNonce(0)
+      setStandsRefresh({ canRefresh: false, loading: false })
     }
   }, [open])
 
@@ -58,6 +63,14 @@ export function AmrMissionNewModal({
             New Mission
           </h2>
           <div className="flex shrink-0 items-center justify-end gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              disabled={!standsRefresh.canRefresh || standsRefresh.loading}
+              className="inline-flex min-h-9 min-w-0 items-center justify-center rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 sm:min-h-[44px] sm:px-3 sm:text-sm md:px-4"
+              onClick={() => formRef.current?.refreshStands()}
+            >
+              {standsRefresh.loading ? 'Refreshing…' : 'Refresh stands'}
+            </button>
             {canAmrApiDebug ? (
               <button
                 type="button"
@@ -106,6 +119,7 @@ export function AmrMissionNewModal({
             onRequestClose={onClose}
             onMissionErrorChange={setMissionError}
             clearMissionErrorsNonce={clearErrorsNonce}
+            onMissionStandsRefreshState={setStandsRefresh}
           />
         </div>
       </div>

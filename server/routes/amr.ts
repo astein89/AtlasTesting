@@ -27,6 +27,12 @@ import {
 import { fetchStandPresenceFromHyperion } from '../lib/amrStandPresence.js'
 import { fleetJsonIndicatesSuccess, forwardAmrFleetRequest } from '../lib/amrFleet.js'
 import {
+  getLockedRobotIds,
+  listAmrRobotLockRows,
+  resolveActiveUnlockedRobotIds,
+  resolveSubmitRobotIds,
+} from '../lib/amrRobots.js'
+import {
   buildSegmentMissionData,
   continueNotBeforeDeferredFirstSegment,
   continueNotBeforeForAwaitingSession,
@@ -317,6 +323,98 @@ router.post(
       userId: req.user!.id,
     })
     res.status(fr.status).json(fr.json)
+  })
+)
+
+router.get(
+  '/robots',
+  authMiddleware,
+  requirePermission('module.amr'),
+  asyncRoute(async (_req, res) => {
+    const rows = await listAmrRobotLockRows(db)
+    res.json({ robots: rows })
+  })
+)
+
+router.put(
+  '/robots/:robotId/lock',
+  authMiddleware,
+  requirePermission('amr.robots.lock'),
+  asyncRoute(async (req: AuthRequest, res) => {
+    const robotId = String(req.params.robotId ?? '').trim()
+    if (!robotId) {
+      res.status(400).json({ error: 'robotId required' })
+      return
+    }
+    const body = (req.body ?? {}) as { locked?: unknown; notes?: unknown }
+    if (typeof body.locked !== 'boolean') {
+      res.status(400).json({ error: 'locked (boolean) required' })
+      return
+    }
+    const locked = body.locked
+    const notesRaw = typeof body.notes === 'string' ? body.notes.trim() : ''
+    const notes = notesRaw === '' ? null : notesRaw.slice(0, 500)
+    const ts = nowTs()
+    const userId = req.user!.id
+    const existing = (await db
+      .prepare('SELECT robot_id FROM amr_robots WHERE robot_id = ?')
+      .get(robotId)) as { robot_id?: string } | undefined
+    if (existing) {
+      await db
+        .prepare(
+          `UPDATE amr_robots
+             SET locked = ?,
+                 locked_at = ?,
+                 locked_by = ?,
+                 notes = ?,
+                 updated_at = ?
+           WHERE robot_id = ?`
+        )
+        .run(
+          locked ? 1 : 0,
+          locked ? ts : null,
+          locked ? userId : null,
+          notes,
+          ts,
+          robotId
+        )
+    } else {
+      await db
+        .prepare(
+          `INSERT INTO amr_robots (robot_id, locked, locked_at, locked_by, notes, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          robotId,
+          locked ? 1 : 0,
+          locked ? ts : null,
+          locked ? userId : null,
+          notes,
+          ts
+        )
+    }
+    const row = (await db
+      .prepare(
+        'SELECT robot_id, locked, locked_at, locked_by, notes FROM amr_robots WHERE robot_id = ?'
+      )
+      .get(robotId)) as
+      | {
+          robot_id?: string
+          locked?: number
+          locked_at?: string | null
+          locked_by?: string | null
+          notes?: string | null
+        }
+      | undefined
+    res.json({
+      robot: {
+        robotId,
+        locked: Number(row?.locked ?? 0) === 1,
+        lockedAt: row?.locked_at ?? null,
+        lockedBy: row?.locked_by ?? null,
+        notes: row?.notes ?? null,
+      },
+    })
   })
 )
 
@@ -959,6 +1057,20 @@ router.post(
       return
     }
 
+    const robotIdsResolution = await resolveSubmitRobotIds(cfg, db, b.robotIds, {
+      db,
+      source: 'rack-move',
+      missionRecordId,
+      userId: req.user!.id,
+    })
+    if (!robotIdsResolution.ok) {
+      res.status(robotIdsResolution.status).json({
+        error: robotIdsResolution.error,
+        code: robotIdsResolution.code,
+      })
+      return
+    }
+
     /** containerIn runs first; submitMission is the next fleet call (sequential, not parallel). */
     const submitPayload = {
       orgId: cfg.orgId,
@@ -969,7 +1081,7 @@ router.post(
       lockRobotAfterFinish: typeof b.lockRobotAfterFinish === 'string' ? b.lockRobotAfterFinish : 'false',
       unlockRobotId: typeof b.unlockRobotId === 'string' ? b.unlockRobotId : '',
       robotModels: cfg.robotModels,
-      robotIds: Array.isArray(b.robotIds) ? b.robotIds : cfg.robotIdsDefault,
+      robotIds: robotIdsResolution.robotIds,
       missionData: sortedForSubmit,
       /** Same physical container as containerIn — fleet must not treat each submitMission as a new load. */
       containerCode,
@@ -1164,8 +1276,10 @@ router.patch(
       res.status(404).json({ error: 'Session not found' })
       return
     }
-    if (row.status !== 'awaiting_continue') {
-      res.status(409).json({ error: 'Plan can only be edited while waiting to continue' })
+    if (row.status !== 'awaiting_continue' && row.status !== 'active') {
+      res.status(409).json({
+        error: 'Plan can only be edited while the session is active or waiting to continue',
+      })
       return
     }
     const body = req.body as Record<string, unknown>
@@ -1258,7 +1372,11 @@ router.patch(
 
     const total_segments = newPlan.destinations.length
     const ts = nowTs()
-    const continueDeadline = continueNotBeforeForAwaitingSession(newPlan, nextIdx, Date.now())
+    /** Auto-continue deadline applies while waiting between legs; mid-segment (`active`) keep cleared until worker sets it. */
+    const continueDeadline =
+      row.status === 'awaiting_continue'
+        ? continueNotBeforeForAwaitingSession(newPlan, nextIdx, Date.now())
+        : null
     await db
       .prepare(
         `UPDATE amr_multistop_sessions SET plan_json = ?, total_segments = ?, continue_not_before = ?, updated_at = ? WHERE id = ?`
@@ -1302,7 +1420,11 @@ router.post(
         const ref = typeof result.standOccupiedRef === 'string' ? result.standOccupiedRef.trim() : ''
         res.status(409).json({
           error: result.error,
-          ...(ref ? { code: 'STAND_OCCUPIED' as const, standOccupiedRef: ref } : {}),
+          ...(ref
+            ? { code: 'STAND_OCCUPIED' as const, standOccupiedRef: ref }
+            : result.code === 'NO_UNLOCKED_ROBOTS'
+              ? { code: 'NO_UNLOCKED_ROBOTS' as const }
+              : {}),
         })
       }
       else if (result.status === 400)
@@ -1554,11 +1676,25 @@ router.post(
     const persistentContainer = Boolean(b.persistentContainer)
     const enterOrientation =
       typeof b.enterOrientation === 'string' && b.enterOrientation.trim() ? b.enterOrientation.trim() : '0'
-    const robotIds = Array.isArray(b.robotIds) ? b.robotIds.filter((x): x is string => typeof x === 'string') : cfg.robotIdsDefault
 
     const sessionId = uuidv4()
     const total_segments = plan.destinations.length
     const missionRecordId = uuidv4()
+
+    const robotIdsResolution = await resolveSubmitRobotIds(cfg, db, b.robotIds, {
+      db,
+      source: 'multistop-start',
+      missionRecordId,
+      userId: req.user!.id,
+    })
+    if (!robotIdsResolution.ok) {
+      res.status(robotIdsResolution.status).json({
+        error: robotIdsResolution.error,
+        code: robotIdsResolution.code,
+      })
+      return
+    }
+    const robotIds = robotIdsResolution.robotIds
 
     const ciPayload = {
       orgId: cfg.orgId,

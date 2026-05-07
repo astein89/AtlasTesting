@@ -75,6 +75,11 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
     group: 'AMR',
   },
   { id: 'amr.settings', label: 'AMR: fleet connection & module defaults', group: 'AMR' },
+  {
+    id: 'amr.robots.lock',
+    label: 'AMR: lock / unlock robots from receiving new missions',
+    group: 'AMR',
+  },
   { id: 'amr.tools.dev', label: 'AMR: API playground & integration tools', group: 'AMR' },
   { id: 'roles.manage', label: 'Manage roles & permissions', group: 'Administration' },
   { id: 'users.manage', label: 'Manage users', group: 'Administration' },

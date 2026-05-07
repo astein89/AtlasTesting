@@ -270,6 +270,13 @@ export function startAmrMissionWorker(db: AsyncDbWrapper): () => void {
           source: 'multistop-auto-continue',
         })
         if (!result.ok) {
+          if (result.status === 409 && result.code === 'NO_UNLOCKED_ROBOTS') {
+            /** All-locked stall: keep `continue_not_before` so the next tick auto-retries once an unlock happens. */
+            console.warn(
+              `[amr-mission-worker] multistop auto-continue stalled for session ${sid}: ${result.error}`
+            )
+            continue
+          }
           if (result.status === 409) {
             // Occupied destination (or business rule): stop auto timer; operator must Continue manually after clearing.
             await db

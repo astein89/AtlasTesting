@@ -22,6 +22,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  Fragment,
   useMemo,
   useRef,
   useState,
@@ -34,6 +35,7 @@ import {
   AMR_MULTISTOP_MISSION_PATH,
   type AmrFleetSettings,
   type AmrMissionTemplateListItem,
+  type AmrRobotLockRow,
   type ZoneCategory,
   amrFleetProxy,
   createAmrMissionTemplate,
@@ -42,6 +44,7 @@ import {
   getAmrSettings,
   getAmrStands,
   listAmrMissionTemplates,
+  listAmrRobotLocks,
   postStandPresence,
   updateAmrMissionTemplate,
 } from '@/api/amr'
@@ -75,9 +78,15 @@ import { isActiveRobotFleetStatus } from '@/utils/amrRobotStatus'
 type Leg = {
   id: string
   position: string
+  /**
+   * Fleet `putDown` when the AMR **arrives** at this stand within its sub-mission (segment end at this stop).
+   * **Lower** forks (`true`) vs **lift** forks (`false`). Unused on the first stop; locked lower on the final stop.
+   */
   putDown: boolean
   /**
-   * Fleet first waypoint of the segment **from** this stop: drop pallet (`true`) vs no drop (`false`).
+   * Fleet `putDown` at the **start of the next sub-mission**, where this same stand is NODE 1.
+   * Surfaced in the UI as the **next** stop's "Depart from <this>" inset card. **Lower** (`true`) vs **lift** (`false`).
+   * Stored on the from-leg for serialization but semantically owned by the next sub-mission.
    * Ignored on the last stop (no outgoing segment).
    */
   segmentStartPutDown?: boolean
@@ -96,18 +105,25 @@ type AmrStandSuggestPopoverLayout = {
   bottom?: number
 }
 
+/** Banner copy shown both client-side (preflight) and on server `NO_UNLOCKED_ROBOTS` (HTTP 409). */
+const NO_UNLOCKED_ROBOTS_MESSAGE =
+  'All active robots are locked. Unlock at least one on the Robots page before creating a mission.'
+
 function newLeg(partial?: Partial<Omit<Leg, 'id'>>): Leg {
   return {
     id: uuidv4(),
     position: '',
-    putDown: false,
+    /** Default Lower on arrival for stops 2+; first stop is forced to Lift via {@link normalizePutDown}. */
+    putDown: true,
+    /** Default Lift at segment start (Depart on stop 3+); first-stop pickup uses the same field for outbound NODE 1. */
+    segmentStartPutDown: false,
     continueMode: 'manual',
     autoContinueSeconds: 0,
     ...partial,
   }
 }
 
-/** First stop is never an arrive-drop; last stop is always arrive-drop. Clear depart flags on final stop. */
+/** First stop never lowers on arrival; last stop always lowers on arrival. Clear segment-start flags on final stop. */
 function normalizePutDown(prev: Leg[]): Leg[] {
   const n = prev.length
   if (n < 2) return prev
@@ -133,6 +149,24 @@ function normalizePutDown(prev: Leg[]): Leg[] {
     return l
   })
   return changed ? next : prev
+}
+
+/**
+ * Indices `i` where fork state at segment start (`legs[i].segmentStartPutDown`) vs arrival at `legs[i + 1]`
+ * looks unintentional: **Lift depart → Lower arrive** matches normal pallet flow and is ignored.
+ * We only flag **Lower depart → Lift arrive**. Boundary before the final stop is skipped (last arrival is forced Lower).
+ */
+function liftSegmentMismatchBoundaryIndices(legs: Leg[]): number[] {
+  const n = legs.length
+  const out: number[] = []
+  if (n < 3) return out
+  for (let i = 0; i < n - 1; i++) {
+    if (i === n - 2) continue
+    const departLower = legs[i].segmentStartPutDown === true
+    const arriveLower = legs[i + 1].putDown === true
+    if (departLower && !arriveLower) out.push(i)
+  }
+  return out
 }
 
 type GripProps = {
@@ -262,6 +296,8 @@ export type AmrMissionNewFormHandle = {
   openSaveTemplate: () => void
   /** Opens the fleet / submitMission debug dialog (`amr.tools.dev`). */
   openDebug: () => void
+  /** Re-fetch pallet presence for stands currently entered on the route (no-op if none). */
+  refreshStands: () => void
 }
 
 export type AmrMissionNewFormProps = {
@@ -273,6 +309,8 @@ export type AmrMissionNewFormProps = {
   onMissionErrorChange?: (message: string) => void
   /** Increment (e.g. after banner dismiss) to clear mission error + field highlights in the form. */
   clearMissionErrorsNonce?: number
+  /** Modal shell only: drive header “Refresh stands” disabled / loading from stand presence state. */
+  onMissionStandsRefreshState?: (s: { canRefresh: boolean; loading: boolean }) => void
   /** `templateEditor` only: edit existing template id, or omit/null for create. */
   templateEditorId?: string | null
   /** `templateEditor` only: after successful create/update. */
@@ -324,6 +362,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       onRequestClose,
       onMissionErrorChange,
       clearMissionErrorsNonce,
+      onMissionStandsRefreshState,
       templateEditorId = null,
       onTemplateEditorSaved,
       onRequestDeleteTemplate,
@@ -350,7 +389,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const [persistent, setPersistent] = useState(false)
   const [legs, setLegs] = useState<Leg[]>(() => [
     newLeg({ putDown: false, continueMode: 'auto', autoContinueSeconds: 0 }),
-    newLeg({ putDown: true }),
+    newLeg(),
   ])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -404,6 +443,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   const [robotSelectOpen, setRobotSelectOpen] = useState(false)
   const [debugModalOpen, setDebugModalOpen] = useState(false)
   const [selectedRobotIds, setSelectedRobotIds] = useState<string[]>([])
+  const [robotLocks, setRobotLocks] = useState<AmrRobotLockRow[]>([])
   const [templateList, setTemplateList] = useState<AmrMissionTemplateListItem[]>([])
   const [templateLoadBusy, setTemplateLoadBusy] = useState(false)
   const [templateErr, setTemplateErr] = useState<string | null>(null)
@@ -472,6 +512,14 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     }, pollMsContainers)
     return () => clearInterval(tid)
   }, [uniqueStandKey, loadPresenceForRefs, uniqueStandRefs, pollMsContainers])
+
+  useEffect(() => {
+    if (variant !== 'modal' || !onMissionStandsRefreshState) return
+    onMissionStandsRefreshState({
+      canRefresh: uniqueStandRefs.length > 0,
+      loading: standPresenceLoading,
+    })
+  }, [variant, onMissionStandsRefreshState, uniqueStandKey, standPresenceLoading])
 
   const containerInputRef = useRef<HTMLInputElement | null>(null)
   const legPositionInputRefs = useRef<(HTMLInputElement | null)[]>([])
@@ -571,6 +619,60 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     return () => window.clearInterval(t)
   }, [canManage, robotSelectOpen, pollMsRobots, loadRobotFleet])
 
+  const lockedRobotIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of robotLocks) {
+      if (r.locked) s.add(r.robotId)
+    }
+    return s
+  }, [robotLocks])
+
+  /**
+   * When any robot is locked, eagerly load the fleet up-front (without opening the picker) so we can
+   * detect the "every active robot is locked" stall and disable Create mission with a banner.
+   */
+  useEffect(() => {
+    if (!canManage || lockedRobotIds.size === 0) return
+    void loadRobotFleet()
+  }, [canManage, lockedRobotIds, loadRobotFleet])
+
+  /** Always reflect current locks on the form: drop locked robots from the selection if the operator locked them after picking. */
+  useEffect(() => {
+    if (lockedRobotIds.size === 0) return
+    setSelectedRobotIds((prev) => {
+      const next = prev.filter((id) => !lockedRobotIds.has(id))
+      return next.length === prev.length ? prev : next
+    })
+  }, [lockedRobotIds])
+
+  const refreshRobotLocks = useCallback(async () => {
+    if (!canManage) return
+    try {
+      const rows = await listAmrRobotLocks()
+      setRobotLocks(rows)
+    } catch {
+      /** Locks API is non-critical for picker UX — server still enforces. Silent fail. */
+    }
+  }, [canManage])
+
+  /** Robot picker sits under the root New Mission dialog — must dismiss both before SPA navigation shows AMR › Robots. */
+  const goToRobotsManagePage = useCallback(() => {
+    setRobotSelectOpen(false)
+    onRequestClose?.()
+    navigate(amrPath('robots'))
+  }, [navigate, onRequestClose])
+
+  useEffect(() => {
+    void refreshRobotLocks()
+  }, [refreshRobotLocks])
+
+  /** Refresh locks alongside the robot fleet refresh so the banner / picker stay in sync. */
+  useEffect(() => {
+    if (!canManage || !robotSelectOpen) return
+    const t = window.setInterval(() => void refreshRobotLocks(), pollMsRobots)
+    return () => window.clearInterval(t)
+  }, [canManage, robotSelectOpen, pollMsRobots, refreshRobotLocks])
+
   const activeRobotsForPicker = useMemo((): AmrRobotPickRow[] => {
     const out: AmrRobotPickRow[] = []
     for (const r of robotFleetRows) {
@@ -578,6 +680,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       if (!isActiveRobotFleetStatus(st)) continue
       const id = String(r.robotId ?? r.robot_id ?? '').trim()
       if (!id) continue
+      /** Locked robots are NOT shown in the picker — they cannot receive missions. */
+      if (lockedRobotIds.has(id)) continue
       out.push({
         id,
         robotType: String(r.robotType ?? r.robot_type ?? '').trim(),
@@ -587,7 +691,15 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     }
     out.sort((a, b) => a.id.localeCompare(b.id))
     return out
-  }, [robotFleetRows])
+  }, [robotFleetRows, lockedRobotIds])
+
+  /**
+   * `true` when any robot is locked AND every fleet-reported active robot is also locked. Disables
+   * the **Create mission** button + shows a red banner so the operator unlocks before submitting.
+   * Requires `robotFleetRows` to have loaded so we don't false-positive while the live fleet is unknown.
+   */
+  const noUnlockedActive =
+    lockedRobotIds.size > 0 && robotFleetRows.length > 0 && activeRobotsForPicker.length === 0
 
   /** Deep-link from Containers → Move (`?container=` and optional `?from=` = current node / external ref for first stop). */
   const lockStartLocation = useMemo(() => {
@@ -779,6 +891,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
   /** Two stops or more: DC creates a multistop session (containerIn then submitMission for segment 0). */
   const hasThreeOrMoreStops = legs.length > 2
 
+  const liftSegmentMismatchBoundaries = useMemo(() => liftSegmentMismatchBoundaryIndices(legs), [legs])
+
   const rackMoveDebugRequest = useMemo(() => {
     const base = buildMultistopPayload()
     const p = legs[0]?.position.trim() ?? ''
@@ -858,10 +972,12 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     hasThreeOrMoreStops,
   ])
 
+  const lockedIdsArray = useMemo(() => [...lockedRobotIds], [lockedRobotIds])
+
   const rackMoveFleetForwardPreview = useMemo(() => {
     if (!rackMoveDebugFleetSettings) return null
-    return buildRackMoveFleetForwardPreview(rackMoveDebugFleetSettings, fleetPreviewInput)
-  }, [rackMoveDebugFleetSettings, fleetPreviewInput])
+    return buildRackMoveFleetForwardPreview(rackMoveDebugFleetSettings, fleetPreviewInput, lockedIdsArray)
+  }, [rackMoveDebugFleetSettings, fleetPreviewInput, lockedIdsArray])
 
   const multistopFleetTimeline = useMemo(() => {
     if (!rackMoveDebugFleetSettings) return null
@@ -879,8 +995,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       segmentFirstNodePutDown,
       persistent,
       robotIds: selectedRobotIds.length > 0 ? selectedRobotIds : undefined,
+      lockedIds: lockedIdsArray,
     })
-  }, [rackMoveDebugFleetSettings, legs, persistent, selectedRobotIds])
+  }, [rackMoveDebugFleetSettings, legs, persistent, selectedRobotIds, lockedIdsArray])
 
   if (!canManage && variant === 'page') {
     return (
@@ -898,6 +1015,12 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     setFieldError(null)
     validationErrorActiveRef.current = false
     if (canAmrApiDebug) setRackMoveDebugLastErrorJson(null)
+
+    if (noUnlockedActive) {
+      validationErrorActiveRef.current = true
+      setError(NO_UNLOCKED_ROBOTS_MESSAGE)
+      return
+    }
 
     const validation = validateNewMissionForm(legs)
     if (!validation.ok) {
@@ -970,10 +1093,17 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     } catch (e: unknown) {
       const ax = e as { response?: { data?: unknown } }
       if (canAmrApiDebug) setRackMoveDebugLastErrorJson(ax?.response?.data ?? { message: String(e) })
-      const msg =
-        (ax?.response?.data as { error?: string } | undefined)?.error ?? 'Mission create failed'
+      const data = ax?.response?.data as { error?: string; code?: string } | undefined
+      const code = typeof data?.code === 'string' ? data.code : ''
+      const serverMsg = typeof data?.error === 'string' ? data.error : ''
+      const msg = code === 'NO_UNLOCKED_ROBOTS' ? NO_UNLOCKED_ROBOTS_MESSAGE : serverMsg || 'Mission create failed'
       validationErrorActiveRef.current = false
       setError(msg)
+      if (code === 'NO_UNLOCKED_ROBOTS') {
+        /** Server already validated — re-pull locks so the picker / banner reflect what the server rejected. */
+        void refreshRobotLocks()
+        void loadRobotFleet()
+      }
     } finally {
       setSaving(false)
     }
@@ -990,14 +1120,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
 
   /** Adds another stop; three or more stops use chained fleet missions and Continue on Missions. */
   const addLeg = () => {
-    setLegs((prev) =>
-      normalizePutDown([
-        ...prev,
-        newLeg({
-          putDown: true,
-        }),
-      ])
-    )
+    setLegs((prev) => normalizePutDown([...prev, newLeg()]))
   }
 
   const sensors = useSensors(
@@ -1121,7 +1244,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       setTemplateErr(null)
       setLegs([
         newLeg({ putDown: false, continueMode: 'auto', autoContinueSeconds: 0 }),
-        newLeg({ putDown: true }),
+        newLeg(),
       ])
       setPersistent(false)
       setSelectedRobotIds([])
@@ -1184,8 +1307,12 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
     () => ({
       openSaveTemplate: openSaveTemplateModal,
       openDebug: () => setDebugModalOpen(true),
+      refreshStands: () => {
+        if (uniqueStandRefs.length === 0) return
+        void loadPresenceForRefs(uniqueStandRefs)
+      },
     }),
-    [openSaveTemplateModal]
+    [openSaveTemplateModal, uniqueStandRefs, loadPresenceForRefs]
   )
 
   const submitSaveTemplate = async () => {
@@ -1314,7 +1441,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         {variant === 'modal' ? (
           <button
             type="button"
-            disabled={saving || !canManage}
+            disabled={saving || !canManage || noUnlockedActive}
+            title={noUnlockedActive ? NO_UNLOCKED_ROBOTS_MESSAGE : undefined}
             className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100 sm:w-auto"
             onClick={() => void submit(true)}
           >
@@ -1324,7 +1452,8 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         <button
           ref={createMissionButtonRef}
           type="button"
-          disabled={saving || !canManage}
+          disabled={saving || !canManage || noUnlockedActive}
+          title={noUnlockedActive ? NO_UNLOCKED_ROBOTS_MESSAGE : undefined}
           className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 text-sm font-medium text-foreground hover:bg-amber-500/15 disabled:opacity-50 dark:border-amber-500/35 sm:w-auto"
           onClick={() => void submit()}
         >
@@ -1448,14 +1577,14 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className="min-w-0 text-sm font-medium">Mission stops</h2>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            {uniqueStandRefs.length > 0 ? (
+            {variant !== 'modal' && uniqueStandRefs.length > 0 ? (
               <button
                 type="button"
                 className="shrink-0 text-sm text-primary hover:underline disabled:opacity-50"
                 disabled={standPresenceLoading}
                 onClick={() => void loadPresenceForRefs(uniqueStandRefs)}
               >
-                {standPresenceLoading ? 'Updating…' : 'Refresh stand status'}
+                {standPresenceLoading ? 'Refreshing…' : 'Refresh stands'}
               </button>
             ) : null}
             <button
@@ -1467,28 +1596,34 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
             </button>
           </div>
         </div>
-        <p className="text-xs text-foreground/60">
-          {variant === 'templateEditor'
-            ? 'Drag the grip beside each stop to reorder.'
-            : 'Drag the grip beside each stop to reorder. When opened from a container deep link, the first stop stays fixed.'}
-        </p>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleLegDragEnd}>
           <SortableContext items={legs.map((l) => l.id)} strategy={verticalListSortingStrategy}>
             {legs.map((leg, idx) => {
               const startLocked = idx === 0 && Boolean(lockStartLocation) && !startLockReleased
               const dragLocked = Boolean(lockStartLocation && !startLockReleased && idx === 0)
               const canRemove = legs.length > 2 && !(lockStartLocation && !startLockReleased && idx === 0)
-              const putDownOn =
-                idx === 0 ? false : idx === legs.length - 1 ? true : leg.putDown
-              const showDepartToggle = idx < legs.length - 1
-              const showArriveToggle = idx >= 1
               const arriveLocked = idx === legs.length - 1
+              const arrivalOn =
+                idx === 0
+                  ? leg.segmentStartPutDown === true
+                  : arriveLocked
+                    ? true
+                    : leg.putDown === true
+              const onArrivalChange = (on: boolean) => {
+                if (idx === 0) updateLeg(0, { segmentStartPutDown: on })
+                else updateLeg(idx, { putDown: on })
+              }
+              const showDepartInset = idx >= 2
+              const prevLeg = showDepartInset ? legs[idx - 1] : undefined
+              const prevPos = prevLeg?.position.trim() ?? ''
+              const departOn = prevLeg?.segmentStartPutDown === true
               const locationInvalid =
                 fieldError?.kind === 'location' && fieldError.legIndices.includes(idx)
               const autoSecondsInvalid =
                 fieldError?.kind === 'autoSeconds' && fieldError.legIndex === idx
               return (
-                <SortableLegCard key={leg.id} id={leg.id} disableDrag={dragLocked}>
+                <Fragment key={leg.id}>
+                <SortableLegCard id={leg.id} disableDrag={dragLocked}>
                   {(grip) => (
                     <>
             <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
@@ -1672,45 +1807,76 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                   </button>
                 </div>
                 <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:max-w-[min(100%,20rem)] md:shrink-0">
-                  {showDepartToggle ? (
-                    <div className="flex items-center gap-3">
-                      <ToggleSwitch
-                        checked={leg.segmentStartPutDown === true}
-                        onCheckedChange={(on) => updateLeg(idx, { segmentStartPutDown: on })}
-                        aria-label={
-                          leg.segmentStartPutDown === true
-                            ? 'Depart: drop pallet at first waypoint'
-                            : 'Depart: no drop at first waypoint'
-                        }
-                        title="Fleet segment start (first NODE_POINT leaving this stop)"
-                        size="sm"
-                        className="shrink-0"
-                      />
-                      <span className="min-w-0 flex-1 text-sm text-foreground/90">
-                        {leg.segmentStartPutDown === true ? 'Depart: Drop' : 'Depart: No drop'}
-                      </span>
+                  {showDepartInset ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-3">
+                        <ToggleSwitch
+                          checked={departOn}
+                          onCheckedChange={(on) =>
+                            updateLeg(idx - 1, { segmentStartPutDown: on })
+                          }
+                          aria-label={
+                            departOn
+                              ? 'Depart: lower forks (putDown true)'
+                              : 'Depart: lift forks (putDown false)'
+                          }
+                          title="Fleet putDown at the previous stop at the start of the next sub-mission: true lowers, false lifts."
+                          size="sm"
+                          className="shrink-0"
+                        />
+                        <span className="min-w-0 flex-1 text-sm">
+                          Depart: {departOn ? 'Lower' : 'Lift'}
+                        </span>
+                      </div>
+                      <div
+                        className={`flex items-center gap-3 ${arriveLocked ? 'text-foreground/70' : ''}`}
+                      >
+                        <ToggleSwitch
+                          checked={arrivalOn}
+                          disabled={arriveLocked}
+                          onCheckedChange={onArrivalChange}
+                          aria-label={
+                            arrivalOn
+                              ? 'Arrival: lower forks (putDown true)'
+                              : 'Arrival: lift forks (putDown false)'
+                          }
+                          title={
+                            arriveLocked
+                              ? 'Final stop: putDown is always true (lower on arrival)'
+                              : 'Fleet putDown when the AMR reaches this stand: true lowers, false lifts'
+                          }
+                          size="sm"
+                          className="shrink-0"
+                        />
+                        <span className="min-w-0 flex-1 text-sm">
+                          Arrival: {arrivalOn ? 'Lower' : 'Lift'}
+                        </span>
+                      </div>
                     </div>
-                  ) : null}
-                  {showArriveToggle ? (
+                  ) : (
                     <div className={`flex items-center gap-3 ${arriveLocked ? 'text-foreground/70' : ''}`}>
                       <ToggleSwitch
-                        checked={putDownOn}
+                        checked={arrivalOn}
                         disabled={arriveLocked}
-                        onCheckedChange={(on) => updateLeg(idx, { putDown: on })}
-                        aria-label={putDownOn ? 'Arrive: drop pallet' : 'Arrive: pickup / no drop'}
+                        onCheckedChange={onArrivalChange}
+                        aria-label={
+                          arrivalOn
+                            ? 'Arrival: lower forks (putDown true)'
+                            : 'Arrival: lift forks (putDown false)'
+                        }
                         title={
                           arriveLocked
-                            ? 'Final stop is always a drop'
-                            : 'Fleet segment end (second waypoint arriving at this stop)'
+                            ? 'Final stop: putDown is always true (lower on arrival)'
+                            : 'Fleet putDown when the AMR reaches this stand: true lowers, false lifts'
                         }
                         size="sm"
                         className="shrink-0"
                       />
                       <span className="min-w-0 flex-1 text-sm">
-                        {putDownOn ? 'Arrive: Drop' : 'Arrive: No drop'}
+                        Arrival: {arrivalOn ? 'Lower' : 'Lift'}
                       </span>
                     </div>
-                  ) : null}
+                  )}
                   {idx < legs.length - 1 ? (
                     <div className="flex items-center gap-3">
                       <ToggleSwitch
@@ -1766,12 +1932,13 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               </div>
               {(() => {
                 const pos = leg.position.trim()
-                if (!pos) return null
-                const departDrop = showDepartToggle && leg.segmentStartPutDown === true
                 const stDepart =
-                  showDepartToggle ? legRestrictionStatus(stands, pos, departDrop) : { violated: false, message: '' }
-                const stArrive =
-                  showArriveToggle ? legRestrictionStatus(stands, pos, putDownOn) : { violated: false, message: '' }
+                  showDepartInset && prevPos
+                    ? legRestrictionStatus(stands, prevPos, departOn)
+                    : { violated: false, message: '' }
+                const stArrive = pos
+                  ? legRestrictionStatus(stands, pos, arrivalOn)
+                  : { violated: false, message: '' }
                 if (!stDepart.violated && !stArrive.violated) return null
                 return (
                   <div className="mt-2 flex flex-col gap-2">
@@ -1797,7 +1964,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                     {stArrive.violated ? (
                       <div className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 sm:flex-row sm:items-center sm:gap-3 dark:text-amber-200">
                         <span className="min-w-0 flex-1 leading-snug">
-                          <span className="font-medium">Arrive: </span>
+                          <span className="font-medium">Arrival: </span>
                           {stArrive.message}
                         </span>
                         {canOverrideSpecial ? (
@@ -1820,6 +1987,15 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                     </>
                   )}
                 </SortableLegCard>
+                {idx < legs.length - 1 && liftSegmentMismatchBoundaries.includes(idx) ? (
+                  <div
+                    role="status"
+                    className="my-1 rounded-md border border-amber-500/45 bg-amber-500/10 px-2.5 py-1.5 text-xs leading-snug text-amber-950 dark:text-amber-100"
+                  >
+                    Lift state between stops {idx + 1} and {idx + 2} is out of the normal range for these stops.
+                  </div>
+                ) : null}
+                </Fragment>
               );
             })}
           </SortableContext>
@@ -1840,6 +2016,18 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                   : 'Optional — AMR settings defaults apply when none selected.'}
             </p>
           </div>
+          {noUnlockedActive ? (
+            <p
+              className="rounded-md border border-red-500/45 bg-red-500/10 px-2.5 py-1.5 text-xs leading-snug text-red-950 dark:text-red-100"
+              role="alert"
+            >
+              <span className="font-medium">All active robots are locked.</span> Unlock at least one on the{' '}
+              <Link to={amrPath('robots')} className="underline hover:text-red-700 dark:hover:text-red-200">
+                Robots page
+              </Link>{' '}
+              before creating a mission.
+            </p>
+          ) : null}
           <button
             type="button"
             className="min-h-[44px] w-fit rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
@@ -2073,7 +2261,12 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
         onConfirm={(ids) => setSelectedRobotIds(ids)}
         loading={robotFleetLoading}
         error={robotFleetErr}
-        onRefresh={() => void loadRobotFleet({ showSpinner: true })}
+        onRefresh={() => {
+          void loadRobotFleet({ showSpinner: true })
+          void refreshRobotLocks()
+        }}
+        lockedIds={lockedRobotIds}
+        onGoToRobotsManage={goToRobotsManagePage}
       />
 
       {saveTemplateOpen && variant !== 'templateEditor' ? (

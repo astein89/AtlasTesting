@@ -11,6 +11,7 @@ import {
 import { externalRefsBypassingPalletCheck } from './amrStandBypass.js'
 import { fetchStandPresenceFromHyperion } from './amrStandPresence.js'
 import { getAmrHyperionConfig, hyperionConfigured } from './hyperionConfig.js'
+import { getLockedRobotIds, resolveActiveUnlockedRobotIds } from './amrRobots.js'
 
 export function multistopSegmentMissionCode(baseMissionCode: string, segmentIndex: number): string {
   return `${baseMissionCode.trim()}-${segmentIndex + 1}`
@@ -89,7 +90,15 @@ export type ExecuteMultistopContinueResult =
       next_segment_index: number
       fleetSubmit: unknown
     }
-  | { ok: false; status: number; error: string; json?: unknown; standOccupiedRef?: string }
+  | {
+      ok: false
+      status: number
+      error: string
+      json?: unknown
+      standOccupiedRef?: string
+      /** Stable identifier so the client can branch on the all-locked case (HTTP 409). */
+      code?: 'NO_UNLOCKED_ROBOTS'
+    }
 
 export async function executeMultistopContinue(params: {
   db: AsyncDbWrapper
@@ -173,6 +182,44 @@ export async function executeMultistopContinue(params: {
   const lockRobotAfterFinish = next_segment_index < total_segments - 1 ? 'true' : 'false'
   const sessionContainerCode =
     typeof row.container_code === 'string' && row.container_code.trim() ? row.container_code.trim() : ''
+
+  /**
+   * Re-resolve `robotIds` at execution time so robots locked after session create stop receiving
+   * remaining segments. If the session list still drains to empty, fall back to live active-unlocked,
+   * then 409 NO_UNLOCKED_ROBOTS so the operator can unlock and retry.
+   */
+  const sessionRobotIds: string[] = (() => {
+    try {
+      const rj = row.robot_ids_json
+      if (typeof rj === 'string' && rj.trim()) {
+        const a = JSON.parse(rj) as unknown
+        if (Array.isArray(a)) return a.filter((x): x is string => typeof x === 'string')
+      }
+    } catch {
+      /* ignore */
+    }
+    return cfg.robotIdsDefault
+  })()
+  const lockedIds = await getLockedRobotIds(db)
+  let resolvedRobotIds = sessionRobotIds
+  if (lockedIds.size > 0) {
+    if (sessionRobotIds.length > 0) {
+      resolvedRobotIds = sessionRobotIds.filter((id) => !lockedIds.has(id))
+    }
+    if (resolvedRobotIds.length === 0) {
+      resolvedRobotIds = await resolveActiveUnlockedRobotIds(cfg, db, { db, source })
+    }
+    if (resolvedRobotIds.length === 0) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          'No unlocked robots available — every active robot is locked. Unlock at least one on the Robots page.',
+        code: 'NO_UNLOCKED_ROBOTS',
+      }
+    }
+  }
+
   const submitPayload = {
     orgId: cfg.orgId,
     requestId: missionCode,
@@ -182,18 +229,7 @@ export async function executeMultistopContinue(params: {
     lockRobotAfterFinish,
     unlockRobotId,
     robotModels: cfg.robotModels,
-    robotIds: (() => {
-      try {
-        const rj = row.robot_ids_json
-        if (typeof rj === 'string' && rj.trim()) {
-          const a = JSON.parse(rj) as unknown
-          if (Array.isArray(a)) return a.filter((x): x is string => typeof x === 'string')
-        }
-      } catch {
-        /* ignore */
-      }
-      return cfg.robotIdsDefault
-    })(),
+    robotIds: resolvedRobotIds,
     missionData,
     ...(sessionContainerCode ? { containerCode: sessionContainerCode } : {}),
   }

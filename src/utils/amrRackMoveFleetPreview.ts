@@ -4,6 +4,28 @@ import type { AmrFleetSettings } from '@/api/amr'
 
 import { genDcaCode } from '@/utils/amrDcaCode'
 
+/**
+ * Mirrors `resolveSubmitRobotIds` in `server/lib/amrRobots.ts` for preview-side parity with the wire payload.
+ * Returns `null` when the locked-out condition would 409 the create.
+ */
+function previewResolveSubmitRobotIds(
+  settings: AmrFleetSettings,
+  clientPick: unknown,
+  lockedIds: ReadonlyArray<string> | undefined
+): string[] | null {
+  const lockedSet = new Set((lockedIds ?? []).filter((x): x is string => typeof x === 'string' && x.trim() !== ''))
+  const pickArray = Array.isArray(clientPick)
+    ? clientPick.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+    : null
+  if (lockedSet.size === 0) {
+    return pickArray ?? settings.robotIdsDefault
+  }
+  /** Preview cannot reach the live fleet — when `clientPick` is empty we fall back to `robotIdsDefault` minus locks. */
+  const base = pickArray ?? settings.robotIdsDefault
+  const out = base.filter((id) => !lockedSet.has(id))
+  return out.length === 0 ? null : out
+}
+
 /** Mirrors `buildFleetBaseUrl` in `server/lib/amrFleet.ts`. */
 export function fleetDebugBaseUrl(settings: AmrFleetSettings): string | null {
   const ip = settings.serverIp?.trim()
@@ -46,10 +68,15 @@ export type RackMoveFleetPreviewResult =
 /**
  * Best-effort preview of what `POST /amr/dc/missions/rack-move` causes the DC server to forward
  * to the fleet (see `server/routes/amr.ts`). `requestId` / generated codes use fresh values each call.
+ *
+ * `lockedIds` (optional): mirrors the server lock filter so the preview matches the wire payload —
+ * locked robots are dropped from the resolved `robotIds` list. When all candidates would be locked,
+ * returns the same `NO_UNLOCKED_ROBOTS` 409 the server would emit.
  */
 export function buildRackMoveFleetForwardPreview(
   settings: AmrFleetSettings,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  lockedIds?: ReadonlyArray<string>
 ): RackMoveFleetPreviewResult {
   const missionData = body.missionData
   if (!Array.isArray(missionData) || missionData.length === 0) {
@@ -92,6 +119,15 @@ export function buildRackMoveFleetForwardPreview(
     isNew: true,
   }
 
+  const resolvedRobotIds = previewResolveSubmitRobotIds(settings, body.robotIds, lockedIds)
+  if (resolvedRobotIds === null) {
+    return {
+      ok: false,
+      error:
+        'No unlocked robots available — every active robot is locked. Unlock at least one on the Robots page.',
+    }
+  }
+
   const submitPayload: Record<string, unknown> = {
     orgId: settings.orgId,
     requestId: missionCode,
@@ -101,7 +137,7 @@ export function buildRackMoveFleetForwardPreview(
     lockRobotAfterFinish: typeof body.lockRobotAfterFinish === 'string' ? body.lockRobotAfterFinish : 'false',
     unlockRobotId: typeof body.unlockRobotId === 'string' ? body.unlockRobotId : '',
     robotModels: settings.robotModels,
-    robotIds: Array.isArray(body.robotIds) ? body.robotIds : settings.robotIdsDefault,
+    robotIds: resolvedRobotIds,
     missionData: sorted,
     containerCode,
   }
@@ -212,9 +248,11 @@ export function buildMultistopFleetTimeline(
     segmentFirstNodePutDown?: boolean[]
     persistent: boolean
     robotIds?: string[]
+    /** Same intersect/active-unlocked rule the server applies — see `resolveSubmitRobotIds`. */
+    lockedIds?: ReadonlyArray<string>
   }
 ): MultistopFleetTimelineResult {
-  const { pickupPosition, destinations, persistent, robotIds, segmentFirstNodePutDown } = args
+  const { pickupPosition, destinations, persistent, robotIds, segmentFirstNodePutDown, lockedIds } = args
   if (destinations.length < 2) {
     return { ok: false, error: 'Add Stop needs at least two destinations (three or more stops).' }
   }
@@ -224,7 +262,16 @@ export function buildMultistopFleetTimeline(
     if (!d.position?.trim()) return { ok: false, error: 'each destination needs a position' }
   }
 
-  const rids = Array.isArray(robotIds) && robotIds.length > 0 ? robotIds : settings.robotIdsDefault
+  const previewClientPick = Array.isArray(robotIds) && robotIds.length > 0 ? robotIds : null
+  const resolved = previewResolveSubmitRobotIds(settings, previewClientPick, lockedIds)
+  if (resolved === null) {
+    return {
+      ok: false,
+      error:
+        'No unlocked robots available — every active robot is locked. Unlock at least one on the Robots page.',
+    }
+  }
+  const rids = resolved
 
   const phases: MultistopFleetTimelinePhase[] = []
   const containerCode = uuidv4().replace(/-/g, '').slice(0, 16)

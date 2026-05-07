@@ -24,6 +24,8 @@ interface ConfirmModalProps {
    * Helps fit Retry + primary on one row on narrow screens.
    */
   omitFooterCancel?: boolean
+  /** When true, the primary confirm button is non-interactive. */
+  confirmDisabled?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -46,6 +48,7 @@ export function ConfirmModal({
   alignActions = 'start',
   footerExtra,
   omitFooterCancel = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -138,8 +141,9 @@ export function ConfirmModal({
             {footerExtra}
             <button
               type="button"
+              disabled={confirmDisabled}
               onClick={onConfirm}
-              className={`${confirmClass} max-w-[13rem] whitespace-normal text-center leading-snug`}
+              className={`${confirmClass} max-w-[13rem] whitespace-normal text-center leading-snug disabled:opacity-50`}
             >
               {confirmLabel}
             </button>

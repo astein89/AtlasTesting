@@ -11,7 +11,15 @@ export const MISSION_JOB_STATUS_NAMES: Record<number, string> = {
   35: 'Manual complete',
   50: 'Warning',
   60: 'Startup error',
+  /**
+   * UI-only rollup for multistop rows while `amr_multistop_sessions.status === 'awaiting_continue'`.
+   * Avoids showing the previous segment’s fleet terminal code (e.g. 30) while awaiting Release / Continue.
+   */
+  91: 'Awaiting release',
 }
+
+/** Synthetic code — never returned by the fleet; see {@link MISSION_JOB_STATUS_NAMES}[91]. */
+export const MULTISTOP_ROLLUP_AWAITING_RELEASE_STATUS_CODE = 91
 
 /**
  * Fleet codes after which the mission worker closes the mission row (`CLOSE_MISSION_ROW_STATUS` in `amrMissionWorker.ts`).
@@ -57,6 +65,7 @@ export function missionJobStatusChipClass(code: number | null): string {
     case 20:
       return 'border-sky-500/40 bg-sky-500/12 text-sky-950 dark:text-sky-100'
     case 25:
+    case 91:
       return 'border-violet-500/35 bg-violet-500/10 text-violet-950 dark:text-violet-100'
     case 28:
       return 'border-orange-500/40 bg-orange-500/12 text-orange-950 dark:text-orange-100'
