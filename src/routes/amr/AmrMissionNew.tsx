@@ -1153,6 +1153,9 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
       return
     }
 
+    /** Set when operator proceeds past the “no pallet at pickup” dialog — drives queued-toast + force-dispatch warnings. */
+    let acknowledgedEmptyPickup = false
+
     if (missionCreateStandPresenceSanityCheck) {
       const uniquePresenceRefs = [...new Set(legs.map((l) => l.position.trim()).filter(Boolean))].sort()
       if (uniquePresenceRefs.length > 0) {
@@ -1171,6 +1174,7 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
               }
             )
             if (!okPickup) return
+            acknowledgedEmptyPickup = true
           }
           const { shouldWarn, destinationRef } = shouldWarnFirstSegmentDropOccupied(
             legs,
@@ -1227,6 +1231,14 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
             <div className="space-y-2">
               <p className="font-medium text-foreground">Mission queued</p>
               <p className="text-xs text-foreground/80">{queuedBody}</p>
+              {acknowledgedEmptyPickup ? (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-950 dark:text-amber-100">
+                  You created this mission after confirming <span className="font-medium">no pallet</span> at pickup.
+                  If you use <span className="font-medium">Force dispatch</span>, the robot may move without Hyperion
+                  confirming a load, and the queue / reservation wait for the drop is bypassed — only do that if the
+                  physical load and stand situation are correct.
+                </p>
+              ) : null}
               <div className="flex flex-wrap gap-2 pt-1">
                 {canAmrAttention ? (
                   <button
@@ -1234,6 +1246,25 @@ export const AmrMissionNewForm = forwardRef<AmrMissionNewFormHandle, AmrMissionN
                     className="rounded-lg border border-destructive/50 bg-background px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
                     onClick={() => {
                       void (async () => {
+                        if (acknowledgedEmptyPickup) {
+                          const okForce = await showConfirm(
+                            <div className="space-y-2 text-sm text-foreground">
+                              <p>
+                                This mission was created while Hyperion reported <strong>no pallet</strong> at the first
+                                stop. <strong>Force dispatch</strong> skips waiting for the drop stand / reservation to
+                                clear and bypasses the usual release checks — the robot may leave{' '}
+                                <strong>without a confirmed load</strong>.
+                              </p>
+                              <p className="text-foreground/85">Continue only if the pallet is physically present or you accept that risk.</p>
+                            </div>,
+                            {
+                              title: 'Force dispatch without pickup confirmation?',
+                              confirmLabel: 'Force dispatch',
+                              variant: 'danger',
+                            }
+                          )
+                          if (!okForce) return
+                        }
                         try {
                           await continueAmrMultistopSession(sid, { forceRelease: true })
                           dismiss()

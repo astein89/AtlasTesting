@@ -29,6 +29,7 @@ type AmrSettingsFormState = {
   pollMsMissionWorker: number
   pollMsRobots: number
   pollMsContainers: number
+  pollMsAmrNotificationUi: number
   hideFleetCompleteAfterMinutesDefault: number | null
   missionCreateStandPresenceSanityCheck: boolean
   missionQueueingEnabled: boolean
@@ -102,6 +103,10 @@ function amrFleetSettingsToForm(s: AmrFleetSettings): AmrSettingsFormState {
     pollMsMissionWorker: s.pollMsMissionWorker ?? s.pollMsMissions,
     pollMsRobots: s.pollMsRobots,
     pollMsContainers: s.pollMsContainers,
+    pollMsAmrNotificationUi:
+      typeof s.pollMsAmrNotificationUi === 'number' && Number.isFinite(s.pollMsAmrNotificationUi)
+        ? s.pollMsAmrNotificationUi
+        : 5000,
     hideFleetCompleteAfterMinutesDefault: s.hideFleetCompleteAfterMinutesDefault ?? null,
     missionCreateStandPresenceSanityCheck: s.missionCreateStandPresenceSanityCheck !== false,
     missionQueueingEnabled: s.missionQueueingEnabled !== false,
@@ -149,6 +154,7 @@ export function AmrSettings() {
     pollMsMissionWorker: 5000,
     pollMsRobots: 5000,
     pollMsContainers: 5000,
+    pollMsAmrNotificationUi: 5000,
     hideFleetCompleteAfterMinutesDefault: null as number | null,
     missionCreateStandPresenceSanityCheck: true,
     missionQueueingEnabled: true,
@@ -425,6 +431,53 @@ export function AmrSettings() {
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-4">
         <div>
+          <h2 className="text-sm font-medium">Attention &amp; notification UI</h2>
+          <p className="mt-1 text-xs text-foreground/60">
+            How often the app refreshes the mission attention bar and the post-drop presence-warning banner (scanning
+            mission records). Separate from mission list / fleet polling below.
+          </p>
+        </div>
+        <label className="block text-sm">
+          Attention &amp; notification banner poll interval (ms)
+          <input
+            type="number"
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            disabled={!canEdit}
+            min={1000}
+            max={120000}
+            step={500}
+            value={form.pollMsAmrNotificationUi}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, pollMsAmrNotificationUi: Number(e.target.value) }))
+            }
+          />
+          <span className="mt-1 block text-[11px] text-foreground/55">
+            Stored range 1000–120000 ms (default 5000). Banners pick up changes after save when this tab regains focus or
+            on reload.
+          </span>
+        </label>
+        <label className="block text-sm">
+          Queued mission toast visibility (ms)
+          <input
+            type="number"
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            disabled={!canEdit || !form.missionQueueingEnabled}
+            min={2000}
+            max={120000}
+            value={form.missionQueuedToastDismissMs}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, missionQueuedToastDismissMs: Number(e.target.value) }))
+            }
+          />
+          <span className="mt-1 block text-[11px] text-foreground/55">
+            How long the “mission queued” toast stays open after create when the first segment is queued. Server clamps
+            between 2000 and 120000 ms.
+          </span>
+        </label>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-4">
+        <div>
           <h2 className="text-sm font-medium">Mission settings</h2>
           <p className="mt-1 text-xs text-foreground/60">
             Presence checks, queueing, and post-lower confirmation use Hyperion when it is configured above.
@@ -465,24 +518,6 @@ export function AmrSettings() {
               When enabled, blocked destination missions are queued and dispatched automatically once the stand clears.
               Queueing also controls post-lower stand reservation checks.
             </span>
-          </span>
-        </label>
-        <label className="block text-sm">
-          Queued mission toast duration (ms)
-          <input
-            type="number"
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-            disabled={!canEdit || !form.missionQueueingEnabled}
-            min={2000}
-            max={120000}
-            value={form.missionQueuedToastDismissMs}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, missionQueuedToastDismissMs: Number(e.target.value) }))
-            }
-          />
-          <span className="mt-1 block text-[11px] text-foreground/55">
-            When the first segment is queued on create, a banner confirms the mission and offers a shortcut to open it.
-            Server clamps between 2000 and 120000 ms.
           </span>
         </label>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-snug">

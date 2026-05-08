@@ -420,6 +420,13 @@ export const PG_POST_BASELINE_STATEMENTS: string[] = [
     FOREIGN KEY (locked_by) REFERENCES users(id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_amr_robots_locked ON amr_robots(locked)`,
+  `CREATE TABLE IF NOT EXISTS amr_stand_categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    zones_json TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_amr_stand_categories_sort ON amr_stand_categories(sort_order)`,
 ]
 
 export async function initSchemaPg(db: AsyncDbWrapper): Promise<void> {

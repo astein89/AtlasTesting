@@ -1,14 +1,11 @@
 import type { AsyncDbWrapper } from '../db/schema.js'
+import { listAmrStandCategories, replaceAmrStandCategories } from './amrStandCategories.js'
+import type { ZoneCategory } from './amrZoneCategories.js'
 
 export const AMR_FLEET_KV_KEY = 'amr.fleet.config'
 
-/** Maps zones to ordered categories used for grouping zones in the stand picker. */
-export type ZoneCategory = {
-  /** Trimmed, non-empty, unique (case-insensitive) within the array. */
-  name: string
-  /** Zones assigned to this category, in display order. Each zone belongs to at most one category. */
-  zones: string[]
-}
+export type { ZoneCategory } from './amrZoneCategories.js'
+export { normalizeZoneCategories } from './amrZoneCategories.js'
 
 /** Trim/dedupe/sort zone keys for `zonePickerInlineZones`. */
 export function normalizeZonePickerInlineZones(raw: unknown): string[] {
@@ -40,6 +37,11 @@ export type AmrFleetConfig = {
   pollMsMissions: number
   /** Server mission worker: fleet `jobQuery` poll for open in-app mission records. */
   pollMsMissionWorker: number
+  /**
+   * Client: how often to poll mission attention (`/missions/attention`) and presence-warning banners that scan mission
+   * records. Independent of mission list / worker intervals.
+   */
+  pollMsAmrNotificationUi: number
   pollMsRobots: number
   pollMsContainers: number
   /**
@@ -94,6 +96,7 @@ export const DEFAULT_AMR_FLEET_CONFIG: AmrFleetConfig = {
   containerModelCode: 'Pallet',
   pollMsMissions: 5000,
   pollMsMissionWorker: 5000,
+  pollMsAmrNotificationUi: 5000,
   pollMsRobots: 5000,
   pollMsContainers: 5000,
   hideFleetCompleteAfterMinutesDefault: null,
@@ -105,39 +108,10 @@ export const DEFAULT_AMR_FLEET_CONFIG: AmrFleetConfig = {
   zoneCategories: [],
 }
 
-/**
- * Normalize a `zoneCategories` array from arbitrary JSON: trim names, drop empty/duplicate names,
- * trim zones, and ensure each zone appears at most once across the entire array (last write wins).
- */
-export function normalizeZoneCategories(raw: unknown): ZoneCategory[] {
-  if (!Array.isArray(raw)) return []
-  const out: ZoneCategory[] = []
-  const seenNames = new Set<string>()
-  const claimedZones = new Set<string>()
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue
-    const o = item as Record<string, unknown>
-    const name = typeof o.name === 'string' ? o.name.trim() : ''
-    if (!name) continue
-    const key = name.toLowerCase()
-    if (seenNames.has(key)) continue
-    seenNames.add(key)
-    const zonesIn = Array.isArray(o.zones) ? o.zones : []
-    const zones: string[] = []
-    const localZones = new Set<string>()
-    for (const z of zonesIn) {
-      if (typeof z !== 'string') continue
-      const t = z.trim()
-      if (!t) continue
-      if (localZones.has(t)) continue
-      if (claimedZones.has(t)) continue
-      localZones.add(t)
-      claimedZones.add(t)
-      zones.push(t)
-    }
-    out.push({ name, zones })
-  }
-  return out
+/** Fleet JSON in `app_kv` — zone categories are stored only in `amr_stand_categories`. */
+function fleetConfigJsonForKv(cfg: AmrFleetConfig): string {
+  const { zoneCategories: _zc, ...rest } = cfg
+  return JSON.stringify(rest)
 }
 
 function mergeConfig(raw: unknown): AmrFleetConfig {
@@ -166,6 +140,10 @@ function mergeConfig(raw: unknown): AmrFleetConfig {
     // Legacy: a single pollMsMissions value previously drove only the worker.
     base.pollMsMissionWorker = o.pollMsMissions
   }
+  if (typeof o.pollMsAmrNotificationUi === 'number' && Number.isFinite(o.pollMsAmrNotificationUi)) {
+    const n = Math.floor(o.pollMsAmrNotificationUi)
+    base.pollMsAmrNotificationUi = Math.max(1000, Math.min(120000, n))
+  }
   if (typeof o.pollMsRobots === 'number' && o.pollMsRobots >= 1000) base.pollMsRobots = o.pollMsRobots
   if (typeof o.pollMsContainers === 'number' && o.pollMsContainers >= 1000)
     base.pollMsContainers = o.pollMsContainers
@@ -186,9 +164,6 @@ function mergeConfig(raw: unknown): AmrFleetConfig {
     base.palletDropConfirmTimeoutMs = Math.max(1000, Math.min(600000, n))
   }
   if (typeof o.postDropPresenceWarningCheck === 'boolean') base.postDropPresenceWarningCheck = o.postDropPresenceWarningCheck
-  if ('zoneCategories' in o) {
-    base.zoneCategories = normalizeZoneCategories(o.zoneCategories)
-  }
   if ('zonePickerInlineZones' in o && o.zonePickerInlineZones !== null && o.zonePickerInlineZones !== undefined) {
     base.zonePickerInlineZones = normalizeZonePickerInlineZones(o.zonePickerInlineZones)
   }
@@ -196,15 +171,21 @@ function mergeConfig(raw: unknown): AmrFleetConfig {
 }
 
 export async function getAmrFleetConfig(db: AsyncDbWrapper): Promise<AmrFleetConfig> {
+  let merged: AmrFleetConfig
   const row = (await db.prepare('SELECT value FROM app_kv WHERE key = ?').get(AMR_FLEET_KV_KEY)) as
     | { value: string }
     | undefined
-  if (!row?.value) return { ...DEFAULT_AMR_FLEET_CONFIG }
-  try {
-    return mergeConfig(JSON.parse(row.value))
-  } catch {
-    return { ...DEFAULT_AMR_FLEET_CONFIG }
+  if (!row?.value) {
+    merged = { ...DEFAULT_AMR_FLEET_CONFIG }
+  } else {
+    try {
+      merged = mergeConfig(JSON.parse(row.value))
+    } catch {
+      merged = { ...DEFAULT_AMR_FLEET_CONFIG }
+    }
   }
+  merged.zoneCategories = await listAmrStandCategories(db)
+  return merged
 }
 
 /** Persist config; omit or empty authKey leaves existing key unchanged. */
@@ -225,12 +206,15 @@ export async function saveAmrFleetConfig(
       next.zonePickerInlineZones = normalizeZonePickerInlineZones(zpiPatch)
     }
   }
+  if ('zoneCategories' in patch && patch.zoneCategories !== undefined) {
+    await replaceAmrStandCategories(db, next.zoneCategories)
+  }
   await db
     .prepare(
       `INSERT INTO app_kv (key, value) VALUES (?, ?)
        ON CONFLICT (key) DO UPDATE SET value = excluded.value`
     )
-    .run(AMR_FLEET_KV_KEY, JSON.stringify(next))
+    .run(AMR_FLEET_KV_KEY, fleetConfigJsonForKv(next))
   return next
 }
 

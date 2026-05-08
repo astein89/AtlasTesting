@@ -13,6 +13,7 @@ import { AmrMissionCardAutoContinue } from '@/components/amr/AmrAutoContinueCoun
 import { AmrFleetJobDetailModal } from '@/components/amr/AmrFleetJobDetailModal'
 import { AmrMultistopSummaryModal } from '@/components/amr/AmrMultistopSummaryModal'
 import { AmrMissionDetailModal } from '@/components/amr/AmrMissionDetailModal'
+import { MissionQueueWaitingCell } from '@/components/amr/MissionQueueWaitingCell'
 import { MissionJobStatusBadge } from '@/components/amr/MissionJobStatusBadge'
 import {
   paginateSlice,
@@ -554,7 +555,7 @@ export function AmrMissions() {
             <h2 className="text-sm font-semibold tracking-tight text-foreground">Active Missions</h2>
             <div className="overflow-hidden rounded-xl border border-border bg-card">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[36rem] text-left text-sm">
+                <table className="w-full min-w-[42rem] text-left text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/40 text-foreground/80">
                       <th className="whitespace-nowrap px-3 py-2 text-base font-medium">Robot</th>
@@ -571,6 +572,9 @@ export function AmrMissions() {
                         onClick={() => toggleActiveMissionSort('container_code')}
                       />
                       <th className="whitespace-nowrap px-3 py-2 text-xs font-medium">Status</th>
+                      <th className="min-w-[10rem] px-3 py-2 text-xs font-medium leading-tight">
+                        Queued reason / waiting for
+                      </th>
                       <SortableTh
                         label="Created"
                         active={activeMissionSort.col === 'created_at'}
@@ -582,7 +586,7 @@ export function AmrMissions() {
                   <tbody>
                     {sortedActiveMissionGroups.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-3 py-6 text-center text-sm text-foreground/60">
+                        <td colSpan={6} className="px-3 py-6 text-center text-sm text-foreground/60">
                           No active missions.
                         </td>
                       </tr>
@@ -623,6 +627,9 @@ export function AmrMissions() {
                               <td className="px-3 py-2">{String(r.container_code ?? '')}</td>
                               <td className="px-3 py-2">
                                 {r.last_status != null ? <MissionJobStatusBadge value={r.last_status} /> : '—'}
+                              </td>
+                              <td className="max-w-[14rem] px-3 py-2 align-top text-xs">
+                                <MissionQueueWaitingCell flat={r} />
                               </td>
                               <td className="px-3 py-2 text-xs text-foreground/70">{createdLabel || '—'}</td>
                             </tr>
@@ -716,9 +723,12 @@ export function AmrMissions() {
                                 <AmrMissionCardAutoContinue
                                   continueNotBeforeIso={attentionMeta?.continueNotBefore ?? null}
                                 />
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-xs text-foreground/70">{createdLabel || '—'}</td>
+                                </div>
+                              </td>
+                              <td className="max-w-[14rem] px-3 py-2 align-top text-xs">
+                                <MissionQueueWaitingCell flat={r} />
+                              </td>
+                              <td className="px-3 py-2 text-xs text-foreground/70">{createdLabel || '—'}</td>
                           </tr>
                         )
                       })

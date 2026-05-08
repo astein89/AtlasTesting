@@ -52,6 +52,8 @@ export type AmrFleetSettings = {
   pollMsMissionWorker?: number
   pollMsRobots: number
   pollMsContainers: number
+  /** Client: attention banner + presence-warning banner poll interval (ms). Default 5000. */
+  pollMsAmrNotificationUi?: number
   /** Missions page default for hiding fleet-complete rows when no browser-local choice exists. */
   hideFleetCompleteAfterMinutesDefault?: number | null
   /**
@@ -87,6 +89,13 @@ export function pollMsAlignedWithMissionWorker(settings: AmrFleetSettings): numb
 /** Fleet job list on the missions page (`jobQuery`) — uses the missions UI interval only. */
 export function pollMsMissionsUi(settings: AmrFleetSettings): number {
   return Math.max(1000, settings.pollMsMissions)
+}
+
+/** Attention bar (`/missions/attention`) and presence-warning banner (mission records scan). Clamped 1000–120000 ms. */
+export function pollMsAmrNotificationUi(settings: AmrFleetSettings): number {
+  const raw = settings.pollMsAmrNotificationUi
+  const n = typeof raw === 'number' && Number.isFinite(raw) ? raw : 5000
+  return Math.max(1000, Math.min(120000, Math.floor(n)))
 }
 
 export async function getAmrSettings() {
@@ -137,6 +146,36 @@ export async function amrFleetProxy(operation: string, payload: unknown) {
 export async function getAmrStands() {
   const { data } = await api.get<{ stands: Record<string, unknown>[] }>('/amr/dc/stands')
   return data.stands
+}
+
+/** One reservation row currently holding a stand (released_at IS NULL). */
+export type AmrStandHoldReservation = {
+  missionRecordId: string
+  jobCode: string | null
+  createdAt: string | null
+}
+
+/** A queued mission whose `queued_destination_ref` matches a stand's `external_ref`. */
+export type AmrStandHoldQueuedMission = {
+  missionRecordId: string
+  jobCode: string | null
+  queuedAt: string | null
+}
+
+/**
+ * Per-stand mission status surfaced on the read-only Stands view. Keys are stand `external_ref`s
+ * with at least one active reservation, queued mission, or unacknowledged presence warning.
+ */
+export type AmrStandHold = {
+  reservations: AmrStandHoldReservation[]
+  queuedMissions: AmrStandHoldQueuedMission[]
+  /** Most recent mission record id with `presence_warning_at` against this stand, if any. */
+  presenceWarningMissionId: string | null
+}
+
+export async function getAmrStandHolds() {
+  const { data } = await api.get<{ holds: Record<string, AmrStandHold> }>('/amr/dc/stands/holds')
+  return data.holds
 }
 
 /** Per-robot lock metadata stored in `amr_robots`. Locked robots are excluded from `submitMission.robotIds`. */

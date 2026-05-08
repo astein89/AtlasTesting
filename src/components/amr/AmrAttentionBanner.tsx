@@ -7,6 +7,7 @@ import {
   getAmrMissionAttention,
   getAmrSettings,
   getAmrStands,
+  pollMsAmrNotificationUi as effectivePollMsAmrNotificationUi,
   postStandPresence,
   terminateStuckAmrMultistopSession,
   type AmrMissionAttentionItem,
@@ -29,8 +30,8 @@ import {
 } from '@/utils/amrPalletPresenceSanity'
 import { standRefsNonStandWaypoint, standRefsSkippingHyperionOccupancy } from '@/utils/amrStandLocationType'
 
-/** Align with mission list polling so the bar clears soon after status changes (~5s max lag vs ~22s). */
-const POLL_MS = 5000
+/** Default until AMR settings load (matches server default). */
+const FALLBACK_POLL_MS = 5000
 
 /** Hide the bar when the session will auto-continue; show only when manual action (or failure) is needed. */
 function missionNeedsManualAttention(item: AmrMissionAttentionItem): boolean {
@@ -46,6 +47,7 @@ export function AmrAttentionBanner() {
   const canManage = useAuthStore((s) => s.hasPermission('amr.missions.manage'))
   const canAmrAttention = useAuthStore((s) => s.canAmrAttention())
   const canAmrTerminateStuck = useAuthStore((s) => s.canAmrTerminateStuck())
+  const [pollMs, setPollMs] = useState(FALLBACK_POLL_MS)
   const [attention, setAttention] = useState<{ count: number; items: AmrMissionAttentionItem[] }>({
     count: 0,
     items: [],
@@ -71,6 +73,17 @@ export function AmrAttentionBanner() {
   }, [canAmr])
 
   useEffect(() => {
+    const refreshPoll = () => {
+      void getAmrSettings()
+        .then((s) => setPollMs(effectivePollMsAmrNotificationUi(s)))
+        .catch(() => setPollMs(FALLBACK_POLL_MS))
+    }
+    refreshPoll()
+    window.addEventListener('focus', refreshPoll)
+    return () => window.removeEventListener('focus', refreshPoll)
+  }, [])
+
+  useEffect(() => {
     if (!canAmr) return
     const ac = new AbortController()
     const tick = () => {
@@ -84,7 +97,7 @@ export function AmrAttentionBanner() {
         })
     }
     tick()
-    const t = setInterval(tick, POLL_MS)
+    const t = setInterval(tick, pollMs)
     const onVisibility = () => {
       if (document.visibilityState === 'visible') tick()
     }
@@ -99,7 +112,7 @@ export function AmrAttentionBanner() {
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('focus', onFocus)
     }
-  }, [canAmr, location.pathname, location.search])
+  }, [canAmr, location.pathname, location.search, pollMs])
 
   const manualItems = attention.items.filter(missionNeedsManualAttention)
   const count = manualItems.length

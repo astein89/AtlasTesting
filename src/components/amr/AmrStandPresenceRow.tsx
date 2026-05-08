@@ -2,7 +2,7 @@ import { PalletPresenceGlyph, palletPresenceKindFromState } from '@/components/a
 
 /**
  * One labelled row in a route leg card (`From` / `To`): stand reference + a {@link PalletPresenceGlyph} from a shared
- * presence map. Bypass-listed stands render as `unconfigured` (Hyperion sanity-skipped).
+ * presence map. Stands with bypass pallet check still show Hyperion empty/full when present in the map.
  */
 export function AmrStandPresenceRow({
   label,
@@ -11,7 +11,6 @@ export function AmrStandPresenceRow({
   loading,
   error,
   unconfigured,
-  bypassRefs,
   nonStandWaypointRefs,
   /** Fleet fork at this NODE: `lower` = putDown true, `lift` = false. Shown as `> LOWER >` / `> LIFT >` before presence. */
   forkAction,
@@ -22,14 +21,12 @@ export function AmrStandPresenceRow({
   loading: boolean
   error: boolean
   unconfigured: boolean
-  bypassRefs: Set<string>
   /** When set, these fleet refs render as waypoint (no pallet presence). */
   nonStandWaypointRefs?: Set<string>
   forkAction?: 'lift' | 'lower'
 }) {
   const ref = (standRef ?? '').trim()
   const hasRef = Boolean(ref) && ref !== '—'
-  const bypassed = hasRef && bypassRefs.has(ref)
   const waypoint = hasRef && Boolean(nonStandWaypointRefs?.has(ref))
   const present = hasRef ? presenceMap[ref] ?? null : null
   const kind = palletPresenceKindFromState({
@@ -37,7 +34,7 @@ export function AmrStandPresenceRow({
     present,
     loading: hasRef && !waypoint ? loading : false,
     error: hasRef && !waypoint ? error : false,
-    unconfigured: !hasRef || bypassed || unconfigured,
+    unconfigured: !hasRef || unconfigured,
   })
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

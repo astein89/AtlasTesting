@@ -121,7 +121,7 @@ type ZoneGroup = { categoryName: string | null; categoryKey: string; zones: stri
 type StandGroupOrderRow = { zone: string }
 
 /**
- * Align synthetic `__group:` zone chips with `GET /stand-groups` order (`sort_order`), matching Stand groups page +
+ * Align synthetic `__group:` zone chips with `GET /stand-groups` order (`sort_order`), matching
  * `buildGroupsCategoryZones`: live groups in API order, then stale group keys, then non-group keys (relative order kept
  * for the last two buckets).
  */
@@ -191,7 +191,7 @@ function sortUncategorizedZoneKeysForPicker(
  * Build the step-1 zone list grouped under category headers from `zoneCategories`. Zones not listed in any category
  * (or with no current stand) flow into the synthetic "Uncategorized" group rendered last. Within each group, zones are
  * shown in the user-configured order; the Uncategorized group sorts alphabetically. Stand-group entries follow API
- * `sort_order` when `standGroupsOrdered` is passed (same order as the Stand groups page).
+ * `sort_order` when `standGroupsOrdered` is passed (same order as `GET /stand-groups`).
  */
 function buildZoneGroups(
   visibleStands: AmrStandPickerRow[],

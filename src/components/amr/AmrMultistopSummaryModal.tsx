@@ -35,7 +35,7 @@ import {
   MISSION_QUEUED_ROUTE_LEG_CARD_CLASS,
   missionOverviewOrDetailQueuedHue,
 } from '@/utils/amrMissionJobStatus'
-import { amrQueuedDependencyLines } from '@/utils/amrMissionQueuedDependency'
+import { amrQueuedUiParts } from '@/utils/amrMissionQueuedDependency'
 import {
   multistopContinueOccupiedDestinationRef,
   multistopContinueReleaseDisabledUntilStandShowsEmpty,
@@ -934,20 +934,23 @@ export function AmrMultistopSummaryModal({
     session: msData?.session ? (msData.session as Record<string, unknown>) : null,
   })
 
-  const overviewQueuedDependencyLines = useMemo(
+  const overviewQueuedUi = useMemo(
     () =>
-      amrQueuedDependencyLines({
+      amrQueuedUiParts({
         record: rolledUp,
         session: msData?.session ? (msData.session as Record<string, unknown>) : null,
         groupNames: standGroupNameById,
       }),
     [rolledUp, msData?.session, standGroupNameById]
   )
+  const overviewQueuedDependencyLines = overviewQueuedUi.waitingLines
+  const overviewQueuedReasonShort = overviewQueuedUi.reasonShort
 
   const showOverviewQueuedCallout =
     sessionQueuedForStand ||
     overviewQueuedDependencyLines.length > 0 ||
-    Number(rolledUp.queued) === 1
+    Number(rolledUp.queued) === 1 ||
+    Boolean(overviewQueuedReasonShort)
 
   /** Portal to `document.body` so `fixed inset-0` covers the viewport (not clipped/stacked inside `main`). */
   const modal = (
@@ -1022,8 +1025,14 @@ export function AmrMultistopSummaryModal({
               <div
                 className={`mt-3 rounded-lg px-3 py-2.5 text-sm leading-snug text-foreground ${MISSION_QUEUED_CALLOUT_CLASS}`}
               >
-                <p className="text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
-                  Waiting on
+                {overviewQueuedReasonShort ? (
+                  <p className="mt-0.5 text-xs leading-snug text-foreground/90 dark:text-violet-50/95">
+                    <span className="font-semibold text-violet-950 dark:text-violet-100">Reason: </span>
+                    {overviewQueuedReasonShort}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
+                  Waiting for
                 </p>
                 {overviewQueuedDependencyLines.length > 0 ? (
                   <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-foreground/90 dark:text-violet-50/95">
@@ -1033,8 +1042,7 @@ export function AmrMultistopSummaryModal({
                   </ul>
                 ) : (
                   <p className="mt-1 text-xs text-foreground/80">
-                    Mission is in the dispatch queue; dependency details will appear when the server attaches queue
-                    fields.
+                    Mission is in the dispatch queue; open mission detail or refresh if dependency lines do not appear.
                   </p>
                 )}
               </div>
@@ -1175,7 +1183,6 @@ export function AmrMultistopSummaryModal({
                             loading={standPresenceLoading}
                             error={standPresenceError}
                             unconfigured={standPresenceUnconfig}
-                            bypassRefs={palletPresenceBypassRefs}
                             nonStandWaypointRefs={nonStandWaypointRefs}
                             forkAction={departLower ? 'lower' : 'lift'}
                           />
@@ -1186,7 +1193,6 @@ export function AmrMultistopSummaryModal({
                             loading={standPresenceLoading}
                             error={standPresenceError}
                             unconfigured={standPresenceUnconfig}
-                            bypassRefs={palletPresenceBypassRefs}
                             nonStandWaypointRefs={nonStandWaypointRefs}
                             forkAction={arriveLower ? 'lower' : 'lift'}
                           />

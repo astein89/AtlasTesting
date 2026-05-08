@@ -987,6 +987,13 @@
               <input id="sim-autoStartOnCreate" type="checkbox" />
               <label for="sim-autoStartOnCreate">Auto-start sim when a job is created</label>
             </div>
+            <div class="check-row">
+              <input id="sim-disableAutoPalletMoveOnComplete" type="checkbox" />
+              <label for="sim-disableAutoPalletMoveOnComplete">Disable auto pallet move on completion</label>
+            </div>
+            <p class="sub" style="margin: -0.35rem 0 0.65rem 1.6rem; font-size: 0.78rem">
+              When enabled, the emulator will not move the container to the last mission node or update stand pallet presence when a sim job completes.
+            </p>
             <div class="field-grid">
               <div class="field">
                 <label for="sim-delayCreatedMsMin">Created &rarr; Executing min (ms)</label>
@@ -2081,6 +2088,7 @@
       function setupSimSettingsModal() {
         const fields = [
           ['autoStartOnCreate', 'sim-autoStartOnCreate', 'bool'],
+          ['disableAutoPalletMoveOnComplete', 'sim-disableAutoPalletMoveOnComplete', 'bool'],
           ['delayCreatedMsMin', 'sim-delayCreatedMsMin', 'int'],
           ['delayCreatedMsMax', 'sim-delayCreatedMsMax', 'int'],
           ['nodeStepMsMin', 'sim-nodeStepMsMin', 'int'],

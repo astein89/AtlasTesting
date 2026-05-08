@@ -270,6 +270,7 @@ export function initSchema(db: DbWrapper) {
   migrateAmrStandsLocationType(db)
   migrateAmrMissionQueueing(db)
   migrateAmrStandGroups(db)
+  migrateAmrStandCategoriesTable(db)
   migrateAmrRobots(db)
   migrateRolesGrantModuleAmr(db)
   migrateRolesAddAmrStandsOverrideSpecial(db)
@@ -1520,6 +1521,23 @@ function migrateAmrStandGroups(db: DbWrapper) {
     if (sgCols.length > 0 && !sgCols.includes('sort_order')) {
       db.run('ALTER TABLE amr_stand_groups ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
     }
+  } catch {
+    // Ignore
+  }
+}
+
+/** Zone picker categories: ordered category names + zone lists (replaces legacy JSON in `app_kv`). */
+function migrateAmrStandCategoriesTable(db: DbWrapper) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS amr_stand_categories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        zones_json TEXT NOT NULL
+      )
+    `)
+    db.run(`CREATE INDEX IF NOT EXISTS idx_amr_stand_categories_sort ON amr_stand_categories(sort_order)`)
   } catch {
     // Ignore
   }

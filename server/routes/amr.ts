@@ -101,6 +101,18 @@ function nowTs(): string {
   return new Date().toISOString()
 }
 
+/**
+ * Read a SELECT alias from a db row. PostgreSQL lowercases unquoted aliases (`AS missionRecordId` → `missionrecordid`);
+ * SQLite typically preserves camelCase — try both.
+ */
+function rowAliasStr(row: Record<string, unknown>, camelAlias: string): string {
+  for (const k of [camelAlias, camelAlias.toLowerCase()]) {
+    const v = row[k]
+    if (v !== undefined && v !== null && String(v).trim()) return String(v).trim()
+  }
+  return ''
+}
+
 function genDCA(kind: string): string {
   const d = new Date()
   const y = d.getUTCFullYear()
@@ -163,6 +175,23 @@ async function standIdWithDwgRef(dwg: string | null, excludeId?: string): Promis
         | { id: string }
         | undefined)
     : ((await db.prepare('SELECT id FROM amr_stands WHERE dwg_ref = ?').get(dwg)) as { id: string } | undefined)
+  return row?.id
+}
+
+/** Resolved display label (after empty → external_ref) must be unique — compare case-insensitively. */
+async function standIdWithResolvedLocationLabel(
+  resolvedLabel: string,
+  excludeId?: string
+): Promise<string | undefined> {
+  const key = resolvedLabel.trim().toLowerCase()
+  if (!key) return undefined
+  const row = excludeId
+    ? ((await db
+        .prepare('SELECT id FROM amr_stands WHERE lower(trim(location_label)) = ? AND id != ?')
+        .get(key, excludeId)) as { id: string } | undefined)
+    : ((await db.prepare('SELECT id FROM amr_stands WHERE lower(trim(location_label)) = ?').get(key)) as
+        | { id: string }
+        | undefined)
   return row?.id
 }
 
@@ -427,6 +456,7 @@ router.put(
     if (typeof body.pollMsMissionWorker === 'number') patch.pollMsMissionWorker = body.pollMsMissionWorker
     if (typeof body.pollMsRobots === 'number') patch.pollMsRobots = body.pollMsRobots
     if (typeof body.pollMsContainers === 'number') patch.pollMsContainers = body.pollMsContainers
+    if (typeof body.pollMsAmrNotificationUi === 'number') patch.pollMsAmrNotificationUi = body.pollMsAmrNotificationUi
     if ('hideFleetCompleteAfterMinutesDefault' in body) {
       const h = body.hideFleetCompleteAfterMinutesDefault
       if (h === null) patch.hideFleetCompleteAfterMinutesDefault = null
@@ -890,6 +920,115 @@ router.get(
   })
 )
 
+/**
+ * Aggregated mission-hold info per stand external_ref. Used by the read-only Stand browser to flag
+ * stands as held / queued / presence-warning without loading every mission record on the client.
+ */
+router.get(
+  '/dc/stands/holds',
+  authMiddleware,
+  requirePermission('module.amr'),
+  asyncRoute(async (_req, res) => {
+    type ReservationOut = {
+      missionRecordId: string
+      jobCode: string | null
+      createdAt: string | null
+    }
+    type QueuedOut = {
+      missionRecordId: string
+      jobCode: string | null
+      queuedAt: string | null
+    }
+    type StandHold = {
+      reservations: ReservationOut[]
+      queuedMissions: QueuedOut[]
+      presenceWarningMissionId: string | null
+    }
+    const holds: Record<string, StandHold> = Object.create(null)
+    const ensure = (ref: string): StandHold => {
+      let entry = holds[ref]
+      if (!entry) {
+        entry = { reservations: [], queuedMissions: [], presenceWarningMissionId: null }
+        holds[ref] = entry
+      }
+      return entry
+    }
+
+    const reservations = (await db
+      .prepare(
+        `SELECT r.stand_external_ref AS ref, r.mission_record_id AS missionRecordId,
+                r.created_at AS createdAt, m.job_code AS jobCode
+           FROM amr_stand_reservations r
+           LEFT JOIN amr_mission_records m ON m.id = r.mission_record_id
+          WHERE r.released_at IS NULL`
+      )
+      .all()) as Array<{
+      ref?: string | null
+      missionRecordId?: string | null
+      createdAt?: string | null
+      jobCode?: string | null
+    }>
+    for (const row of reservations) {
+      const rrow = row as Record<string, unknown>
+      const ref = rowAliasStr(rrow, 'ref')
+      const missionRecordId = rowAliasStr(rrow, 'missionRecordId')
+      if (!ref || !missionRecordId) continue
+      const jc = rowAliasStr(rrow, 'jobCode')
+      const ca = rowAliasStr(rrow, 'createdAt')
+      ensure(ref).reservations.push({
+        missionRecordId,
+        jobCode: jc || null,
+        createdAt: ca || null,
+      })
+    }
+
+    const queued = (await db
+      .prepare(
+        `SELECT id AS missionRecordId, job_code AS jobCode,
+                queued_destination_ref AS ref, queued_at AS queuedAt
+           FROM amr_mission_records
+          WHERE queued = 1 AND queued_destination_ref IS NOT NULL AND queued_destination_ref <> ''`
+      )
+      .all()) as Array<{
+      missionRecordId?: string | null
+      jobCode?: string | null
+      ref?: string | null
+      queuedAt?: string | null
+    }>
+    for (const row of queued) {
+      const qrow = row as Record<string, unknown>
+      const ref = rowAliasStr(qrow, 'ref')
+      const missionRecordId = rowAliasStr(qrow, 'missionRecordId')
+      if (!ref || !missionRecordId) continue
+      const jc = rowAliasStr(qrow, 'jobCode')
+      const qa = rowAliasStr(qrow, 'queuedAt')
+      ensure(ref).queuedMissions.push({
+        missionRecordId,
+        jobCode: jc || null,
+        queuedAt: qa || null,
+      })
+    }
+
+    const warnings = (await db
+      .prepare(
+        `SELECT id AS missionRecordId, presence_dest_ref AS ref
+           FROM amr_mission_records
+          WHERE presence_warning_at IS NOT NULL AND presence_dest_ref IS NOT NULL AND presence_dest_ref <> ''`
+      )
+      .all()) as Array<{ missionRecordId?: string | null; ref?: string | null }>
+    for (const row of warnings) {
+      const wrow = row as Record<string, unknown>
+      const ref = rowAliasStr(wrow, 'ref')
+      const missionRecordId = rowAliasStr(wrow, 'missionRecordId')
+      if (!ref || !missionRecordId) continue
+      const entry = ensure(ref)
+      if (!entry.presenceWarningMissionId) entry.presenceWarningMissionId = missionRecordId
+    }
+
+    res.json({ holds })
+  })
+)
+
 router.post(
   '/dc/stands',
   authMiddleware,
@@ -924,6 +1063,12 @@ router.post(
     if (await standIdWithExternalRef(external_ref)) {
       res.status(400).json({
         error: `Location (External Ref) "${external_ref}" is already used by another stand.`,
+      })
+      return
+    }
+    if (await standIdWithResolvedLocationLabel(location_label)) {
+      res.status(400).json({
+        error: `Display name "${location_label}" is already used by another stand.`,
       })
       return
     }
@@ -1049,6 +1194,12 @@ router.patch(
     if (conflictLoc) {
       res.status(400).json({
         error: `Location (External Ref) "${external_ref}" is already used by another stand.`,
+      })
+      return
+    }
+    if (await standIdWithResolvedLocationLabel(location_label, id)) {
+      res.status(400).json({
+        error: `Display name "${location_label}" is already used by another stand.`,
       })
       return
     }
@@ -1230,6 +1381,14 @@ router.post(
             })
             continue
           }
+          if (await standIdWithResolvedLocationLabel(location_label, existing.id)) {
+            failures.push({
+              line,
+              external_ref,
+              reason: `Display name "${location_label}" is already used by another stand.`,
+            })
+            continue
+          }
           await db
             .prepare(
               `UPDATE amr_stands SET zone = ?, location_label = ?, dwg_ref = ?, orientation = ?, x = ?, y = ?, enabled = ?, block_pickup = ?, block_dropoff = ?, bypass_pallet_check = ?, active_missions = ?, updated_at = ? WHERE id = ?`
@@ -1255,6 +1414,14 @@ router.post(
               line,
               external_ref,
               reason: `DWG ref "${dwgNorm}" is already used by another stand.`,
+            })
+            continue
+          }
+          if (await standIdWithResolvedLocationLabel(location_label)) {
+            failures.push({
+              line,
+              external_ref,
+              reason: `Display name "${location_label}" is already used by another stand.`,
             })
             continue
           }

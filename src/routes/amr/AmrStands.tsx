@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   createAmrStand,
   deleteAmrStand,
@@ -9,6 +9,7 @@ import {
   updateAmrStand,
 } from '@/api/amr'
 import { ImportAmrStandsModal } from '@/components/amr/ImportAmrStandsModal'
+import { paginateSlice, TablePaginationBar } from '@/components/amr/AmrTablePagination'
 import { AmrZoneCategoriesModal } from '@/components/amr/AmrZoneCategoriesModal'
 import { ColumnFilterDropdown } from '@/components/data/ColumnFilterDropdown'
 import { PopupSelect } from '@/components/ui/PopupSelect'
@@ -41,6 +42,7 @@ type StandBulkFieldKey = (typeof STAND_BULK_FIELDS)[number]['value']
 
 const STAND_TABLE_KEYS = [
   'external_ref',
+  'location_label',
   'stand_type',
   'zone',
   'orientation',
@@ -53,6 +55,13 @@ type StandTableKey = (typeof STAND_TABLE_KEYS)[number]
 function standTypeLabel(row: Record<string, unknown>): string {
   const lt = normalizeAmrStandLocationType((row as { location_type?: unknown }).location_type)
   return lt === AMR_STAND_LOCATION_TYPE_NON_STAND ? 'Non-stand waypoint' : 'Rack stand'
+}
+
+/** Shown in UI / stand picker; falls back to external ref when unset. */
+function effectiveStandDisplayLabel(row: Record<string, unknown>): string {
+  const lab = String(row.location_label ?? '').trim()
+  const ref = String(row.external_ref ?? '').trim()
+  return lab || ref
 }
 
 function restrictionsLabel(row: Record<string, unknown>): string {
@@ -72,6 +81,8 @@ function standFilterValue(row: Record<string, unknown>, key: StandTableKey): str
   switch (key) {
     case 'external_ref':
       return String(row.external_ref ?? '')
+    case 'location_label':
+      return effectiveStandDisplayLabel(row)
     case 'stand_type':
       return standTypeLabel(row)
     case 'zone':
@@ -92,6 +103,7 @@ function standFilterValue(row: Record<string, unknown>, key: StandTableKey): str
 function standSearchHaystack(row: Record<string, unknown>): string {
   return [
     standFilterValue(row, 'external_ref'),
+    standFilterValue(row, 'location_label'),
     standFilterValue(row, 'stand_type'),
     standFilterValue(row, 'zone'),
     standFilterValue(row, 'orientation'),
@@ -150,6 +162,8 @@ function compareStandRows(
 type StandFormState = {
   zone: string
   external_ref: string
+  /** Stand picker display name; empty uses Location (external ref). Must be unique (server-enforced). */
+  location_label: string
   dwg_ref: string
   orientation: string
   x: number
@@ -165,6 +179,7 @@ type StandFormState = {
 const defaultStandForm = (): StandFormState => ({
   zone: '',
   external_ref: '',
+  location_label: '',
   dwg_ref: '',
   orientation: '0',
   x: 0,
@@ -181,6 +196,7 @@ function rowToForm(row: Record<string, unknown>): StandFormState {
   return {
     zone: String(row.zone ?? ''),
     external_ref: String(row.external_ref ?? ''),
+    location_label: String(row.location_label ?? ''),
     dwg_ref: String(row.dwg_ref ?? ''),
     orientation: String(row.orientation ?? '0'),
     x: Number(row.x ?? 0),
@@ -248,6 +264,18 @@ function StandFormFields({
           value={form.external_ref}
           onChange={(e) => setForm((f) => ({ ...f, external_ref: e.target.value }))}
         />
+      </label>
+      <label className="col-span-full text-sm">
+        Display name (stand picker)
+        <input
+          className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+          value={form.location_label}
+          onChange={(e) => setForm((f) => ({ ...f, location_label: e.target.value }))}
+          placeholder="Defaults to Location when empty"
+        />
+        <span className="mt-1 block text-[11px] text-foreground/55">
+          Shown in the stand picker; must be unique (case-insensitive). Leave blank to use the Location value.
+        </span>
       </label>
       <label className="text-sm">
         DWG ref
@@ -382,6 +410,12 @@ export function AmrStands() {
     dir: 'asc',
   })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [standPage, setStandPage] = useState(1)
+  const [standPageSize, setStandPageSize] = useState(25)
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  /** Single-shot guard so a stale `?focus=<id>` only opens the edit modal once on mount. */
+  const focusHandledRef = useRef(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -422,6 +456,36 @@ export function AmrStands() {
     setEditForm(rowToForm(row))
     setEditStand(row)
   }, [])
+
+  useEffect(() => {
+    if (focusHandledRef.current) return
+    if (loading) return
+    const focusId = searchParams.get('focus')?.trim() ?? ''
+    if (!focusId) return
+    if (!canManage) {
+      focusHandledRef.current = true
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('focus')
+          return next
+        },
+        { replace: true }
+      )
+      return
+    }
+    const row = rows.find((r) => String(r.id) === focusId)
+    focusHandledRef.current = true
+    if (row) openEdit(row)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('focus')
+        return next
+      },
+      { replace: true }
+    )
+  }, [loading, rows, searchParams, setSearchParams, openEdit, canManage])
 
   const closeBulkEditModal = useCallback(() => {
     setBulkEditOpen(false)
@@ -464,12 +528,13 @@ export function AmrStands() {
   const saveNew = async () => {
     if (!form.external_ref.trim()) return
     const ref = form.external_ref.trim()
+    const displayLabel = form.location_label.trim() || ref
     setAddModalError(null)
     try {
       await createAmrStand({
         zone: form.zone,
         external_ref: ref,
-        location_label: ref,
+        location_label: displayLabel,
         dwg_ref: form.dwg_ref || undefined,
         orientation: form.orientation,
         x: form.x,
@@ -491,12 +556,13 @@ export function AmrStands() {
   const saveEdit = async () => {
     if (!editStand || !editForm.external_ref.trim()) return
     const ref = editForm.external_ref.trim()
+    const displayLabel = editForm.location_label.trim() || ref
     setEditModalError(null)
     try {
       await updateAmrStand(String(editStand.id), {
         zone: editForm.zone,
         external_ref: ref,
-        location_label: ref,
+        location_label: displayLabel,
         dwg_ref: editForm.dwg_ref || undefined,
         orientation: editForm.orientation,
         x: editForm.x,
@@ -560,6 +626,23 @@ export function AmrStands() {
     copy.sort((a, b) => compareStandRows(a, b, sort.key, sort.dir))
     return copy
   }, [filteredRows, sort])
+
+  const standTotalPages = Math.max(1, Math.ceil(displayRows.length / standPageSize) || 1)
+
+  useEffect(() => {
+    setStandPage((p) => Math.min(p, standTotalPages))
+  }, [standTotalPages])
+
+  useEffect(() => {
+    setStandPage(1)
+  }, [searchQuery, columnFilters])
+
+  const standPageSafe = Math.min(standPage, standTotalPages)
+
+  const pagedDisplayRows = useMemo(
+    () => paginateSlice(displayRows, standPageSafe, standPageSize),
+    [displayRows, standPageSafe, standPageSize]
+  )
 
   const hasActiveFilters =
     searchQuery.trim() !== '' || Object.values(columnFilters).some((s) => s && s.size > 0)
@@ -713,7 +796,7 @@ export function AmrStands() {
     setBulkEditOpen(true)
   }, [seedBulkEditFromFirstSelected])
 
-  const tableColSpan = canManage ? 9 : 7
+  const tableColSpan = canManage ? 10 : 8
 
   const filterIcon = (
     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -732,18 +815,19 @@ export function AmrStands() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Positions / stands</h1>
           <p className="mt-1 text-sm text-foreground/70">
-            Location (External Ref) values are sent to the fleet as <code className="text-xs">position</code>. X and Y
-            are map coordinates in meters.
+            Location (External Ref) is sent to the fleet as <code className="text-xs">position</code>.{' '}
+            <span className="font-medium text-foreground/85">Display name</span> is what operators see in the stand
+            picker (unique per stand). X and Y are map coordinates in meters.
           </p>
         </div>
         {canManage ? (
           <div className="flex flex-wrap gap-2 shrink-0">
             <Link
-              to={amrPath('stands', 'groups')}
+              to={amrPath('stands')}
               className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-background"
-              title="Manage stand groups (pools used for stop 2+ destinations)"
+              title="Open read-only Stands view"
             >
-              Manage groups
+              View stands
             </Link>
             <button
               type="button"
@@ -1167,8 +1251,9 @@ export function AmrStands() {
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-card">
-        <table className="w-full min-w-[48rem] text-left text-sm">
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[48rem] text-left text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/40">
               {canManage ? (
@@ -1233,6 +1318,49 @@ export function AmrStands() {
                     onClose={() => setOpenFilterColumn(null)}
                     tableAnchorRefs={filterAnchorRefs}
                     tableAnchorKey="external_ref"
+                  />
+                )}
+              </th>
+              <th
+                ref={(el) => {
+                  filterAnchorRefs.current.location_label = el
+                }}
+                className="relative min-w-0 cursor-pointer select-none px-3 py-2 font-medium text-foreground hover:bg-muted/60"
+                {...getSortHandlers('location_label')}
+                title="Tap to sort — shown in stand picker"
+              >
+                <span className="flex min-w-0 items-center gap-1">
+                  <span className="min-w-0 truncate">Display name</span>
+                  {getSortIndex('location_label') >= 0 && (
+                    <span className="shrink-0 text-foreground/60">
+                      {getSortIndex('location_label') + 1}
+                      {getSortDir('location_label') === 'asc' ? '↓' : '↑'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenFilterColumn((c) => (c === 'location_label' ? null : 'location_label'))
+                    }}
+                    className={`shrink-0 rounded p-0.5 hover:bg-background ${
+                      columnFilters.location_label?.size ? 'text-primary' : 'text-foreground/50'
+                    }`}
+                    title="Filter column"
+                  >
+                    {filterIcon}
+                  </button>
+                </span>
+                {openFilterColumn === 'location_label' && (
+                  <ColumnFilterDropdown
+                    columnKey="location_label"
+                    columnLabel="Display name"
+                    values={getColumnValues('location_label')}
+                    selected={columnFilters.location_label ?? new Set()}
+                    onChange={(s) => setColumnFilters((p) => ({ ...p, location_label: s }))}
+                    onClose={() => setOpenFilterColumn(null)}
+                    tableAnchorRefs={filterAnchorRefs}
+                    tableAnchorKey="location_label"
                   />
                 )}
               </th>
@@ -1515,7 +1643,7 @@ export function AmrStands() {
                 </td>
               </tr>
             ) : (
-              displayRows.map((r) => (
+              pagedDisplayRows.map((r) => (
                 <StandRow
                   key={String(r.id)}
                   row={r}
@@ -1529,6 +1657,20 @@ export function AmrStands() {
             )}
           </tbody>
         </table>
+        </div>
+        {!loading && displayRows.length > 0 ? (
+          <TablePaginationBar
+            idPrefix="amr-stands"
+            page={standPageSafe}
+            pageSize={standPageSize}
+            total={displayRows.length}
+            onPageChange={setStandPage}
+            onPageSizeChange={(n) => {
+              setStandPageSize(n)
+              setStandPage(1)
+            }}
+          />
+        ) : null}
       </div>
     </div>
   )
@@ -1577,14 +1719,17 @@ function StandRow({
         </td>
       ) : null}
       <td className="px-3 py-2 font-mono text-xs">{String(row.external_ref)}</td>
+      <td className="max-w-[14rem] truncate px-3 py-2 text-sm" title={effectiveStandDisplayLabel(row)}>
+        {effectiveStandDisplayLabel(row)}
+      </td>
       <td className="px-3 py-2">
         {normalizeAmrStandLocationType((row as { location_type?: unknown }).location_type) ===
         AMR_STAND_LOCATION_TYPE_NON_STAND ? (
           <span
             className="inline-flex rounded-full border border-violet-500/35 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-800 dark:text-violet-200"
-            title="Non-stand waypoint"
+            title="Non-stand stop"
           >
-            Waypoint
+            Stop
           </span>
         ) : (
           <span

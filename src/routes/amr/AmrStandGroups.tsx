@@ -335,7 +335,7 @@ export function AmrStandGroups() {
           <p className="mt-1 text-sm text-foreground/70">
             Pools of stands used as a single destination on stop 2+ when creating a mission. Picks an
             available member at dispatch and queues if none are free.{' '}
-            <Link className="text-primary underline" to={amrPath('stands')}>
+            <Link className="text-primary underline" to={amrPath('stands', 'manage')}>
               Manage stands
             </Link>
             .
@@ -418,3 +418,5 @@ export function AmrStandGroups() {
     </div>
   )
 }
+
+export default AmrStandGroups

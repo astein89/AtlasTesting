@@ -48,7 +48,6 @@ import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
 import { amrPath } from '@/lib/appPaths'
 import { friendlyMultistopSessionStatus } from '@/utils/amrMultistopDisplay'
 
-const emptyStandPresenceBypass = new Set<string>()
 import {
   multistopContinueOccupiedDestinationRef,
   multistopContinueReleaseDisabledUntilStandShowsEmpty,
@@ -69,7 +68,7 @@ import {
   effectiveMissionDisplayLastStatus,
   missionOverviewOrDetailQueuedHue,
 } from '@/utils/amrMissionJobStatus'
-import { amrQueuedDependencyLines } from '@/utils/amrMissionQueuedDependency'
+import { amrQueuedUiParts } from '@/utils/amrMissionQueuedDependency'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 
@@ -554,7 +553,6 @@ function SortableTailDestCard({
                 loading={standPresence.loading}
                 error={standPresence.error}
                 unconfigured={standPresence.unconfigured}
-                bypassRefs={standPresence.bypassRefs}
                 nonStandWaypointRefs={standPresence.nonStandWaypointRefs}
                 forkAction={fromFork}
               />
@@ -565,7 +563,6 @@ function SortableTailDestCard({
                 loading={standPresence.loading}
                 error={standPresence.error}
                 unconfigured={standPresence.unconfigured}
-                bypassRefs={standPresence.bypassRefs}
                 nonStandWaypointRefs={standPresence.nonStandWaypointRefs}
                 forkAction={toFork}
               />
@@ -1533,6 +1530,27 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   /** Matches footer “Release Mission” / “Release now” wording for Retry in the stand-occupied dialog. */
   const standOccupiedReleaseRetryLabel = continueNotBeforeIso ? 'Release now' : 'Release Mission'
 
+  const queuedUi = useMemo(
+    () =>
+      amrQueuedUiParts({
+        record: record ?? null,
+        session: msData?.session ?? null,
+        groupNames: standGroupNameById,
+      }),
+    [record, msData?.session, standGroupNameById]
+  )
+  const queuedDependencyLines = queuedUi.waitingLines
+  const queuedReasonShort = queuedUi.reasonShort
+  const recordDisplayLastStatus = useMemo(
+    () => effectiveMissionDisplayLastStatus(record ?? null),
+    [
+      record?.last_status,
+      record?.presence_check_until,
+      record?.presence_seen_at,
+      record?.presence_warning_at,
+    ]
+  )
+
   if (!record) return null
 
   const hideStandOccupiedInlineAlert =
@@ -1706,27 +1724,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
   const queuedDestRef =
     typeof record?.queued_destination_ref === 'string' ? record.queued_destination_ref.trim() : ''
   const queuedAtIso = typeof record?.queued_at === 'string' ? record.queued_at.trim() : ''
-  const queuedDependencyLines = useMemo(
-    () =>
-      amrQueuedDependencyLines({
-        record: record ?? null,
-        session: msData?.session ?? null,
-        groupNames: standGroupNameById,
-      }),
-    [record, msData?.session, standGroupNameById]
-  )
   const showQueuedDependencyCallout =
     Boolean(missionRecordPk) &&
-    (isQueuedMission || queuedDependencyLines.length > 0)
-  const recordDisplayLastStatus = useMemo(
-    () => effectiveMissionDisplayLastStatus(record ?? null),
-    [
-      record?.last_status,
-      record?.presence_check_until,
-      record?.presence_seen_at,
-      record?.presence_warning_at,
-    ]
-  )
+    (isQueuedMission || queuedDependencyLines.length > 0 || Boolean(queuedReasonShort))
   const presenceWarnIso =
     typeof record?.presence_warning_at === 'string' ? record.presence_warning_at.trim() : ''
   const presenceDestRef =
@@ -1897,8 +1897,14 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
               <div
                 className={`mt-3 rounded-lg px-3 py-2.5 text-sm leading-snug text-foreground ${MISSION_QUEUED_CALLOUT_CLASS}`}
               >
-                <p className="text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
-                  Waiting on
+                {queuedReasonShort ? (
+                  <p className="mt-0.5 text-xs leading-snug text-foreground/90 dark:text-violet-50/95">
+                    <span className="font-semibold text-violet-950 dark:text-violet-100">Reason: </span>
+                    {queuedReasonShort}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-[11px] font-medium uppercase tracking-wide text-violet-950 dark:text-violet-100/90">
+                  Waiting for
                 </p>
                 {queuedDependencyLines.length > 0 ? (
                   <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-foreground/90 dark:text-violet-50/95">
@@ -1907,7 +1913,9 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-1 break-all font-mono text-xs text-foreground/85">{queuedDestRef || '—'}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-foreground/85">
+                    {queuedDestRef || 'Dependency details not available from the server yet.'}
+                  </p>
                 )}
                 {queuedAtIso ? (
                   <p className="mt-1 text-xs text-foreground/65">Queued since {formatDateTime(queuedAtIso)}</p>
@@ -2216,7 +2224,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     loading={routeStandPresenceUi.loading}
                                     error={routeStandPresenceUi.error}
                                     unconfigured={routeStandPresenceUi.unconfigured}
-                                    bypassRefs={routeStandPresenceUi.bypassRefs}
                                     nonStandWaypointRefs={routeStandPresenceUi.nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
@@ -2233,7 +2240,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     loading={routeStandPresenceUi.loading}
                                     error={routeStandPresenceUi.error}
                                     unconfigured={routeStandPresenceUi.unconfigured}
-                                    bypassRefs={routeStandPresenceUi.bypassRefs}
                                     nonStandWaypointRefs={routeStandPresenceUi.nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
@@ -2253,7 +2259,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     loading={false}
                                     error={false}
                                     unconfigured={false}
-                                    bypassRefs={emptyStandPresenceBypass}
                                     nonStandWaypointRefs={nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si
@@ -2270,7 +2275,6 @@ export function AmrMissionDetailModal({ record, onClose, onSessionUpdated }: Amr
                                     loading={false}
                                     error={false}
                                     unconfigured={false}
-                                    bypassRefs={emptyStandPresenceBypass}
                                     nonStandWaypointRefs={nonStandWaypointRefs}
                                     forkAction={
                                       draftDestinations && draftDestinations.length > si

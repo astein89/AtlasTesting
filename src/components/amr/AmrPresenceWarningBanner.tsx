@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ackPresenceWarning, getAmrMissionRecords } from '@/api/amr'
+import {
+  ackPresenceWarning,
+  getAmrMissionRecords,
+  getAmrSettings,
+  pollMsAmrNotificationUi as effectivePollMsAmrNotificationUi,
+} from '@/api/amr'
 import { amrPath } from '@/lib/appPaths'
 import { formatDateTime } from '@/lib/dateTimeConfig'
 import { useAuthStore } from '@/store/authStore'
 import { getApiErrorMessage, isAbortLikeError } from '@/api/client'
 
-/** Match mission list / attention bar cadence. */
-const POLL_MS = 5000
+/** Default until AMR settings load. */
+const FALLBACK_POLL_MS = 5000
 
 type PresenceWarningRow = {
   id: string
@@ -38,9 +43,21 @@ export function AmrPresenceWarningBanner() {
   const location = useLocation()
   const canAmr = useAuthStore((s) => s.hasPermission('module.amr'))
   const canAck = useAuthStore((s) => s.canAmrAttention())
+  const [pollMs, setPollMs] = useState(FALLBACK_POLL_MS)
   const [warnings, setWarnings] = useState<PresenceWarningRow[]>([])
   const [ackBusyId, setAckBusyId] = useState<string | null>(null)
   const [ackErr, setAckErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    const refreshPoll = () => {
+      void getAmrSettings()
+        .then((s) => setPollMs(effectivePollMsAmrNotificationUi(s)))
+        .catch(() => setPollMs(FALLBACK_POLL_MS))
+    }
+    refreshPoll()
+    window.addEventListener('focus', refreshPoll)
+    return () => window.removeEventListener('focus', refreshPoll)
+  }, [])
 
   useEffect(() => {
     if (!canAmr) return
@@ -56,7 +73,7 @@ export function AmrPresenceWarningBanner() {
         })
     }
     tick()
-    const t = setInterval(tick, POLL_MS)
+    const t = setInterval(tick, pollMs)
     const onVisibility = () => {
       if (document.visibilityState === 'visible') tick()
     }
@@ -68,7 +85,7 @@ export function AmrPresenceWarningBanner() {
       window.removeEventListener('focus', tick)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [canAmr, location.pathname, location.search])
+  }, [canAmr, location.pathname, location.search, pollMs])
 
   if (!canAmr || warnings.length === 0) return null
 

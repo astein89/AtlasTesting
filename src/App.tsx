@@ -77,6 +77,12 @@ const AmrRobots = lazy(() => import('./routes/amr/AmrRobots').then((m) => ({ def
 const AmrContainers = lazy(() => import('./routes/amr/AmrContainers').then((m) => ({ default: m.AmrContainers })))
 const AmrLogs = lazy(() => import('./routes/amr/AmrLogs').then((m) => ({ default: m.AmrLogs })))
 const AmrStands = lazy(() => import('./routes/amr/AmrStands').then((m) => ({ default: m.AmrStands })))
+const AmrStandBrowser = lazy(() =>
+  import('./routes/amr/AmrStandBrowser').then((m) => ({ default: m.AmrStandBrowser }))
+)
+const AmrStandCategories = lazy(() =>
+  import('./routes/amr/AmrStandCategories').then((m) => ({ default: m.AmrStandCategories }))
+)
 const AmrStandGroups = lazy(() =>
   import('./routes/amr/AmrStandGroups').then((m) => ({ default: m.AmrStandGroups }))
 )
@@ -505,12 +511,21 @@ export function createAppBrowserRouter(basePath: string) {
             <Route path="robots" element={<AmrRobots />} />
             <Route path="containers" element={<AmrContainers />} />
             <Route path="logs" element={<AmrLogs />} />
-            <Route path="stands" element={<AmrStands />} />
+            <Route path="stands" element={<AmrStandBrowser />} />
+            <Route path="stands/manage" element={<AmrStands />} />
             <Route
               path="stands/groups"
               element={
                 <Suspense fallback={null}>
                   <AmrStandGroups />
+                </Suspense>
+              }
+            />
+            <Route
+              path="stands/categories"
+              element={
+                <Suspense fallback={null}>
+                  <AmrStandCategories />
                 </Suspense>
               }
             />

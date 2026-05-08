@@ -11,6 +11,7 @@ import {
 import { AmrMissionCardAutoContinue } from '@/components/amr/AmrAutoContinueCountdown'
 import { AmrMultistopSummaryModal } from '@/components/amr/AmrMultistopSummaryModal'
 import { AmrMissionDetailModal } from '@/components/amr/AmrMissionDetailModal'
+import { MissionQueueWaitingCell } from '@/components/amr/MissionQueueWaitingCell'
 import { MissionJobStatusBadge } from '@/components/amr/MissionJobStatusBadge'
 import { amrPath } from '@/lib/appPaths'
 import { useAmrMissionNewModal } from '@/contexts/AmrMissionNewModalContext'
@@ -323,13 +324,14 @@ export function AmrDashboard() {
                 <th className="py-2 pr-3 text-base font-medium">Robot</th>
                 <th className="py-2 pr-3 font-medium">Job code</th>
                 <th className="py-2 pr-3 font-medium">Session</th>
+                <th className="max-w-[11rem] py-2 pr-3 text-xs font-medium leading-tight">Queue / waiting</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
               {sortedActiveMissionGroups.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-6 text-center text-sm text-foreground/60">
+                  <td colSpan={5} className="py-6 text-center text-sm text-foreground/60">
                     No active missions.
                   </td>
                 </tr>
@@ -363,6 +365,9 @@ export function AmrDashboard() {
                       <td className="py-2 pr-3 font-mono text-lg leading-snug text-foreground/90">{robotLabel}</td>
                       <td className="py-2 pr-3 font-mono text-xs">{String(r.job_code ?? '')}</td>
                       <td className="py-2 pr-3 text-xs text-foreground/70">—</td>
+                      <td className="max-w-[12rem] py-2 pr-3 align-top text-xs">
+                        <MissionQueueWaitingCell flat={r} />
+                      </td>
                         <td className="py-2 pr-3">
                           {r.last_status != null ? <MissionJobStatusBadge value={r.last_status} /> : '—'}
                         </td>
@@ -390,6 +395,9 @@ export function AmrDashboard() {
                       <td className="py-2 pr-3 font-mono text-xs">{String(r.job_code ?? '')}</td>
                       <td className="py-2 pr-3 text-xs text-foreground/80">
                         <span className="block">{sess ? friendlyMultistopSessionStatus(sess) : '—'}</span>
+                      </td>
+                      <td className="max-w-[12rem] py-2 pr-3 align-top text-xs">
+                        <MissionQueueWaitingCell flat={r} />
                       </td>
                       <td className="py-2 pr-3">
                         <div className="flex items-center justify-between gap-3">

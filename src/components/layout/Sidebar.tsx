@@ -251,19 +251,47 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               Stands
             </NavLink>
             {inStandsSection ? (
-              <NavLink
-                to={amrPath('stands', 'groups')}
-                onClick={onClose}
-                className={({ isActive }) =>
-                  `${baseLink} ml-2 border-l border-border/70 pl-4 ${
-                    isActive
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-foreground hover:bg-background'
-                  }`
-                }
-              >
-                Groups
-              </NavLink>
+              <>
+                <NavLink
+                  to={amrPath('stands', 'manage')}
+                  onClick={onClose}
+                  className={({ isActive }) =>
+                    `${baseLink} ml-2 border-l border-border/70 pl-4 ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-foreground hover:bg-background'
+                    }`
+                  }
+                >
+                  Manage
+                </NavLink>
+                <NavLink
+                  to={amrPath('stands', 'groups')}
+                  onClick={onClose}
+                  className={({ isActive }) =>
+                    `${baseLink} ml-2 border-l border-border/70 pl-4 ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-foreground hover:bg-background'
+                    }`
+                  }
+                >
+                  Groups
+                </NavLink>
+                <NavLink
+                  to={amrPath('stands', 'categories')}
+                  onClick={onClose}
+                  className={({ isActive }) =>
+                    `${baseLink} ml-2 border-l border-border/70 pl-4 ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-foreground hover:bg-background'
+                    }`
+                  }
+                >
+                  Categories
+                </NavLink>
+              </>
             ) : null}
             <NavLink
               to={amrPath('settings')}

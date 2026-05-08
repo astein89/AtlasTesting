@@ -142,7 +142,7 @@ export function AmrStandGroupEditorModal({
     void getAmrStands()
       .then((rows) => {
         if (cancelled) return
-        setStands(rows)
+        setStands(rows as AmrStandRow[])
       })
       .catch((e) => {
         if (!cancelled) setErr(apiErrorMessage(e))

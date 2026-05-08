@@ -71,6 +71,8 @@ const DEFAULT_SIM_SETTINGS = {
   autoChargeEnabled: false,
   lowBatteryPct: 20,
   fullBatteryPct: 95,
+  /** When true, completing a sim job does not move the container node or update stand pallet presence. */
+  disableAutoPalletMoveOnComplete: false,
 }
 
 let simSettings = { ...DEFAULT_SIM_SETTINGS }
@@ -289,6 +291,7 @@ function sanitizeSimSettings(input) {
   out.drainIdlePctPerSec = Math.max(0, num(out.drainIdlePctPerSec, DEFAULT_SIM_SETTINGS.drainIdlePctPerSec))
   out.chargePctPerSec = Math.max(0, num(out.chargePctPerSec, DEFAULT_SIM_SETTINGS.chargePctPerSec))
   out.autoChargeEnabled = Boolean(out.autoChargeEnabled)
+  out.disableAutoPalletMoveOnComplete = Boolean(out.disableAutoPalletMoveOnComplete)
   let lo = clamp(num(out.lowBatteryPct, DEFAULT_SIM_SETTINGS.lowBatteryPct), 0, 100)
   let hi = clamp(num(out.fullBatteryPct, DEFAULT_SIM_SETTINGS.fullBatteryPct), 0, 100)
   if (lo > hi) [lo, hi] = [hi, lo]
@@ -746,8 +749,10 @@ function finishMission(code, st, job, robot, now) {
   job.status = 30
   job.completeTime = new Date(now).toISOString()
   if (robot) robot.status = 3
-  moveContainerToMissionDestination(job)
-  applyStandPresenceFromMission(job)
+  if (!simSettings.disableAutoPalletMoveOnComplete) {
+    moveContainerToMissionDestination(job)
+    applyStandPresenceFromMission(job)
+  }
   simState.set(code, { ...st, running: false })
   scheduleSaveState()
 }

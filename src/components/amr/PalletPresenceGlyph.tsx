@@ -57,7 +57,7 @@ const kindAria: Record<PalletPresenceKind, string> = {
   unknown: 'Stand status unknown',
   error: 'Could not load stand status',
   unconfigured: 'Hyperion stand presence not configured',
-  non_stand: 'Non-stand waypoint — no rack pallet presence',
+  non_stand: 'Non-stand stop — no rack pallet presence',
 }
 
 const kindLabel: Record<PalletPresenceKind, string> = {
@@ -67,7 +67,7 @@ const kindLabel: Record<PalletPresenceKind, string> = {
   unknown: '—',
   error: 'Error',
   unconfigured: 'N/A',
-  non_stand: 'Waypoint',
+  non_stand: 'Stop',
 }
 
 function LoadingSpinner({ className }: { className?: string }) {

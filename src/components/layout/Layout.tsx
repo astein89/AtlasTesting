@@ -8,6 +8,7 @@ import { Sidebar } from './Sidebar'
 import { AdminModuleSidebar } from './AdminModuleSidebar'
 import { FilesModuleHostProvider } from '../../contexts/FilesModuleHostContext'
 import { useAlertConfirm } from '../../contexts/AlertConfirmContext'
+import { normalizeAppPathname } from '../../lib/appPaths'
 import { useLoginModalStore } from '../../store/loginModalStore'
 
 interface LayoutProps {
@@ -18,6 +19,13 @@ interface LayoutProps {
 export function Layout({ showSidebar = true }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const appPathTrim =
+    normalizeAppPathname(location.pathname).replace(/\/+$/, '') || '/'
+  /** Avoid a padded band above `position:sticky` chrome (stands index header). */
+  const mainTopPad =
+    appPathTrim === '/amr/stands'
+      ? 'pt-0'
+      : 'pt-2 sm:pt-3'
   const inAdminModule = location.pathname.startsWith('/admin')
   const navigate = useNavigate()
   const { showAlert } = useAlertConfirm()
@@ -77,7 +85,9 @@ export function Layout({ showSidebar = true }: LayoutProps) {
               )}
             </>
           )}
-          <main className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-auto px-3 pt-2 pb-3 sm:px-6 sm:pt-3 sm:pb-4">
+          <main
+            className={`flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-auto px-3 pb-3 sm:px-6 sm:pb-4 ${mainTopPad}`}
+          >
             <Suspense
               fallback={
                 <div className="flex min-h-[12rem] items-center justify-center text-foreground/60">
